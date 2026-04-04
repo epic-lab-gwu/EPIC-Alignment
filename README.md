@@ -9,24 +9,24 @@ Workspace for trajectory-level replacement and 3-step alignment:
 The pipeline is implemented in `pipeline.py` and supports:
 
 - synthetic validation (artificially injected offset/transforms)
-- real estimation input (for example from `sqrtVINS`)
+- real estimation input (for example from [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git))
 
 ## Project Layout
 
 - `pipeline.py`: main 3-step pipeline
 - `gt.csv`: GT trajectory (EuRoC-style CSV)
-- `outputs/traj_estimate_v1_01.txt`: estimation trajectory exported by `sqrtVINS`
-- `sqrtVINS-main/`: local `sqrtVINS` source snapshot
+- `outputs/traj_estimate_v1_01.txt`: estimation trajectory exported by [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git)
+- `sqrtVINS-main/`: local [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git) source snapshot
 - `track.md`: Chinese process notes
 
-## sqrtVINS Defaults In This Repo
+## [sqrtVINS](https://github.com/rpng/sqrtVINS.git) Configuration
 
 Configured in `sqrtVINS-main/ov_srvins/launch/serial.launch`:
 
 - bag: `/home/yifu/vicon_room1/V1_01_easy/V1_01_easy.bag`
 - path_est: `/home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt`
 
-Before running `pipeline.py` in real mode, you must build `sqrtVINS` and run it once to generate estimation output.
+Before running `pipeline.py` in real mode, you must build [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git) and run it once to generate estimation output.
 
 Run in Native System with EurocMav Dataset (Ubuntu 20.04 + ROS1 as Example):
 
