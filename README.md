@@ -28,16 +28,25 @@ Configured in `sqrtVINS-main/ov_srvins/launch/serial.launch`:
 
 Before running `pipeline.py` in real mode, you must build `sqrtVINS` and run it once to generate estimation output.
 
-Build (in your catkin workspace):
+Run in Native System with EurocMav Dataset (Ubuntu 20.04 + ROS1 as Example):
 
 ```bash
+# Step 1: Create the workspace
+mkdir -p ~/sqrt_vins_ws/src
+cd ~/sqrt_vins_ws/src
+git clone https://github.com/rpng/sqrtVINS.git
+
+# Step 2: Build
+cd ~/sqrt_vins_ws
 catkin build
-source devel/setup.bash
-```
 
-Run estimation:
+# Step 3: Download EurocMav rosbag:
+# https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets
+# Put bag files under: $HOME/datasets/euroc_mav
+# Or change the bag path in: ov_srvins/launch/serial.launch
 
-```bash
+# Step 4: Run the launch file
+source ~/sqrt_vins_ws/devel/setup.bash
 roslaunch ov_srvins serial.launch
 ```
 
