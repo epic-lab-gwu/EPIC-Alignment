@@ -1,0 +1,90 @@
+{
+  "time_alignment": {
+    "offset_est_s": -4.21,
+    "offset_err_ms": NaN,
+    "xcorr_peak_normalized": 0.9465003260527901,
+    "xcorr_psr": 13.044564575440234,
+    "omega_rmse_before": 0.26697903507940174,
+    "omega_rmse_after": 0.07185570232238402,
+    "omega_rmse_improve_pct": 73.0856386151278
+  },
+  "step2_residuals": {
+    "rot_res_mean_deg": 0.09290452450224579,
+    "rot_res_median_deg": 0.011208475144296988,
+    "rot_res_p95_deg": 0.039136881694740215,
+    "trans_eq_rmse_m": 0.0001612567446335833,
+    "trans_eq_p95_m": 0.00024973779319094764,
+    "translation_system_cond": 1.8796175516632205,
+    "translation_constraints": 24182.0
+  },
+  "trajectory": {
+    "ate_rmse_raw_m": 2.6410573793296823,
+    "ate_rmse_step2_m": 2.6721121670134242,
+    "ate_rmse_step3_m": 0.051961591469090136,
+    "ate_p95_raw_m": 2.889131399408301,
+    "ate_p95_step2_m": 2.9307385790402822,
+    "ate_p95_step3_m": 0.08208766678008692,
+    "ate_rmse_improve_raw_to_step3_pct": 98.03254590843994,
+    "ate_rmse_improve_step2_to_step3_pct": 98.05541129180413
+  },
+  "sanity_check": {
+    "extrinsic_rotation_error_deg": NaN,
+    "extrinsic_translation_error_m": NaN,
+    "world_rotation_error_deg": NaN,
+    "world_translation_error_m": NaN
+  },
+  "estimated_params": {
+    "R_ext": [
+      [
+        0.9995368745343444,
+        0.030424695112243647,
+        0.0006118606387276754
+      ],
+      [
+        -0.03038468138596924,
+        0.9989258645552783,
+        -0.034984114388714654
+      ],
+      [
+        -0.0016755844315769755,
+        0.03494932116388738,
+        0.9993876812163514
+      ]
+    ],
+    "t_ext": [
+      0.012444950007606299,
+      -0.05841307492349427,
+      0.0035030591054982033
+    ],
+    "R_world": [
+      [
+        0.9757212864298824,
+        -0.21899862956274607,
+        0.002751628109773377
+      ],
+      [
+        0.21900782605577707,
+        0.9757162223065383,
+        -0.0036641034618872387
+      ],
+      [
+        -0.0018823745477311582,
+        0.004177771833880222,
+        0.9999895013891725
+      ]
+    ],
+    "t_world": [
+      0.9195430676463904,
+      2.22924570435281,
+      0.9774008072372751
+    ],
+    "offset_s": -4.21
+  },
+  "metadata": {
+    "timestamp": "2026-04-04T19:55:55",
+    "mode": "real",
+    "gt_path": "/home/yifu/vicon_ws/data.csv",
+    "est_path": "/home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt",
+    "output_dir": "/home/yifu/vicon_ws/outputs/run_20260404_195554"
+  }
+}
