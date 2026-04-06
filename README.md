@@ -141,10 +141,11 @@ Run command:
 MPLBACKEND=Agg python3 pipeline.py \
   --gt-csv /home/yifu/vicon_ws/gt.csv \
   --est-path /home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt \
-  --est-format tum
+  --est-format tum \
+  --quat-interp linear
 ```
 
-Use this mode for real estimation trajectory alignment against GT.
+Use this mode for real estimation trajectory alignment against GT. (`linear` is the default interpolation mode.)
 Prerequisite: `roslaunch ov_srvins serial.launch` has already generated `outputs/traj_estimate_v1_01.txt`.
 
 Corresponding kept output folder in this repo:
@@ -215,6 +216,79 @@ ate_rmse_improve_raw_to_step3_pct: 98.032546 %
 ate_rmse_improve_step2_to_step3_pct: 98.055411 %
 ```
 
+### C) sqrtVINS Estimation vs GT (SLERP Quaternion Interpolation)
+
+Run command:
+
+```bash
+MPLBACKEND=Agg python3 pipeline.py \
+  --gt-csv /home/yifu/vicon_ws/gt.csv \
+  --est-path /home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --quat-interp slerp
+```
+
+This result is generated with explicit SLERP quaternion interpolation in `pipeline.py`.
+
+Output folder:
+
+- `outputs/run_20260406_202611`
+
+Visualizations:
+
+![SLERP Step1 Cross Correlation](outputs/run_20260406_202611/step1_cross_correlation.png)
+![SLERP Step1 Time Alignment](outputs/run_20260406_202611/step1_time_alignment.png)
+![SLERP Step2/3 Trajectory Alignment](outputs/run_20260406_202611/step23_trajectory_alignment_3d.png)
+
+Terminal output (excerpt):
+
+```text
+--- STEP 1: TIME ALIGNMENT ---
+Calculated Time Offset: -4.2100 s
+
+--- TIME ALIGNMENT METRICS ---
+offset_est_s: -4.210000 s
+offset_err_ms: nan ms
+xcorr_peak_normalized: 0.946500
+xcorr_psr: 13.044565
+omega_rmse_before: 0.266979 rad/s
+omega_rmse_after: 0.071856 rad/s
+omega_rmse_improve_pct: 73.085639 %
+
+--- STEP 2: SOLVING EXTRINSICS ---
+Calculated Extrinsic Rotation Matrix:
+[[ 9.998e-01  1.770e-02  3.000e-04]
+ [-1.770e-02  9.998e-01  5.900e-03]
+ [-2.000e-04 -5.900e-03  1.000e+00]]
+Calculated Translation: [ 0.0087 -0.0708 -0.0013] m
+
+--- STEP 3: WORLD ALIGNMENT ---
+Calculated World Rotation Matrix:
+[[ 0.9759 -0.2183  0.0033]
+ [ 0.2183  0.9759 -0.0039]
+ [-0.0023  0.0045  1.    ]]
+Calculated World Translation: [0.9187 2.2368 0.9765] m
+
+--- STEP 2 RESIDUAL METRICS ---
+rot_res_mean_deg: 0.012536 deg
+rot_res_median_deg: 0.010676 deg
+rot_res_p95_deg: 0.028083 deg
+trans_eq_rmse_m: 0.000221 m
+trans_eq_p95_m: 0.000358 m
+translation_system_cond: 1.879618
+translation_constraints: 24182.000000
+
+--- TRAJECTORY METRICS ---
+ate_rmse_raw_m: 2.641057 m
+ate_rmse_step2_m: 2.677696 m
+ate_rmse_step3_m: 0.057018 m
+ate_p95_raw_m: 2.889131 m
+ate_p95_step2_m: 2.937338 m
+ate_p95_step3_m: 0.089880 m
+ate_rmse_improve_raw_to_step3_pct: 97.841105 %
+ate_rmse_improve_step2_to_step3_pct: 97.870645 %
+```
+
 ## Output Per Run
 
 Each run creates:
@@ -234,4 +308,5 @@ Artifacts:
 
 - TUM input accepts at least 8 columns; if covariance columns exist, columns after `t tx ty tz qx qy qz qw` are ignored.
 - `step1_time_alignment.png` uses a 40-second window by default for easier visual inspection.
+- Quaternion interpolation mode is configurable via `--quat-interp {linear,slerp}`; default is `linear`.
 - Each run outputs `metrics_zh.md` (Chinese metric interpretation with value-specific analysis).

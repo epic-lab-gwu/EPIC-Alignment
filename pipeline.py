@@ -9,7 +9,7 @@ import pandas as pd
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.interpolate import interp1d
 from scipy.signal import correlate
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
 
 
 def get_angular_velocity_norm(t, quats):
@@ -370,6 +370,35 @@ def normalize_quat_array(quat):
     return quat / np.clip(norm, 1e-12, None)
 
 
+def interpolate_quat_slerp(t_src, q_src, t_query):
+    t_src = np.asarray(t_src, dtype=float)
+    q_src = normalize_quat_array(np.asarray(q_src, dtype=float))
+    t_query = np.asarray(t_query, dtype=float)
+
+    # Slerp requires strictly increasing key times.
+    t_unique, unique_idx = np.unique(t_src, return_index=True)
+    q_unique = q_src[unique_idx]
+    if t_unique.size < 2:
+        return np.repeat(q_unique[:1], t_query.size, axis=0)
+
+    slerp = Slerp(t_unique, R.from_quat(q_unique))
+    q_out = np.zeros((t_query.size, 4), dtype=float)
+
+    in_mask = (t_query >= t_unique[0]) & (t_query <= t_unique[-1])
+    if np.any(in_mask):
+        q_out[in_mask] = slerp(t_query[in_mask]).as_quat()
+    if np.any(~in_mask):
+        q_out[t_query < t_unique[0]] = q_unique[0]
+        q_out[t_query > t_unique[-1]] = q_unique[-1]
+
+    return normalize_quat_array(q_out)
+
+
+def interpolate_quat_linear(t_src, q_src, t_query):
+    interp_q = interp1d(t_src, q_src, axis=0, fill_value="extrapolate")
+    return normalize_quat_array(interp_q(t_query))
+
+
 def normalize_time_to_seconds(t):
     t = np.asarray(t, dtype=float)
     if t.ndim != 1 or t.size < 2:
@@ -507,6 +536,12 @@ def parse_args():
         "--synthetic",
         action="store_true",
         help="Use synthetic offset/injected transforms instead of real estimation",
+    )
+    parser.add_argument(
+        "--quat-interp",
+        choices=["linear", "slerp"],
+        default="linear",
+        help="Quaternion interpolation method after time alignment",
     )
     return parser.parse_args()
 
@@ -674,10 +709,11 @@ def run_pipeline(args):
 
     t_robot_sync = t_robot - calculated_offset
     interp_p = interp1d(t_robot_sync, pos_robot, axis=0, fill_value="extrapolate")
-    interp_q = interp1d(t_robot_sync, quat_robot, axis=0, fill_value="extrapolate")
-
     pr_sync = interp_p(t_vicon)
-    qr_sync = normalize_quat_array(interp_q(t_vicon))
+    if args.quat_interp == "slerp":
+        qr_sync = interpolate_quat_slerp(t_robot_sync, quat_robot, t_vicon)
+    else:
+        qr_sync = interpolate_quat_linear(t_robot_sync, quat_robot, t_vicon)
 
     print("\n--- STEP 2: SOLVING EXTRINSICS ---")
     R_calc = solve_extrinsic_rotation(quat_vicon, qr_sync)
@@ -815,6 +851,7 @@ def run_pipeline(args):
             "mode": mode,
             "gt_path": str(gt_path),
             "est_path": str(args.est_path) if args.est_path else "",
+            "quat_interp": args.quat_interp,
             "output_dir": str(run_dir),
         },
     }
