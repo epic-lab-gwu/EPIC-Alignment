@@ -1,0 +1,14 @@
+# vicon_ws modular wrapper defaults
+gt_csv: gt.csv
+est_path: outputs/traj_estimate_v1_01.txt
+est_format: auto
+dt_resample: 0.001
+synthetic: false
+quat_interp: linear
+rpe:
+  delta: 1.0
+  delta_unit: f
+  delta_tol: 0.1
+  all_pairs: false
+  pairs_from_reference: false
+

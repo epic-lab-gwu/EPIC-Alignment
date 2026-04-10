@@ -3,3 +3,6 @@ __pycache__/
 *.pyc
 track.md
 AGENTS.md
+
+# local run artifacts
+outputs/

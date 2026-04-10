@@ -1,5 +1,20 @@
 # vicon_ws
 
+TODO:
+2026/4/10
+
+- evo支持更多的格式, vicon后面可以加上
+- 可考虑模仿evo, 补齐成一个完整的工具链cli
+- 可视化没做好, 可以参考evo弄个rerun
+- rerun的配置还没弄好(目前只能回放带有frame的轨迹(gt/3-step后的estimation/raw estimation(可选)), 渐变没弄好)
+- 重写了项目结构, 使其易于扩展和复用, 也保留了上个版本的pipeline.py
+- 把evo的metrics加了进来, 看看有什么可以新增的metrics
+- 用现在的vicon_ws和evo分别跑了alignanything, 结果在vicon_ws/outputs/alignanything_eval/summary_final.md
+- 现在evo的结果用了vicon_ws的offset, 后面可以改成人工sweep最优
+- vicon_ws的方法层面可能可以改进, 后面再看看
+- 上面这些弄得差不多了可以做个wiki网站
+---
+
 Workspace for trajectory-level replacement and 3-step alignment:
 
 1. Step1: time alignment
@@ -7,9 +22,6 @@ Workspace for trajectory-level replacement and 3-step alignment:
 3. Step3: world-frame rigid alignment (`R_w`, `t_w`)
 
 The pipeline is implemented in `pipeline.py` and supports:
-
-- synthetic validation (artificially injected offset/transforms)
-- real estimation input (for example from [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git))
 
 ## Project Layout
 
@@ -55,6 +67,45 @@ After it finishes, the estimation trajectory is saved to:
 `/home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt`
 
 ## Run 3-Step Alignment
+
+> Important:
+> If you see `Calculated Time Offset: 0.1230 s`, you are in synthetic mode.
+> `0.123` is the injected ground-truth offset for closed-loop validation, not the real estimation-vs-GT result.
+> For real data evaluation, do NOT pass `--synthetic`.
+
+### Optional: Rerun Visualization
+
+`vicon_ws` now supports optional Rerun trajectory logging in modular mode.
+
+Install dependency:
+
+```bash
+pip install rerun-sdk
+```
+
+Example (real mode + rerun):
+
+```bash
+PYTHONPATH=/home/yifu/vicon_ws/src python3 -m vicon_ws.cli \
+  --engine modular \
+  --gt-csv /home/yifu/vicon_ws/gt.csv \
+  --est-path /home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --rerun
+```
+
+Optional flags:
+
+- `--rerun-no-spawn`: do not auto-open viewer
+- `--rerun-stride N`: downsample static trajectory lines sent to rerun
+- `--rerun-motion-stride N`: downsample timeline replay points (smaller = smoother motion)
+
+Playback note:
+
+- Static context includes 4 trajectories: `raw`, `step2`, `step3`, `gt`
+- Timeline replay shows moving points over time, with `raw` and `gt` emphasized
+- `step2` and `step3` are intentionally lighter as visual references
+- `--rerun` follows evo behavior: viewer logging only, no automatic `.rrd` output
 
 ### A) Synthetic Injection vs GT
 
@@ -147,6 +198,12 @@ MPLBACKEND=Agg python3 pipeline.py \
 
 Use this mode for real estimation trajectory alignment against GT. (`linear` is the default interpolation mode.)
 Prerequisite: `roslaunch ov_srvins serial.launch` has already generated `outputs/traj_estimate_v1_01.txt`.
+
+Quick self-check after running:
+
+- Open `outputs/run_xxx/metrics.json`
+- Ensure `metadata.mode` is `real`
+- If `metadata.mode` is `synthetic`, rerun without `--synthetic`
 
 Corresponding kept output folder in this repo:
 

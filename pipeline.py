@@ -1,11 +1,17 @@
 import argparse
+import csv
 import json
 from datetime import datetime
 from pathlib import Path
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
+try:
+    import pandas as pd
+except Exception:
+    pd = None
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.interpolate import interp1d
 from scipy.signal import correlate
@@ -24,6 +30,30 @@ def get_angular_velocity_norm(t, quats):
 
 def rmse(x):
     return np.sqrt(np.mean(np.square(x)))
+
+
+def compute_error_statistics(errors):
+    values = np.asarray(errors, dtype=float).reshape(-1)
+    if values.size == 0:
+        return {
+            "rmse": np.nan,
+            "mean": np.nan,
+            "median": np.nan,
+            "std": np.nan,
+            "min": np.nan,
+            "max": np.nan,
+            "sse": np.nan,
+        }
+    sq = np.square(values)
+    return {
+        "rmse": np.sqrt(np.mean(sq)),
+        "mean": np.mean(values),
+        "median": np.median(values),
+        "std": np.std(values),
+        "min": np.min(values),
+        "max": np.max(values),
+        "sse": np.sum(sq),
+    }
 
 
 def compute_psr(corr, peak_idx, guard_bins):
@@ -57,12 +87,225 @@ def build_translation_system(pv, qv, pr, qr, Rext):
 
 
 def summarize_abs_errors(errors):
+    stats = compute_error_statistics(errors)
+    values = np.asarray(errors, dtype=float).reshape(-1)
+    stats["p95"] = np.percentile(values, 95) if values.size > 0 else np.nan
+    return stats
+
+
+def poses_se3_from_traj(pos, quat):
+    pos = np.asarray(pos, dtype=float)
+    rot = R.from_quat(np.asarray(quat, dtype=float)).as_matrix()
+    n = pos.shape[0]
+    T = np.repeat(np.eye(4)[None, :, :], n, axis=0)
+    T[:, :3, :3] = rot
+    T[:, :3, 3] = pos
+    return T
+
+
+def relative_se3(a, b):
+    Ra = a[:3, :3]
+    ta = a[:3, 3]
+    Rb = b[:3, :3]
+    tb = b[:3, 3]
+    R_rel = Ra.T @ Rb
+    t_rel = Ra.T @ (tb - ta)
+    out = np.eye(4)
+    out[:3, :3] = R_rel
+    out[:3, 3] = t_rel
+    return out
+
+
+def rpe_pairs_by_index(poses, delta, all_pairs=False):
+    n = len(poses)
+    if delta < 1:
+        raise ValueError("RPE delta must be >= 1 for frame unit.")
+    if all_pairs:
+        ids = np.arange(n, dtype=int)
+        return [(int(i), int(i + delta)) for i in ids if i + delta < n]
+    ids = np.arange(0, n, delta, dtype=int)
+    return [(int(i), int(j)) for i, j in zip(ids, ids[1:])]
+
+
+def rpe_pairs_by_path(poses, delta, tol=0.0, all_pairs=False):
+    id_pairs = []
+    if all_pairs:
+        positions = np.array([pose[:3, 3] for pose in poses])
+        distances = np.zeros(positions.shape[0], dtype=float)
+        if positions.shape[0] > 1:
+            distances[1:] = np.cumsum(np.linalg.norm(np.diff(positions, axis=0), axis=1))
+        for i in range(distances.size - 1):
+            offset = i + 1
+            distances_from_here = distances[offset:] - distances[i]
+            candidate_index = int(np.argmin(np.abs(distances_from_here - delta)))
+            if np.abs(distances_from_here[candidate_index] - delta) > tol:
+                continue
+            id_pairs.append((i, candidate_index + offset))
+    else:
+        ids = []
+        previous_pose = poses[0]
+        current_path = 0.0
+        for i, current_pose in enumerate(poses):
+            current_path += float(np.linalg.norm(current_pose[:3, 3] - previous_pose[:3, 3]))
+            previous_pose = current_pose
+            if current_path >= delta:
+                ids.append(i)
+                current_path = 0.0
+        id_pairs = [(i, j) for i, j in zip(ids, ids[1:])]
+    return id_pairs
+
+
+def rpe_pairs_by_angle(poses, delta, tol=0.0, degrees=False, all_pairs=False):
+    bounds = [0.0, 180.0] if degrees else [0.0, np.pi]
+    if delta < bounds[0] or delta > bounds[1]:
+        raise ValueError(f"RPE delta angle must be within {bounds}.")
+
+    delta_rad = np.deg2rad(delta) if degrees else delta
+    tol_rad = np.deg2rad(tol) if degrees else tol
+    rot_mats = np.array([pose[:3, :3] for pose in poses])
+    if all_pairs:
+        upper_bound = delta_rad + tol_rad
+        lower_bound = delta_rad - tol_rad
+        id_pairs = []
+        for i in range(len(poses) - 1):
+            offset = i + 1
+            end_rots = R.from_matrix(rot_mats[offset:])
+            start_rots = R.from_matrix(np.repeat(rot_mats[i][None, :, :], len(end_rots), axis=0))
+            delta_angles = np.linalg.norm((start_rots.inv() * end_rots).as_rotvec(), axis=1)
+            matches = np.argwhere((lower_bound <= delta_angles) & (delta_angles <= upper_bound)) + offset
+            id_pairs.extend([(i, int(j)) for j in matches.flatten().tolist()])
+        return id_pairs
+
+    delta_angles = np.linalg.norm((R.from_matrix(rot_mats[:-1]).inv() * R.from_matrix(rot_mats[1:])).as_rotvec(), axis=1)
+    accumulated_delta = 0.0
+    current_start_index = 0
+    id_pairs = []
+    for i, current_delta in enumerate(delta_angles):
+        end_index = i + 1
+        accumulated_delta += current_delta
+        if accumulated_delta >= delta_rad:
+            id_pairs.append((current_start_index, end_index))
+            accumulated_delta = 0.0
+            current_start_index = end_index
+    return id_pairs
+
+
+def build_rpe_pairs(poses, delta, delta_unit="f", rel_delta_tol=0.1, all_pairs=False):
+    if len(poses) < 2:
+        return []
+
+    if delta_unit == "f":
+        if float(delta).is_integer():
+            delta_int = int(delta)
+        else:
+            raise ValueError("RPE delta must be integer when delta_unit is frames ('f').")
+        return rpe_pairs_by_index(poses, delta_int, all_pairs=all_pairs)
+    if delta_unit == "m":
+        tol = float(delta) * rel_delta_tol if all_pairs else 0.0
+        return rpe_pairs_by_path(poses, float(delta), tol=tol, all_pairs=all_pairs)
+    if delta_unit == "d":
+        tol = float(delta) * rel_delta_tol if all_pairs else 0.0
+        return rpe_pairs_by_angle(poses, float(delta), tol=tol, degrees=True, all_pairs=all_pairs)
+    if delta_unit == "r":
+        tol = float(delta) * rel_delta_tol if all_pairs else 0.0
+        return rpe_pairs_by_angle(poses, float(delta), tol=tol, degrees=False, all_pairs=all_pairs)
+    raise ValueError(f"Unsupported RPE delta unit: {delta_unit}")
+
+
+def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est):
+    if len(pos_ref) != len(pos_est):
+        raise ValueError("APE requires trajectories with the same number of poses.")
+
+    pos_ref = np.asarray(pos_ref, dtype=float)
+    pos_est = np.asarray(pos_est, dtype=float)
+    T_ref = poses_se3_from_traj(pos_ref, quat_ref)
+    T_est = poses_se3_from_traj(pos_est, quat_est)
+    E = np.array([relative_se3(T_est[i], T_ref[i]) for i in range(len(T_ref))])
+
+    I3 = np.eye(3)
+    I4 = np.eye(4)
+    trans_err = np.linalg.norm(pos_est - pos_ref, axis=1)
+    rot_part_err = np.linalg.norm(E[:, :3, :3] - I3, axis=(1, 2))
+    full_err = np.linalg.norm(E - I4, axis=(1, 2))
+    rot_angle_rad = np.abs(R.from_matrix(E[:, :3, :3]).magnitude())
+    rot_angle_deg = np.degrees(rot_angle_rad)
+
     return {
-        "rmse": rmse(errors),
-        "mean": np.mean(errors),
-        "median": np.median(errors),
-        "p95": np.percentile(errors, 95),
-        "max": np.max(errors),
+        "translation_part": compute_error_statistics(trans_err),
+        "point_distance": compute_error_statistics(trans_err),
+        "rotation_part": compute_error_statistics(rot_part_err),
+        "full_transformation": compute_error_statistics(full_err),
+        "rotation_angle_rad": compute_error_statistics(rot_angle_rad),
+        "rotation_angle_deg": compute_error_statistics(rot_angle_deg),
+    }
+
+
+def compute_rpe_evo_style(
+    pos_ref,
+    quat_ref,
+    pos_est,
+    quat_est,
+    delta=1.0,
+    delta_unit="f",
+    rel_delta_tol=0.1,
+    all_pairs=False,
+    pairs_from_reference=False,
+):
+    if len(pos_ref) != len(pos_est):
+        raise ValueError("RPE requires trajectories with the same number of poses.")
+
+    pos_ref = np.asarray(pos_ref, dtype=float)
+    pos_est = np.asarray(pos_est, dtype=float)
+    T_ref = poses_se3_from_traj(pos_ref, quat_ref)
+    T_est = poses_se3_from_traj(pos_est, quat_est)
+    pair_source = T_ref if pairs_from_reference else T_est
+    id_pairs = build_rpe_pairs(
+        pair_source, delta=delta, delta_unit=delta_unit, rel_delta_tol=rel_delta_tol, all_pairs=all_pairs
+    )
+
+    if len(id_pairs) == 0:
+        empty = compute_error_statistics(np.array([]))
+        return {
+            "pair_count": 0,
+            "translation_part": empty,
+            "point_distance": empty,
+            "point_distance_error_ratio": empty,
+            "rotation_part": empty,
+            "full_transformation": empty,
+            "rotation_angle_rad": empty,
+            "rotation_angle_deg": empty,
+        }
+
+    ref_distances = np.array([np.linalg.norm(pos_ref[i] - pos_ref[j]) for i, j in id_pairs])
+    est_distances = np.array([np.linalg.norm(pos_est[i] - pos_est[j]) for i, j in id_pairs])
+    point_distance_err = np.abs(ref_distances - est_distances)
+    ratio_mask = ref_distances != 0.0
+    point_ratio = np.divide(point_distance_err[ratio_mask], ref_distances[ratio_mask]) * 100.0
+
+    E = []
+    for i, j in id_pairs:
+        Q_rel = relative_se3(T_ref[i], T_ref[j])
+        P_rel = relative_se3(T_est[i], T_est[j])
+        E.append(relative_se3(Q_rel, P_rel))
+    E = np.array(E)
+
+    I3 = np.eye(3)
+    I4 = np.eye(4)
+    translation_part_err = np.linalg.norm(E[:, :3, 3], axis=1)
+    rotation_part_err = np.linalg.norm(E[:, :3, :3] - I3, axis=(1, 2))
+    full_err = np.linalg.norm(E - I4, axis=(1, 2))
+    rot_angle_rad = np.abs(R.from_matrix(E[:, :3, :3]).magnitude())
+    rot_angle_deg = np.degrees(rot_angle_rad)
+
+    return {
+        "pair_count": int(len(id_pairs)),
+        "translation_part": compute_error_statistics(translation_part_err),
+        "point_distance": compute_error_statistics(point_distance_err),
+        "point_distance_error_ratio": compute_error_statistics(point_ratio),
+        "rotation_part": compute_error_statistics(rotation_part_err),
+        "full_transformation": compute_error_statistics(full_err),
+        "rotation_angle_rad": compute_error_statistics(rot_angle_rad),
+        "rotation_angle_deg": compute_error_statistics(rot_angle_deg),
     }
 
 
@@ -113,7 +356,13 @@ def save_metrics(output_dir, metrics_payload):
                     }
                 )
     if rows:
-        pd.DataFrame(rows).to_csv(csv_path, index=False)
+        if pd is not None:
+            pd.DataFrame(rows).to_csv(csv_path, index=False)
+        else:
+            with csv_path.open("w", encoding="utf-8", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=["section", "metric", "value"])
+                writer.writeheader()
+                writer.writerows(rows)
 
 
 METRIC_ZH_EXPLAIN = {
@@ -423,56 +672,84 @@ def normalize_time_to_seconds(t):
     return t_sec
 
 
-def find_col(df, candidates):
+def find_col(columns, candidates):
     for cand in candidates:
-        if cand in df.columns:
+        if cand in columns:
             return cand
-    stripped = {c.strip(): c for c in df.columns}
+    stripped = {c.strip(): c for c in columns}
     for cand in candidates:
         if cand in stripped:
             return stripped[cand]
     return None
 
 
+def load_csv_numeric_columns(path):
+    if pd is not None:
+        df = pd.read_csv(path)
+        columns = list(df.columns)
+        data = {c: np.asarray(df[c].values, dtype=float) for c in columns}
+        return columns, data
+
+    with Path(path).open("r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        if not reader.fieldnames:
+            raise ValueError(f"CSV has no header: {path}")
+        columns = list(reader.fieldnames)
+        data = {c: [] for c in columns}
+        for row_id, row in enumerate(reader, start=2):
+            for c in columns:
+                raw = row.get(c, "")
+                if raw is None or str(raw).strip() == "":
+                    raise ValueError(f"Missing numeric value at row {row_id}, column '{c}' in {path}")
+                try:
+                    data[c].append(float(raw))
+                except ValueError as exc:
+                    raise ValueError(
+                        f"Non-numeric value at row {row_id}, column '{c}' in {path}: {raw}"
+                    ) from exc
+    data = {k: np.asarray(v, dtype=float) for k, v in data.items()}
+    return columns, data
+
+
 def load_vicon_csv(path):
-    df = pd.read_csv(path)
-    t_col = find_col(df, ["#timestamp", "timestamp"])
-    px_col = find_col(df, ["p_RS_R_x [m]", "p_x", "px", "tx"])
-    py_col = find_col(df, ["p_RS_R_y [m]", "p_y", "py", "ty"])
-    pz_col = find_col(df, ["p_RS_R_z [m]", "p_z", "pz", "tz"])
-    qx_col = find_col(df, ["q_RS_x []", "q_x", "qx"])
-    qy_col = find_col(df, ["q_RS_y []", "q_y", "qy"])
-    qz_col = find_col(df, ["q_RS_z []", "q_z", "qz"])
-    qw_col = find_col(df, ["q_RS_w []", "q_w", "qw"])
+    columns, data = load_csv_numeric_columns(path)
+    t_col = find_col(columns, ["#timestamp", "timestamp"])
+    px_col = find_col(columns, ["p_RS_R_x [m]", "p_x", "px", "tx"])
+    py_col = find_col(columns, ["p_RS_R_y [m]", "p_y", "py", "ty"])
+    pz_col = find_col(columns, ["p_RS_R_z [m]", "p_z", "pz", "tz"])
+    qx_col = find_col(columns, ["q_RS_x []", "q_x", "qx"])
+    qy_col = find_col(columns, ["q_RS_y []", "q_y", "qy"])
+    qz_col = find_col(columns, ["q_RS_z []", "q_z", "qz"])
+    qw_col = find_col(columns, ["q_RS_w []", "q_w", "qw"])
 
     needed = [t_col, px_col, py_col, pz_col, qx_col, qy_col, qz_col, qw_col]
     if any(c is None for c in needed):
         raise ValueError(f"GT CSV missing required columns: {path}")
 
-    t = normalize_time_to_seconds(df[t_col].values)
-    pos = df[[px_col, py_col, pz_col]].values
-    quat = normalize_quat_array(df[[qx_col, qy_col, qz_col, qw_col]].values)
+    t = normalize_time_to_seconds(data[t_col])
+    pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
+    quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
     return t, pos, quat
 
 
 def load_estimation_csv(path):
-    df = pd.read_csv(path)
-    t_col = find_col(df, ["#timestamp", "timestamp", "time", "t"])
-    px_col = find_col(df, ["p_RS_R_x [m]", "p_x", "px", "tx", "x"])
-    py_col = find_col(df, ["p_RS_R_y [m]", "p_y", "py", "ty", "y"])
-    pz_col = find_col(df, ["p_RS_R_z [m]", "p_z", "pz", "tz", "z"])
-    qx_col = find_col(df, ["q_RS_x []", "q_x", "qx"])
-    qy_col = find_col(df, ["q_RS_y []", "q_y", "qy"])
-    qz_col = find_col(df, ["q_RS_z []", "q_z", "qz"])
-    qw_col = find_col(df, ["q_RS_w []", "q_w", "qw"])
+    columns, data = load_csv_numeric_columns(path)
+    t_col = find_col(columns, ["#timestamp", "timestamp", "time", "t"])
+    px_col = find_col(columns, ["p_RS_R_x [m]", "p_x", "px", "tx", "x"])
+    py_col = find_col(columns, ["p_RS_R_y [m]", "p_y", "py", "ty", "y"])
+    pz_col = find_col(columns, ["p_RS_R_z [m]", "p_z", "pz", "tz", "z"])
+    qx_col = find_col(columns, ["q_RS_x []", "q_x", "qx"])
+    qy_col = find_col(columns, ["q_RS_y []", "q_y", "qy"])
+    qz_col = find_col(columns, ["q_RS_z []", "q_z", "qz"])
+    qw_col = find_col(columns, ["q_RS_w []", "q_w", "qw"])
 
     needed = [t_col, px_col, py_col, pz_col, qx_col, qy_col, qz_col, qw_col]
     if any(c is None for c in needed):
         raise ValueError(f"Estimation CSV missing required columns: {path}")
 
-    t = normalize_time_to_seconds(df[t_col].values)
-    pos = df[[px_col, py_col, pz_col]].values
-    quat = normalize_quat_array(df[[qx_col, qy_col, qz_col, qw_col]].values)
+    t = normalize_time_to_seconds(data[t_col])
+    pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
+    quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
     return t, pos, quat
 
 
@@ -542,6 +819,34 @@ def parse_args():
         choices=["linear", "slerp"],
         default="linear",
         help="Quaternion interpolation method after time alignment",
+    )
+    parser.add_argument(
+        "--rpe-delta",
+        type=float,
+        default=1.0,
+        help="RPE delta (same meaning as evo: frame/path/angle increment).",
+    )
+    parser.add_argument(
+        "--rpe-delta-unit",
+        choices=["f", "m", "d", "r"],
+        default="f",
+        help="RPE delta unit: f=frames, m=meters, d=degrees, r=radians.",
+    )
+    parser.add_argument(
+        "--rpe-delta-tol",
+        type=float,
+        default=0.1,
+        help="Relative RPE delta tolerance (used in all-pairs mode for m/d/r).",
+    )
+    parser.add_argument(
+        "--rpe-all-pairs",
+        action="store_true",
+        help="Use all candidate pairs for RPE (evo-style).",
+    )
+    parser.add_argument(
+        "--rpe-pairs-from-reference",
+        action="store_true",
+        help="Build RPE pairs from reference trajectory instead of estimate.",
     )
     return parser.parse_args()
 
@@ -732,6 +1037,11 @@ def run_pipeline(args):
     print(f"Calculated World Rotation Matrix:\n{np.round(Rw_calc, 4)}")
     print(f"Calculated World Translation: {np.round(tw_calc, 4)} m")
 
+    R_step2_mats = np.einsum("nij,jk->nik", Rr_mats, R_calc.T)
+    R_step3_mats = np.einsum("ij,njk->nik", Rw_calc, R_step2_mats)
+    q_step2 = normalize_quat_array(R.from_matrix(R_step2_mats).as_quat())
+    q_step3 = normalize_quat_array(R.from_matrix(R_step3_mats).as_quat())
+
     if args.synthetic:
         rot_ext_err_deg = np.degrees(R.from_matrix(R_calc.T @ R_ext_true).magnitude())
         t_ext_err = np.linalg.norm(t_calc - t_ext_true)
@@ -822,6 +1132,60 @@ def run_pipeline(args):
         },
     )
 
+    stage_trajs = {
+        "raw": {"pos": pr_sync, "quat": qr_sync},
+        "step2": {"pos": pr_corrected, "quat": q_step2},
+        "step3": {"pos": pr_final, "quat": q_step3},
+    }
+    evo_ape = {}
+    evo_rpe = {}
+    for stage_name, stage_data in stage_trajs.items():
+        evo_ape[stage_name] = compute_ape_evo_style(
+            pos_ref=pos_vicon,
+            quat_ref=quat_vicon,
+            pos_est=stage_data["pos"],
+            quat_est=stage_data["quat"],
+        )
+        evo_rpe[stage_name] = compute_rpe_evo_style(
+            pos_ref=pos_vicon,
+            quat_ref=quat_vicon,
+            pos_est=stage_data["pos"],
+            quat_est=stage_data["quat"],
+            delta=args.rpe_delta,
+            delta_unit=args.rpe_delta_unit,
+            rel_delta_tol=args.rpe_delta_tol,
+            all_pairs=args.rpe_all_pairs,
+            pairs_from_reference=args.rpe_pairs_from_reference,
+        )
+
+    evo_metrics = {
+        "ape": evo_ape,
+        "rpe": evo_rpe,
+        "rpe_config": {
+            "delta": args.rpe_delta,
+            "delta_unit": args.rpe_delta_unit,
+            "delta_tol": args.rpe_delta_tol,
+            "all_pairs": bool(args.rpe_all_pairs),
+            "pairs_from_reference": bool(args.rpe_pairs_from_reference),
+        },
+    }
+
+    print("\n--- EVO-STYLE METRICS (APE/RPE) ---")
+    for stage_name in ("raw", "step2", "step3"):
+        ape_t = evo_metrics["ape"][stage_name]["translation_part"]["rmse"]
+        ape_r = evo_metrics["ape"][stage_name]["rotation_angle_deg"]["rmse"]
+        rpe_t = evo_metrics["rpe"][stage_name]["translation_part"]["rmse"]
+        rpe_r = evo_metrics["rpe"][stage_name]["rotation_angle_deg"]["rmse"]
+        pairs = evo_metrics["rpe"][stage_name]["pair_count"]
+        print(
+            f"{stage_name}: "
+            f"APE_trans_rmse={ape_t:.6f} m, "
+            f"APE_rot_rmse={ape_r:.6f} deg, "
+            f"RPE_trans_rmse={rpe_t:.6f} m, "
+            f"RPE_rot_rmse={rpe_r:.6f} deg, "
+            f"pairs={pairs}"
+        )
+
     fig2 = plt.figure(figsize=(15, 5))
     titles = ["Raw (After Step-1 Sync)", "Sensor Fixed (Step 2)", "Fully Aligned (Step 3)"]
     datas = [pr_sync[::50], pr_corrected[::50], pr_final[::50]]
@@ -838,6 +1202,7 @@ def run_pipeline(args):
         "time_alignment": time_metrics,
         "step2_residuals": step2_metrics,
         "trajectory": traj_metrics,
+        "evo_metrics": evo_metrics,
         "sanity_check": sanity_metrics,
         "estimated_params": {
             "R_ext": R_calc,
