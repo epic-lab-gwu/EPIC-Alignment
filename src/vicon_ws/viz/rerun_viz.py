@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 import sys
 from typing import Dict, Optional
@@ -78,12 +80,12 @@ def _send_timed_points(
     if pos.shape[0] == 0 or tvals.size == 0:
         return
     n = min(pos.shape[0], tvals.size)
-    pos = pos[:n]
-    tvals = tvals[:n]
+    pos_n = pos[:n]
+    tvals_n = tvals[:n]
     rr.send_columns(
         entity_path,
-        indexes=[_timeline_column(rr, timeline_name, tvals)],
-        columns=[*rr.Points3D.columns(positions=pos, colors=[color_u32] * n)],
+        indexes=[_timeline_column(rr, timeline_name, tvals_n)],
+        columns=[*rr.Points3D.columns(positions=pos_n, colors=[color_u32] * n)],
     )
     rr.log(
         entity_path,
@@ -108,9 +110,9 @@ def _send_timed_line_strips(
     if pos.shape[0] < 2 or tvals.size < 2:
         return
     n = min(pos.shape[0], tvals.size)
-    pos = pos[:n]
-    tvals = tvals[:n]
-    strips = [[a, b] for a, b in zip(pos[:-1], pos[1:])]
+    pos_n = pos[:n]
+    tvals_n = tvals[:n]
+    strips = [[a, b] for a, b in zip(pos_n[:-1], pos_n[1:])]
     if colors_u32 is not None:
         seg_colors = colors_u32[: len(strips)]
     else:
@@ -119,7 +121,7 @@ def _send_timed_line_strips(
     columns = rr.LineStrips3D.columns(strips=strips, colors=seg_colors)
     rr.send_columns(
         entity_path,
-        indexes=[_timeline_column(rr, timeline_name, tvals[1:])],
+        indexes=[_timeline_column(rr, timeline_name, tvals_n[1:])],
         columns=[*columns],
     )
     if static_color_rgba is not None:
@@ -151,30 +153,30 @@ def _send_timed_transforms(
     if pos.shape[0] == 0 or tvals.size == 0:
         return
     n = min(pos.shape[0], tvals.size)
-    pos = pos[:n]
-    tvals = tvals[:n]
+    pos_n = pos[:n]
+    tvals_n = tvals[:n]
     if quats_xyzw is not None:
         quat = np.asarray(quats_xyzw, dtype=float)
         if quat.shape[0] >= n:
             rr.send_columns(
                 entity_path,
-                indexes=[_timeline_column(rr, timeline_name, tvals)],
+                indexes=[_timeline_column(rr, timeline_name, tvals_n)],
                 columns=rr.Transform3D.columns(
-                    translation=pos,
+                    translation=pos_n,
                     quaternion=quat[:n],
                 ),
             )
         else:
             rr.send_columns(
                 entity_path,
-                indexes=[_timeline_column(rr, timeline_name, tvals)],
-                columns=rr.Transform3D.columns(translation=pos),
+                indexes=[_timeline_column(rr, timeline_name, tvals_n)],
+                columns=rr.Transform3D.columns(translation=pos_n),
             )
     else:
         rr.send_columns(
             entity_path,
-            indexes=[_timeline_column(rr, timeline_name, tvals)],
-            columns=rr.Transform3D.columns(translation=pos),
+            indexes=[_timeline_column(rr, timeline_name, tvals_n)],
+            columns=rr.Transform3D.columns(translation=pos_n),
         )
     rr.log(entity_path, rr.TransformAxes3D.from_fields(axis_length=axis_length), static=True)
 
@@ -506,14 +508,15 @@ def log_alignment_to_rerun(
         if not (len(gt) == len(raw) == len(step2) == len(step3)):
             raise ValueError("All trajectories must have the same number of poses for replay.")
 
+        t_full: np.ndarray
         if timestamps_s is None:
             t_full = np.arange(len(gt), dtype=float)
             use_time_seconds = False
         else:
-            t_full = np.asarray(timestamps_s, dtype=float)
-            if len(t_full) != len(gt):
+            t_full_raw = np.asarray(timestamps_s, dtype=float)
+            if len(t_full_raw) != len(gt):
                 raise ValueError("timestamps_s length must match trajectory length.")
-            t_full = t_full - t_full[0]
+            t_full = t_full_raw - t_full_raw[0]
             use_time_seconds = True
 
         timeline_name = "time" if use_time_seconds else "index"

@@ -3,7 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
+export MPLCONFIGDIR="$(mktemp -d /tmp/vicon_ws_mpl_XXXXXX)"
+trap 'rm -rf "${MPLCONFIGDIR}"' EXIT
 
 python3 -m vicon_ws.cli --help >/dev/null
 echo "smoke ok: vicon_ws.cli --help"
-

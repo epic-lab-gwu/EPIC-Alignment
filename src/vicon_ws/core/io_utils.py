@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 try:
     import pandas as pd
@@ -11,6 +12,15 @@ except Exception:
     pd = None
 
 from .math_utils import normalize_quat_array, normalize_time_to_seconds
+
+SUPPORTED_ROS_MSGS = {
+    "geometry_msgs/msg/PointStamped",
+    "geometry_msgs/msg/PoseStamped",
+    "geometry_msgs/msg/PoseWithCovarianceStamped",
+    "geometry_msgs/msg/TransformStamped",
+    "nav_msgs/msg/Odometry",
+    "tf2_msgs/msg/TFMessage",
+}
 
 
 def to_builtin(value):
@@ -385,16 +395,262 @@ def load_estimation_tum(path):
     return t, pos, quat
 
 
-def load_estimation_trajectory(path, est_format):
+def load_estimation_kitti(path):
+    arr = np.loadtxt(path)
+    if arr.ndim == 1:
+        arr = arr[None, :]
+    if arr.shape[1] < 12:
+        raise ValueError("KITTI pose file must have at least 12 columns per row.")
+
+    n = arr.shape[0]
+    mats = np.repeat(np.eye(3)[None, :, :], n, axis=0)
+    mats[:, 0, 0] = arr[:, 0]
+    mats[:, 0, 1] = arr[:, 1]
+    mats[:, 0, 2] = arr[:, 2]
+    mats[:, 1, 0] = arr[:, 4]
+    mats[:, 1, 1] = arr[:, 5]
+    mats[:, 1, 2] = arr[:, 6]
+    mats[:, 2, 0] = arr[:, 8]
+    mats[:, 2, 1] = arr[:, 9]
+    mats[:, 2, 2] = arr[:, 10]
+
+    pos = np.column_stack([arr[:, 3], arr[:, 7], arr[:, 11]])
+    quat = normalize_quat_array(R.from_matrix(mats).as_quat())
+    t = normalize_time_to_seconds(np.arange(n, dtype=float))
+    return t, pos, quat
+
+
+def _normalize_msg_type(msgtype):
+    msgtype = str(msgtype)
+    if "/msg/" in msgtype:
+        return msgtype
+    parts = msgtype.split("/")
+    if len(parts) == 2:
+        return f"{parts[0]}/msg/{parts[1]}"
+    return msgtype
+
+
+def _stamp_to_sec(stamp):
+    sec = getattr(stamp, "sec", getattr(stamp, "secs", 0))
+    nsec = getattr(stamp, "nanosec", getattr(stamp, "nsec", 0))
+    return float(sec) + float(nsec) * 1e-9
+
+
+def _extract_msg_stamp_sec(msg, fallback_stamp_ns):
+    header = getattr(msg, "header", None)
+    if header is not None and hasattr(header, "stamp"):
+        return _stamp_to_sec(header.stamp)
+    return float(fallback_stamp_ns) * 1e-9
+
+
+def _extract_xyz_quat(msg, msgtype):
+    canonical = _normalize_msg_type(msgtype)
+    if canonical == "geometry_msgs/msg/TransformStamped":
+        tr = msg.transform
+        xyz = [tr.translation.x, tr.translation.y, tr.translation.z]
+        quat = [tr.rotation.x, tr.rotation.y, tr.rotation.z, tr.rotation.w]
+        return xyz, quat
+
+    if canonical == "geometry_msgs/msg/PointStamped":
+        pt = msg.point
+        xyz = [pt.x, pt.y, pt.z]
+        return xyz, [0.0, 0.0, 0.0, 1.0]
+
+    pose = msg.pose
+    while not hasattr(pose, "position") and hasattr(pose, "pose"):
+        pose = pose.pose
+    xyz = [pose.position.x, pose.position.y, pose.position.z]
+    quat = [pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w]
+    return xyz, quat
+
+
+def _extract_xyz_quat_from_transform(transform_stamped):
+    tr = transform_stamped.transform
+    xyz = [tr.translation.x, tr.translation.y, tr.translation.z]
+    quat = [tr.rotation.x, tr.rotation.y, tr.rotation.z, tr.rotation.w]
+    return xyz, quat
+
+
+def _parse_tf_topic(topic):
+    topic = str(topic)
+    if ":" not in topic:
+        return topic, None, None
+    base_topic, tf_id = topic.split(":", 1)
+    if "." not in tf_id:
+        raise ValueError(
+            "TF topic id must use '/tf:parent.child' format, "
+            f"got: {topic}"
+        )
+    parent, child = tf_id.split(".", 1)
+    if not base_topic or not parent or not child:
+        raise ValueError(
+            "TF topic id must use '/tf:parent.child' format, "
+            f"got: {topic}"
+        )
+    return base_topic, parent, child
+
+
+def _infer_text_trajectory_format(path):
+    with Path(path).open("r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            cols = line.replace(",", " ").split()
+            if len(cols) >= 12:
+                return "kitti"
+            if len(cols) >= 8:
+                return "tum"
+            break
+    raise ValueError(f"Cannot infer trajectory format from text file: {path}")
+
+
+def _infer_bag_kind(path):
+    path = Path(path)
+    if path.is_dir():
+        return "bag2"
+    suffix = path.suffix.lower()
+    if suffix == ".bag":
+        return "bag"
+    if suffix == ".mcap":
+        return "mcap"
+    raise ValueError(
+        f"Cannot infer bag type from path: {path}. "
+        "Use --est-format bag|bag2|mcap and provide --est-topic."
+    )
+
+
+def load_bag_trajectory(path, topic, bag_format="auto"):
+    if topic is None or str(topic).strip() == "":
+        raise ValueError("Bag trajectory loading requires a non-empty topic (e.g. --est-topic /pose).")
+    bag_topic, tf_parent, tf_child = _parse_tf_topic(topic)
+    use_tf_selector = tf_parent is not None and tf_child is not None
+
+    try:
+        from rosbags.rosbag1 import Reader as Rosbag1Reader
+        from rosbags.rosbag2 import Reader as Rosbag2Reader
+        from rosbags.typesys import Stores, get_typestore
+    except Exception as exc:
+        raise ImportError("Bag input requires rosbags. Install with: pip install 'vicon-ws[ros]'") from exc
+
+    bag_kind = _infer_bag_kind(path) if bag_format == "auto" else bag_format
+    if bag_kind not in {"bag", "bag2", "mcap"}:
+        raise ValueError(f"Unsupported bag format: {bag_kind}")
+
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Bag path not found: {path}")
+
+    reader = Rosbag1Reader(str(path)) if bag_kind == "bag" else Rosbag2Reader(str(path))
+    stamps = []
+    xyz = []
+    quat = []
+    try:
+        reader.open()
+        connections = [c for c in reader.connections if c.topic == bag_topic]
+        if not connections:
+            available = sorted({c.topic for c in reader.connections})
+            hint = ", ".join(available[:10]) + (" ..." if len(available) > 10 else "")
+            raise ValueError(f"Topic not found in bag: {bag_topic}. Available topics: {hint}")
+
+        is_ros1 = isinstance(reader, Rosbag1Reader)
+        typestore = get_typestore(Stores.ROS1_NOETIC if is_ros1 else Stores.LATEST)
+        for connection, stamp_ns, raw in reader.messages(connections=connections):  # type: ignore
+            msgtype = _normalize_msg_type(connection.msgtype)
+            if msgtype not in SUPPORTED_ROS_MSGS:
+                raise ValueError(f"Unsupported bag message type: {connection.msgtype}")
+            msg = (
+                typestore.deserialize_ros1(raw, connection.msgtype)
+                if is_ros1
+                else typestore.deserialize_cdr(raw, connection.msgtype)
+            )
+            if use_tf_selector:
+                if msgtype != "tf2_msgs/msg/TFMessage":
+                    raise ValueError(
+                        f"Topic '{bag_topic}' is not a TF message stream, got {connection.msgtype}"
+                    )
+                for tf in msg.transforms:
+                    if tf.header.frame_id == tf_parent and tf.child_frame_id == tf_child:
+                        stamps.append(_stamp_to_sec(tf.header.stamp))
+                        p_xyz, q_xyzw = _extract_xyz_quat_from_transform(tf)
+                        xyz.append(p_xyz)
+                        quat.append(q_xyzw)
+            else:
+                t_sec = _extract_msg_stamp_sec(msg, stamp_ns)
+                p_xyz, q_xyzw = _extract_xyz_quat(msg, connection.msgtype)
+                stamps.append(t_sec)
+                xyz.append(p_xyz)
+                quat.append(q_xyzw)
+    finally:
+        reader.close()
+
+    if not stamps:
+        if use_tf_selector:
+            raise ValueError(
+                f"No TF trajectory found for {bag_topic}:{tf_parent}.{tf_child}"
+            )
+        raise ValueError(f"No trajectory messages found for topic: {bag_topic}")
+
+    t = normalize_time_to_seconds(np.asarray(stamps, dtype=float))
+    pos = np.asarray(xyz, dtype=float)
+    q = normalize_quat_array(np.asarray(quat, dtype=float))
+    return t, pos, q
+
+
+def load_reference_trajectory(path, gt_format="csv", gt_topic=""):
+    gt_format = str(gt_format).lower()
+    path = Path(path)
+
+    if gt_format == "csv":
+        return load_vicon_csv(path)
+    if gt_format == "euroc":
+        return load_estimation_csv(path)
+    if gt_format == "tum":
+        return load_estimation_tum(path)
+    if gt_format == "kitti":
+        return load_estimation_kitti(path)
+    if gt_format in {"bag", "bag2", "mcap"}:
+        return load_bag_trajectory(path, gt_topic, bag_format=gt_format)
+    if gt_format == "auto":
+        if path.is_dir() or path.suffix.lower() in {".bag", ".mcap"}:
+            return load_bag_trajectory(path, gt_topic, bag_format="auto")
+        suffix = path.suffix.lower()
+        if suffix == ".csv":
+            return load_vicon_csv(path)
+        inferred = _infer_text_trajectory_format(path)
+        if inferred == "kitti":
+            return load_estimation_kitti(path)
+        return load_estimation_tum(path)
+    raise ValueError(f"Unsupported gt format: {gt_format}")
+
+
+def load_estimation_trajectory(path, est_format, est_topic=""):
+    est_format = str(est_format).lower()
+    path = Path(path)
+
     if est_format == "csv":
+        return load_estimation_csv(path)
+    if est_format == "euroc":
         return load_estimation_csv(path)
     if est_format == "tum":
         return load_estimation_tum(path)
+    if est_format == "kitti":
+        return load_estimation_kitti(path)
+    if est_format in {"bag", "bag2", "mcap"}:
+        return load_bag_trajectory(path, est_topic, bag_format=est_format)
 
-    suffix = path.suffix.lower()
-    if suffix == ".csv":
-        return load_estimation_csv(path)
-    return load_estimation_tum(path)
+    if est_format == "auto":
+        if path.is_dir() or path.suffix.lower() in {".bag", ".mcap"}:
+            return load_bag_trajectory(path, est_topic, bag_format="auto")
+        suffix = path.suffix.lower()
+        if suffix == ".csv":
+            return load_estimation_csv(path)
+        inferred = _infer_text_trajectory_format(path)
+        if inferred == "kitti":
+            return load_estimation_kitti(path)
+        return load_estimation_tum(path)
+
+    raise ValueError(f"Unsupported estimation format: {est_format}")
 
 
 def make_output_dir(script_dir):

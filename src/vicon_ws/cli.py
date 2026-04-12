@@ -14,13 +14,29 @@ def build_parser() -> argparse.ArgumentParser:
         default="modular",
         help="Execution engine. modular=src core modules, legacy=pipeline.py",
     )
-    parser.add_argument("--gt-csv", default="gt.csv", help="Path to GT CSV")
+    parser.add_argument("--gt-csv", default="gt.csv", help="Path to GT trajectory file/bag")
+    parser.add_argument(
+        "--gt-format",
+        choices=["auto", "csv", "euroc", "tum", "kitti", "bag", "bag2", "mcap"],
+        default="csv",
+        help="Ground-truth trajectory format",
+    )
+    parser.add_argument(
+        "--gt-topic",
+        default="",
+        help="GT topic for bag inputs (e.g. /vicon/pose)",
+    )
     parser.add_argument("--est-path", default="", help="Path to estimation trajectory")
     parser.add_argument(
         "--est-format",
-        choices=["auto", "csv", "tum"],
+        choices=["auto", "csv", "euroc", "tum", "kitti", "bag", "bag2", "mcap"],
         default="auto",
         help="Estimation trajectory format",
+    )
+    parser.add_argument(
+        "--est-topic",
+        default="",
+        help="Estimation topic for bag inputs (e.g. /odom)",
     )
     parser.add_argument(
         "--dt-resample",

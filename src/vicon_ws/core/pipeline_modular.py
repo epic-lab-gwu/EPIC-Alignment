@@ -24,7 +24,7 @@ from .evaluation import (
 )
 from .io_utils import (
     load_estimation_trajectory,
-    load_vicon_csv,
+    load_reference_trajectory,
     make_output_dir,
     save_metrics,
     write_metrics_zh_report,
@@ -51,7 +51,13 @@ def run_pipeline_modular(args, script_dir: Path):
         raise FileNotFoundError(f"GT CSV not found: {gt_path}")
 
     print("Loading GT trajectory...")
-    t_vicon, pos_vicon, quat_vicon = load_vicon_csv(gt_path)
+    gt_format = getattr(args, "gt_format", "csv")
+    gt_topic = getattr(args, "gt_topic", "")
+    t_vicon, pos_vicon, quat_vicon = load_reference_trajectory(
+        gt_path,
+        gt_format=gt_format,
+        gt_topic=gt_topic,
+    )
 
     mode = "synthetic" if args.synthetic else "real"
     sanity_metrics = {
@@ -90,7 +96,12 @@ def run_pipeline_modular(args, script_dir: Path):
 
         print("Loading estimation trajectory...")
         est_format = args.est_format
-        t_robot, pos_robot, quat_robot = load_estimation_trajectory(est_path, est_format)
+        est_topic = getattr(args, "est_topic", "")
+        t_robot, pos_robot, quat_robot = load_estimation_trajectory(
+            est_path,
+            est_format,
+            est_topic=est_topic,
+        )
 
     print("--- STEP 1: TIME ALIGNMENT ---")
     t_v_mid, om_v = get_angular_velocity_norm(t_vicon, quat_vicon)
@@ -243,10 +254,10 @@ def run_pipeline_modular(args, script_dir: Path):
     q_step3 = normalize_quat_array(R.from_matrix(R_step3_mats).as_quat())
 
     if args.synthetic:
-        rot_ext_err_deg = np.degrees(R.from_matrix(R_calc.T @ R_ext_true).magnitude())
-        t_ext_err = np.linalg.norm(t_calc - t_ext_true)
-        rot_world_err_deg = np.degrees(R.from_matrix(Rw_calc.T @ Rw_true).magnitude())
-        t_world_err = np.linalg.norm(tw_calc - tw_true)
+        rot_ext_err_deg = float(np.degrees(R.from_matrix(R_calc.T @ R_ext_true).magnitude()))
+        t_ext_err = float(np.linalg.norm(t_calc - t_ext_true))
+        rot_world_err_deg = float(np.degrees(R.from_matrix(Rw_calc.T @ Rw_true).magnitude()))
+        t_world_err = float(np.linalg.norm(tw_calc - tw_true))
         print("\n--- SANITY CHECK (vs Injected Truth) ---")
         print(f"Extrinsic rotation error: {rot_ext_err_deg:.4f} deg")
         print(f"Extrinsic translation error: {t_ext_err:.4f} m")
@@ -443,6 +454,10 @@ def run_pipeline_modular(args, script_dir: Path):
             "mode": mode,
             "gt_path": str(gt_path),
             "est_path": str(args.est_path) if args.est_path else "",
+            "gt_format": str(gt_format),
+            "est_format": str(getattr(args, "est_format", "auto")),
+            "gt_topic": str(gt_topic),
+            "est_topic": str(getattr(args, "est_topic", "")),
             "quat_interp": args.quat_interp,
             "rerun": rerun_info,
             "output_dir": str(run_dir),

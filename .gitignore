@@ -6,3 +6,6 @@ AGENTS.md
 
 # local run artifacts
 outputs/
+
+# external estimator workspaces (keep outside repo or untracked)
+sqrtVINS-main/

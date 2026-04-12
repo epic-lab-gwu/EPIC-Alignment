@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master"]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install package and dev tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .[dev]
+
+      - name: Lint (ruff)
+        run: ruff check src tests pipeline.py
+
+      - name: Type check (mypy)
+        run: mypy src tests/unit pipeline.py
+
+      - name: Unit tests
+        run: pytest -q tests/unit
+
+      - name: Smoke tests
+        run: |
+          bash tests/smoke/test_cli_help.sh
+          bash tests/smoke/test_engines.sh

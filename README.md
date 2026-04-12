@@ -1,19 +1,74 @@
 # vicon_ws
 
-TODO:
+---
+2026/4/12
+1. 扩展了输入格式, 但有一些格式还没实测能否work, 比如rosbag
+2. 优化了部分代码结构, 今天晚点上传
+3. evo的time offset换成非vicon_ws的offset, 重新跑了师兄给的case, 结果更新至summary.md
+4. 总共跑出来的有138个case, 有一些case fail了, 后面再看看原因; 有一些case没有匹配到对应的ground truth和estimation, 没跑
+
+---
 2026/4/10
 
-- evo支持更多的格式, vicon后面可以加上
-- 可考虑模仿evo, 补齐成一个完整的工具链cli
-- 可视化没做好, 可以参考evo弄个rerun
-- rerun的配置还没弄好(目前只能回放带有frame的轨迹(gt/3-step后的estimation/raw estimation(可选)), 渐变没弄好)
-- 重写了项目结构, 使其易于扩展和复用, 也保留了上个版本的pipeline.py
-- 把evo的metrics加了进来, 看看有什么可以新增的metrics
-- 用现在的vicon_ws和evo分别跑了alignanything, 结果在vicon_ws/outputs/alignanything_eval/summary_final.md
-- 现在evo的结果用了vicon_ws的offset, 后面可以改成人工sweep最优
-- vicon_ws的方法层面可能可以改进, 后面再看看
-- 上面这些弄得差不多了可以做个wiki网站
+## TODO:
+
+- [x] 重写了项目结构, 使其易于扩展和复用, 也保留了上个版本的pipeline.py;
+- [x] 把evo的metrics加了进来, 再看看有什么可以新增的metrics;
+- [x] 用现在的vicon_ws和evo分别跑了alignanything, 结果在vicon_ws/summary_final.md;
+- [x] evo支持更多的格式输入, vicon后面可以加上 # 4/12
+- [ ] 可考虑模仿evo, 补齐成一个完整的工具链cli
+- [ ] 指标的可视化没做好, 可以参考evo弄个rerun
+- [ ] rerun的配置还没弄好(目前只能回放带有frame的轨迹(gt/3-step后的estimation/raw estimation(可选)), 渐变没弄好)
+- [x] 现在evo的结果用了vicon_ws的offset, 后面可以改成人工sweep最优 # 4/12
+- [ ] vicon_ws的方法层面可能可以改进, 后面再看看
+- [ ] 上面这些弄得差不多了可以做个wiki网站
 ---
+
+## Packaging and CLI
+
+You can now install `vicon_ws` as a package and use a direct command entrypoint:
+
+```bash
+pip install -e .
+vicon_ws --help
+```
+
+Legacy script entry remains available:
+
+```bash
+python3 pipeline.py --help
+```
+
+Supported trajectory formats (`--gt-format` / `--est-format`):
+
+- `csv` / `euroc`
+- `tum`
+- `kitti`
+- `bag` (ROS1), `bag2` / `mcap` (ROS2 via rosbags)
+
+For bag support, install optional dependency:
+
+```bash
+pip install -e .[ros]
+```
+
+For bag inputs, provide topic names:
+
+```bash
+vicon_ws \
+  --gt-csv /path/to/run.bag \
+  --gt-format bag \
+  --gt-topic /vicon/pose \
+  --est-path /path/to/run.bag \
+  --est-format bag \
+  --est-topic /odom
+```
+
+TF streams are also supported with evo-style topic id:
+
+```bash
+--est-topic /tf:map.base_link
+```
 
 Workspace for trajectory-level replacement and 3-step alignment:
 
@@ -27,20 +82,64 @@ The pipeline is implemented in `pipeline.py` and supports:
 
 - `pipeline.py`: main 3-step pipeline
 - `gt.csv`: GT trajectory (EuRoC-style CSV)
-- `outputs/traj_estimate_v1_01.txt`: estimation trajectory exported by [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git)
-- `sqrtVINS-main/`: local [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git) source snapshot
+- `outputs/traj_estimate_v1_01.txt`: example estimation trajectory used by this repo
+- `docs/estimation_artifacts.md`: provenance notes for tracked estimation files
 - `track.md`: Chinese process notes
 
-## [sqrtVINS](https://github.com/rpng/sqrtVINS.git) Configuration
+## Independent AlignAnything Benchmark Harness
 
-Configured in `sqrtVINS-main/ov_srvins/launch/serial.launch`:
+`vicon_ws` now includes an independent benchmark harness for AlignAnything:
 
-- bag: `/home/yifu/vicon_room1/V1_01_easy/V1_01_easy.bag`
-- path_est: `/home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt`
+- `vicon_ws` and `evo` are run separately for each case.
+- `offset` is not shared:
+  - `vicon_ws`: uses internal Step-1 cross-correlation estimate.
+  - `evo`: uses an independent offset sweep inside the harness.
+- Both sides consume normalized TUM files generated from AlignAnything source files.
 
-Before running `pipeline.py` in real mode, you must build [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git) and run it once to generate estimation output.
+Run example:
 
-Run in Native System with EurocMav Dataset (Ubuntu 20.04 + ROS1 as Example):
+```bash
+PYTHONPATH=/home/yifu/vicon_ws/src \
+/home/yifu/miniconda3/envs/vicon_ws310/bin/python -m vicon_ws.benchmark.alignanything_harness \
+  --alignanything-root /home/yifu/vicon_ws/AlignAnything/AlignAnything \
+  --repo-root /home/yifu/vicon_ws \
+  --evo-repo /home/yifu/evo \
+  --limit 10
+```
+
+Output directory:
+
+- `outputs/alignanything_harness/run_xxx/summary.csv`
+- `outputs/alignanything_harness/run_xxx/summary.md`
+- `outputs/alignanything_harness/run_xxx/cases/*.json`
+
+Useful filters:
+
+```bash
+--methods rovio,svo_stereo
+--case-pattern 'euroc_.*_rovio'
+--dry-run
+```
+
+Plot summary charts from one harness run:
+
+```bash
+PYTHONPATH=/home/yifu/vicon_ws/src \
+/home/yifu/miniconda3/envs/vicon_ws310/bin/python -m vicon_ws.benchmark.plot_summary \
+  --summary-csv /home/yifu/vicon_ws/outputs/alignanything_harness/run_xxx/summary.csv
+```
+
+Generated files are written to:
+
+- `outputs/alignanything_harness/run_xxx/plots/*.png`
+- `outputs/alignanything_harness/run_xxx/plots/plots.md`
+
+## External Estimation Generation (Optional)
+
+`vicon_ws` consumes estimation trajectory files and does not require a vendored VIO codebase.
+If you need to regenerate estimation, run your estimator externally (e.g. [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git)) and export a supported format (`tum`/`kitti`/`csv`/`bag`).
+
+Example with external `sqrtVINS` workspace:
 
 ```bash
 # Step 1: Create the workspace
@@ -55,14 +154,14 @@ catkin build
 # Step 3: Download EurocMav rosbag:
 # https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets
 # Put bag files under: $HOME/datasets/euroc_mav
-# Or change the bag path in: ov_srvins/launch/serial.launch
+# Or change the bag path in: ov_srvins/launch/serial.launch (in external workspace)
 
 # Step 4: Run the launch file
 source ~/sqrt_vins_ws/devel/setup.bash
 roslaunch ov_srvins serial.launch
 ```
 
-After it finishes, the estimation trajectory is saved to:
+After it finishes, export/copy the trajectory into this repo, e.g.:
 
 `/home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt`
 
@@ -184,7 +283,7 @@ ate_rmse_improve_raw_to_step3_pct: 100.000000 %
 ate_rmse_improve_step2_to_step3_pct: 100.000000 %
 ```
 
-### B) sqrtVINS Estimation vs GT
+### B) External Estimation vs GT (Example: sqrtVINS output)
 
 Run command:
 
@@ -197,7 +296,7 @@ MPLBACKEND=Agg python3 pipeline.py \
 ```
 
 Use this mode for real estimation trajectory alignment against GT. (`linear` is the default interpolation mode.)
-Prerequisite: `roslaunch ov_srvins serial.launch` has already generated `outputs/traj_estimate_v1_01.txt`.
+Prerequisite: you already have an estimation trajectory file (from sqrtVINS or any other estimator) at `--est-path`.
 
 Quick self-check after running:
 
@@ -273,7 +372,7 @@ ate_rmse_improve_raw_to_step3_pct: 98.032546 %
 ate_rmse_improve_step2_to_step3_pct: 98.055411 %
 ```
 
-### C) sqrtVINS Estimation vs GT (SLERP Quaternion Interpolation)
+### C) External Estimation vs GT (SLERP Quaternion Interpolation)
 
 Run command:
 

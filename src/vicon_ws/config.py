@@ -6,8 +6,11 @@ from typing import List
 @dataclass(frozen=True)
 class PipelineOptions:
     gt_csv: str = "gt.csv"
+    gt_format: str = "csv"
+    gt_topic: str = ""
     est_path: str = ""
     est_format: str = "auto"
+    est_topic: str = ""
     dt_resample: float = 0.001
     synthetic: bool = False
     quat_interp: str = "linear"
@@ -21,6 +24,8 @@ class PipelineOptions:
         argv = [
             "--gt-csv",
             self.gt_csv,
+            "--gt-format",
+            self.gt_format,
             "--est-format",
             self.est_format,
             "--dt-resample",
@@ -34,8 +39,12 @@ class PipelineOptions:
             "--rpe-delta-tol",
             str(self.rpe_delta_tol),
         ]
+        if self.gt_topic:
+            argv.extend(["--gt-topic", self.gt_topic])
         if self.est_path:
             argv.extend(["--est-path", self.est_path])
+        if self.est_topic:
+            argv.extend(["--est-topic", self.est_topic])
         if self.synthetic:
             argv.append("--synthetic")
         if self.rpe_all_pairs:

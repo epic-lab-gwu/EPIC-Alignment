@@ -8,17 +8,20 @@ from .core.pipeline_modular import run_pipeline_modular
 
 def run(ns: Namespace) -> int:
     opts = PipelineOptions(
-        gt_csv=ns.gt_csv,
-        est_path=ns.est_path or "",
-        est_format=ns.est_format,
-        dt_resample=ns.dt_resample,
-        synthetic=bool(ns.synthetic),
-        quat_interp=ns.quat_interp,
-        rpe_delta=ns.rpe_delta,
-        rpe_delta_unit=ns.rpe_delta_unit,
-        rpe_delta_tol=ns.rpe_delta_tol,
-        rpe_all_pairs=bool(ns.rpe_all_pairs),
-        rpe_pairs_from_reference=bool(ns.rpe_pairs_from_reference),
+        gt_csv=getattr(ns, "gt_csv", "gt.csv"),
+        gt_format=getattr(ns, "gt_format", "csv"),
+        gt_topic=getattr(ns, "gt_topic", "") or "",
+        est_path=getattr(ns, "est_path", "") or "",
+        est_format=getattr(ns, "est_format", "auto"),
+        est_topic=getattr(ns, "est_topic", "") or "",
+        dt_resample=getattr(ns, "dt_resample", 0.001),
+        synthetic=bool(getattr(ns, "synthetic", False)),
+        quat_interp=getattr(ns, "quat_interp", "linear"),
+        rpe_delta=getattr(ns, "rpe_delta", 1.0),
+        rpe_delta_unit=getattr(ns, "rpe_delta_unit", "f"),
+        rpe_delta_tol=getattr(ns, "rpe_delta_tol", 0.1),
+        rpe_all_pairs=bool(getattr(ns, "rpe_all_pairs", False)),
+        rpe_pairs_from_reference=bool(getattr(ns, "rpe_pairs_from_reference", False)),
     )
     repo_root = project_root_from_file(Path(__file__))
     engine = getattr(ns, "engine", "legacy")
