@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import sys
 from typing import Dict, Optional
 
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-vicon_ws")
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 import matplotlib.cm
@@ -43,7 +45,10 @@ def _set_timeline(rr, t_val: float, use_time_seconds: bool) -> None:
 def _timeline_column(rr, timeline_name: str, values: np.ndarray):
     values = np.asarray(values)
     if timeline_name == "time":
-        return rr.TimeColumn("time", timestamp=values.astype(float))
+        try:
+            return rr.TimeColumn("time", duration=values.astype(float))
+        except TypeError:
+            return rr.TimeColumn("time", timestamp=values.astype(float))
     return rr.TimeColumn("index", sequence=values.astype(np.int64))
 
 
@@ -52,11 +57,31 @@ def _rgb_to_u32(colors_rgb: np.ndarray) -> list[int]:
     return [int((int(r) << 24) | (int(g) << 16) | (int(b) << 8) | 255) for r, g, b in rgb]
 
 
-def _mapped_colors(cmap_name: str, values: np.ndarray) -> list[int]:
+def _mapped_colors(
+    cmap_name: str,
+    values: np.ndarray,
+    *,
+    lower_percentile: float | None = None,
+    upper_percentile: float | None = None,
+) -> list[int]:
     vals = np.asarray(values, dtype=float).reshape(-1)
     if vals.size == 0:
         return []
-    norm = Normalize(vmin=float(vals.min()), vmax=float(vals.max()), clip=True)
+    finite = vals[np.isfinite(vals)]
+    if finite.size == 0:
+        return []
+    lo = float(np.min(finite))
+    hi = float(np.max(finite))
+    if lower_percentile is not None:
+        lo = float(np.percentile(finite, float(lower_percentile)))
+    if upper_percentile is not None:
+        hi = float(np.percentile(finite, float(upper_percentile)))
+    if hi <= lo:
+        lo = float(np.min(finite))
+        hi = float(np.max(finite))
+    if hi <= lo:
+        hi = lo + 1e-12
+    norm = Normalize(vmin=lo, vmax=hi, clip=True)
     mapper = matplotlib.cm.ScalarMappable(norm=norm, cmap=cmap_name)
     mapper.set_array(vals)
     return [
@@ -90,6 +115,25 @@ def _send_timed_points(
     rr.log(
         entity_path,
         rr.Points3D.from_fields(radii=[radius]),
+        static=True,
+    )
+
+
+def _log_static_traj_label(
+    rr,
+    *,
+    entity_path: str,
+    position_xyz: np.ndarray,
+    text: str,
+) -> None:
+    pos = np.asarray(position_xyz, dtype=float).reshape(3)
+    rr.log(
+        entity_path,
+        rr.Points3D.from_fields(
+            positions=np.asarray([pos], dtype=float),
+            labels=[str(text)],
+            radii=[0.0],
+        ),
         static=True,
     )
 
@@ -531,6 +575,7 @@ def log_alignment_to_rerun(
         t_replay = t_full[::replay_step]
         gt_replay = gt[::replay_step]
         raw_replay = raw[::replay_step]
+        step2_replay = step2[::replay_step]
         step3_replay = step3[::replay_step]
 
         gt_quat_replay = (
@@ -546,6 +591,11 @@ def log_alignment_to_rerun(
         step3_quat_replay = (
             np.asarray(step3_quat, dtype=float)[::replay_step]
             if step3_quat is not None
+            else None
+        )
+        step2_quat_replay = (
+            np.asarray(step2_quat, dtype=float)[::replay_step]
+            if step2_quat is not None
             else None
         )
 
@@ -577,6 +627,15 @@ def log_alignment_to_rerun(
             timeline_values=t_replay,
             axis_length=0.04,
         )
+        _send_timed_transforms(
+            rr,
+            entity_path="vicon_ws/replay/step2/pose",
+            positions=step2_replay,
+            quats_xyzw=step2_quat_replay,
+            timeline_name=timeline_name,
+            timeline_values=t_replay,
+            axis_length=0.033,
+        )
 
         _send_timed_line_strips(
             rr,
@@ -596,6 +655,15 @@ def log_alignment_to_rerun(
             radii=0.0010,
             static_color_rgba=[235, 70, 70, 170],
         )
+        _send_timed_line_strips(
+            rr,
+            entity_path="vicon_ws/replay/step2/lines",
+            positions=step2_replay,
+            timeline_name=timeline_name,
+            timeline_values=t_replay,
+            radii=0.0010,
+            static_color_rgba=[150, 150, 150, 170],
+        )
 
         # evo-like visual style: same mapping idea as evo_ape/evo_rpe in rerun:
         # map per-pose error values through the configured trajectory colormap (jet by default).
@@ -603,7 +671,12 @@ def log_alignment_to_rerun(
             err_replay = np.asarray(step3_error_m, dtype=float).reshape(-1)[::replay_step]
             if err_replay.size >= 2:
                 # line segments are between pose i-1 -> i, so use error at i
-                step3_seg_colors = _mapped_colors("jet", err_replay[1:])
+                step3_seg_colors = _mapped_colors(
+                    "jet",
+                    err_replay[1:],
+                    lower_percentile=5.0,
+                    upper_percentile=95.0,
+                )
             else:
                 step3_progress = np.linspace(0.0, 1.0, max(1, len(step3_replay) - 1))
                 step3_seg_colors = _mapped_colors("jet", step3_progress)
@@ -694,6 +767,30 @@ def log_alignment_to_rerun(
             timeline_values=t_full,
             color_rgba=[120, 155, 205, 255],
         )
+        _log_static_traj_label(
+            rr,
+            entity_path="vicon_ws/replay/gt/label",
+            position_xyz=gt[-1],
+            text="gt",
+        )
+        _log_static_traj_label(
+            rr,
+            entity_path="vicon_ws/replay/raw/label",
+            position_xyz=raw[-1],
+            text="raw",
+        )
+        _log_static_traj_label(
+            rr,
+            entity_path="vicon_ws/replay/step2/label",
+            position_xyz=step2[-1],
+            text="step2",
+        )
+        _log_static_traj_label(
+            rr,
+            entity_path="vicon_ws/replay/step3/label",
+            position_xyz=step3[-1],
+            text="step3",
+        )
 
         # Static statistics bars.
         stage_stats = {}
@@ -737,6 +834,311 @@ def log_alignment_to_rerun(
                 "Rerun logged (not persisted to .rrd, evo-style) "
                 f"(timeline={timeline_name}, replay_step={replay_step}, replay_poses={len(t_replay)})"
             ),
+        }
+    except Exception as exc:
+        return {
+            "enabled": "true",
+            "status": "rerun_runtime_error",
+            "message": str(exc),
+        }
+
+
+def _init_rerun_recording(rr, *, app_id: str, spawn: bool, recording_id: Optional[str]) -> None:
+    init_kwargs = {"spawn": False}
+    if recording_id is not None and str(recording_id).strip():
+        init_kwargs["recording_id"] = str(recording_id)
+    try:
+        rr.init(app_id, **init_kwargs)
+    except TypeError:
+        rr.init(app_id, spawn=False)
+    if spawn:
+        env_rerun = Path(sys.executable).resolve().parent / "rerun"
+        if env_rerun.exists():
+            rr.spawn(executable_path=str(env_rerun))
+        else:
+            rr.spawn()
+
+
+def log_trajectories_to_rerun(
+    *,
+    trajectories: list[dict],
+    app_id: str = "vicon_ws_traj",
+    spawn: bool = True,
+    recording_id: Optional[str] = None,
+) -> Dict[str, str]:
+    try:
+        import rerun as rr
+    except Exception as exc:
+        return {
+            "enabled": "false",
+            "status": "rerun_sdk_missing",
+            "message": f"Install rerun-sdk to enable visualization ({exc})",
+        }
+
+    try:
+        _init_rerun_recording(
+            rr,
+            app_id=app_id,
+            spawn=spawn,
+            recording_id=recording_id,
+        )
+        palette = [
+            [0, 210, 0, 255],
+            [235, 70, 70, 255],
+            [120, 155, 205, 255],
+            [220, 170, 40, 255],
+            [180, 90, 210, 255],
+        ]
+        use_time = any(item.get("timestamps", None) is not None for item in trajectories)
+        try:
+            _send_blueprint("time" if use_time else "index")
+        except Exception:
+            pass
+        logged = 0
+        for i, item in enumerate(trajectories):
+            name = str(item.get("name", f"traj_{i+1}")).strip().replace("/", "_")
+            pos = np.asarray(item.get("positions", []), dtype=float).reshape(-1, 3)
+            quat_raw = item.get("quaternions", None)
+            quat = None if quat_raw is None else np.asarray(quat_raw, dtype=float).reshape(-1, 4)
+            if pos.shape[0] == 0:
+                continue
+            t_raw = item.get("timestamps", None)
+            if t_raw is not None:
+                t = np.asarray(t_raw, dtype=float).reshape(-1)
+                n = min(pos.shape[0], t.size)
+                pos = pos[:n]
+                if quat is not None and quat.shape[0] >= n:
+                    quat = quat[:n]
+                t = t[:n] - float(t[0])
+                timeline_name = "time"
+            else:
+                n = pos.shape[0]
+                if quat is not None and quat.shape[0] >= n:
+                    quat = quat[:n]
+                t = np.arange(n, dtype=float)
+                timeline_name = "index"
+
+            color = palette[i % len(palette)]
+            _send_timed_line_strips(
+                rr,
+                entity_path=f"vicon_ws/replay/{name}/lines",
+                positions=pos,
+                timeline_name=timeline_name,
+                timeline_values=t,
+                radii=0.0014,
+                static_color_rgba=color,
+            )
+            _send_timed_transforms(
+                rr,
+                entity_path=f"vicon_ws/replay/{name}/pose",
+                positions=pos,
+                quats_xyzw=quat,
+                timeline_name=timeline_name,
+                timeline_values=t,
+                axis_length=0.04,
+            )
+            _send_xyz_rpy_speed(
+                rr,
+                base_path="vicon_ws/time_series",
+                name=name,
+                positions=pos,
+                quats_xyzw=quat,
+                timeline_name=timeline_name,
+                timeline_values=t,
+                color_rgba=color,
+            )
+            _log_static_traj_label(
+                rr,
+                entity_path=f"vicon_ws/replay/{name}/label",
+                position_xyz=pos[-1],
+                text=name,
+            )
+            logged += 1
+
+        return {
+            "enabled": "true",
+            "status": "ok",
+            "message": f"Logged {logged} trajectory stream(s) to rerun.",
+        }
+    except Exception as exc:
+        return {
+            "enabled": "true",
+            "status": "rerun_runtime_error",
+            "message": str(exc),
+        }
+
+
+def log_metric_to_rerun(
+    *,
+    metric_name: str,
+    relation: str,
+    ref_positions: np.ndarray,
+    est_positions: np.ndarray,
+    errors: np.ndarray,
+    ref_quaternions: Optional[np.ndarray] = None,
+    est_quaternions: Optional[np.ndarray] = None,
+    sample_indices: Optional[np.ndarray] = None,
+    timeline_values: Optional[np.ndarray] = None,
+    timeline_is_seconds: bool = True,
+    app_id: str = "vicon_ws_metric",
+    spawn: bool = True,
+    recording_id: Optional[str] = None,
+) -> Dict[str, str]:
+    try:
+        import rerun as rr
+    except Exception as exc:
+        return {
+            "enabled": "false",
+            "status": "rerun_sdk_missing",
+            "message": f"Install rerun-sdk to enable visualization ({exc})",
+        }
+
+    try:
+        _init_rerun_recording(
+            rr,
+            app_id=app_id,
+            spawn=spawn,
+            recording_id=recording_id,
+        )
+        try:
+            _send_blueprint("time" if timeline_is_seconds else "index")
+        except Exception:
+            pass
+        ref_pos = np.asarray(ref_positions, dtype=float).reshape(-1, 3)
+        est_pos = np.asarray(est_positions, dtype=float).reshape(-1, 3)
+        errs = np.asarray(errors, dtype=float).reshape(-1)
+        if errs.size == 0:
+            return {
+                "enabled": "true",
+                "status": "ok",
+                "message": "No metric samples to log.",
+            }
+
+        if sample_indices is None:
+            idx = np.arange(min(est_pos.shape[0], errs.size), dtype=int)
+        else:
+            idx = np.asarray(sample_indices, dtype=int).reshape(-1)
+            idx = idx[(idx >= 0) & (idx < est_pos.shape[0])]
+            idx = idx[: errs.size]
+        if idx.size == 0:
+            return {
+                "enabled": "true",
+                "status": "ok",
+                "message": "No valid sample indices to log.",
+            }
+
+        errs = errs[: idx.size]
+        est_sel = est_pos[idx]
+        if timeline_values is None:
+            t = np.arange(idx.size, dtype=float)
+            timeline_name = "index"
+        else:
+            t_raw = np.asarray(timeline_values, dtype=float).reshape(-1)[: idx.size]
+            if t_raw.size == 0:
+                t = np.arange(idx.size, dtype=float)
+                timeline_name = "index"
+            else:
+                t = t_raw - float(t_raw[0]) if timeline_is_seconds else t_raw
+                timeline_name = "time" if timeline_is_seconds else "index"
+
+        ref_quat = None
+        if ref_quaternions is not None:
+            rq = np.asarray(ref_quaternions, dtype=float).reshape(-1, 4)
+            ref_quat = rq[: ref_pos.shape[0]]
+        est_quat = None
+        if est_quaternions is not None:
+            eq = np.asarray(est_quaternions, dtype=float).reshape(-1, 4)
+            if eq.shape[0] > np.max(idx):
+                est_quat = eq[idx]
+
+        _send_timed_line_strips(
+            rr,
+            entity_path="vicon_ws/replay/ref/lines",
+            positions=ref_pos,
+            timeline_name=timeline_name,
+            timeline_values=np.arange(ref_pos.shape[0], dtype=float),
+            radii=0.0012,
+            static_color_rgba=[0, 210, 0, 210],
+        )
+        _send_timed_line_strips(
+            rr,
+            entity_path="vicon_ws/replay/est/lines",
+            positions=est_sel,
+            timeline_name=timeline_name,
+            timeline_values=t,
+            radii=0.0016,
+            colors_u32=_mapped_colors(
+                "jet",
+                errs[1:] if errs.size > 1 else errs,
+                lower_percentile=5.0,
+                upper_percentile=95.0,
+            ),
+        )
+        _send_timed_transforms(
+            rr,
+            entity_path="vicon_ws/replay/ref/pose",
+            positions=ref_pos,
+            quats_xyzw=ref_quat,
+            timeline_name=timeline_name,
+            timeline_values=np.arange(ref_pos.shape[0], dtype=float),
+            axis_length=0.035,
+        )
+        _send_timed_transforms(
+            rr,
+            entity_path="vicon_ws/replay/est/pose",
+            positions=est_sel,
+            quats_xyzw=est_quat,
+            timeline_name=timeline_name,
+            timeline_values=t,
+            axis_length=0.04,
+        )
+
+        _send_scalar_series(
+            rr,
+            entity_path=f"vicon_ws/error/scalars/{metric_name}_{relation}",
+            values=errs,
+            timeline_name=timeline_name,
+            timeline_values=t,
+            color_rgba=[120, 155, 205, 255],
+            label=f"{metric_name.upper()} {relation}",
+        )
+        _send_xyz_rpy_speed(
+            rr,
+            base_path="vicon_ws/time_series",
+            name="ref",
+            positions=ref_pos,
+            quats_xyzw=ref_quat,
+            timeline_name=timeline_name,
+            timeline_values=np.arange(ref_pos.shape[0], dtype=float),
+            color_rgba=[0, 210, 0, 255],
+        )
+        _send_xyz_rpy_speed(
+            rr,
+            base_path="vicon_ws/time_series",
+            name="est",
+            positions=est_sel,
+            quats_xyzw=est_quat,
+            timeline_name=timeline_name,
+            timeline_values=t,
+            color_rgba=[235, 70, 70, 255],
+        )
+        _log_static_traj_label(
+            rr,
+            entity_path="vicon_ws/replay/ref/label",
+            position_xyz=ref_pos[-1],
+            text="ref",
+        )
+        _log_static_traj_label(
+            rr,
+            entity_path="vicon_ws/replay/est/label",
+            position_xyz=est_sel[-1],
+            text="est",
+        )
+
+        return {
+            "enabled": "true",
+            "status": "ok",
+            "message": f"Logged {metric_name.upper()} rerun stream with {idx.size} samples.",
         }
     except Exception as exc:
         return {

@@ -1,5 +1,20 @@
 # vicon_ws
 
+2026/4/13
+参考evo, 给vicon_ws
+1. 补齐了工具链的接口
+2. 做了可安装化: pyproject.toml + entry points
+3. 加了各种指标的可视化和绘图
+4. 配置好了rerun, 增加了一些细节(增加轨迹说明标签, 只对step3轨迹做渐变色映射)
+5. 增加了一些todo:
+
+- [ ] 起个名字, 方便代码统一
+- [ ] 参考evo, 补一个serialize_plot
+- [ ] 参考evo_ipython, 补一个 ipython/notebook 入口
+- [ ] 找一些bag/bag2/mcap的数据格式作为输入实测一下
+- [ ] vicon_ws的方法层面也许可能可以微调/改进
+- [ ] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
+
 ---
 2026/4/12
 1. 扩展了输入格式, 但有一些格式还没实测能否work, 比如rosbag
@@ -16,453 +31,288 @@
 - [x] 把evo的metrics加了进来, 再看看有什么可以新增的metrics;
 - [x] 用现在的vicon_ws和evo分别跑了alignanything, 结果在vicon_ws/summary_final.md;
 - [x] evo支持更多的格式输入, vicon后面可以加上 # 4/12
-- [ ] 可考虑模仿evo, 补齐成一个完整的工具链cli
-- [ ] 指标的可视化没做好, 可以参考evo弄个rerun
-- [ ] rerun的配置还没弄好(目前只能回放带有frame的轨迹(gt/3-step后的estimation/raw estimation(可选)), 渐变没弄好)
+- [x] 可考虑模仿evo, 补齐成一个完整的工具链cli # 4/13
+- [x] 指标可视化支持 rerun（APE/RPE/traj/3-step） # 4/13
+- [x] rerun 配置补齐（工具入口支持 `--rerun` 与 `--rerun-rec-id`） # 4/13
 - [x] 现在evo的结果用了vicon_ws的offset, 后面可以改成人工sweep最优 # 4/12
-- [ ] vicon_ws的方法层面可能可以改进, 后面再看看
-- [ ] 上面这些弄得差不多了可以做个wiki网站
+
 ---
+`vicon_ws` 是一个轨迹对齐与评估工具集，包含：
 
-## Packaging and CLI
+- 三步对齐主流程（时间对齐 -> 外参求解 -> 世界系对齐）
+- evo 风格的轨迹工具链（`traj / ape / rpe / res / config`）
+- 可选的 Rerun 可视化
+- AlignAnything 独立 benchmark harness
 
-You can now install `vicon_ws` as a package and use a direct command entrypoint:
+核心算法代码在 `src/vicon_ws/core`，`pipeline.py` 仅作为兼容入口（thin shim）。
+
+## 安装
 
 ```bash
 pip install -e .
-vicon_ws --help
 ```
 
-Legacy script entry remains available:
+可选依赖：
 
 ```bash
-python3 pipeline.py --help
-```
+# Rerun 可视化
+pip install -e .[rerun]
 
-Supported trajectory formats (`--gt-format` / `--est-format`):
-
-- `csv` / `euroc`
-- `tum`
-- `kitti`
-- `bag` (ROS1), `bag2` / `mcap` (ROS2 via rosbags)
-
-For bag support, install optional dependency:
-
-```bash
+# bag / bag2 / mcap
 pip install -e .[ros]
+
+# 地图底图（contextily）
+pip install -e .[geo]
+
+# 开发与测试
+pip install -e .[dev]
 ```
 
-For bag inputs, provide topic names:
+## 命令入口
+
+安装后可直接使用：
+
+- `vicon_ws`
+- `vicon_ws_traj`
+- `vicon_ws_ape`
+- `vicon_ws_rpe`
+- `vicon_ws_res`
+- `vicon_ws_config`
+- `vicon_ws_benchmark`
+- `vicon_ws_plot_summary`
+- `vicon_ws_metric_res`
+
+兼容旧入口：
+
+```bash
+python pipeline.py --help
+```
+
+## 快速开始
+
+### 1) 三步主流程（modular engine）
 
 ```bash
 vicon_ws \
-  --gt-csv /path/to/run.bag \
-  --gt-format bag \
-  --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag \
-  --est-format bag \
-  --est-topic /odom
+  --engine modular \
+  --gt-csv gt.csv \
+  --est-path outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --t-max-diff 0.02 \
+  --plot
 ```
 
-TF streams are also supported with evo-style topic id:
+启用 Rerun：
+
+```bash
+vicon_ws \
+  --engine modular \
+  --gt-csv gt.csv \
+  --est-path outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --t-max-diff 0.02 \
+  --plot \
+  --rerun
+```
+
+### 2) 轨迹工具 `vicon_ws_traj`
+
+```bash
+# 轨迹对比绘图
+vicon_ws_traj --format tum --plot --plot-mode xz gt.tum est.tum
+
+# 对齐与同步
+vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
+
+# 导出格式
+vicon_ws_traj --format auto --save-as tum --out-dir outputs/traj_exports traj_a traj_b
+```
+
+### 3) APE / RPE 工具
+
+```bash
+# APE
+vicon_ws_ape tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --align \
+  --t_max_diff 0.02 \
+  --plot --plot_mode xz
+
+# RPE
+vicon_ws_rpe tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --delta 1 --delta_unit f \
+  --all_pairs \
+  --align \
+  --plot --plot_mode xz
+```
+
+### 4) 结果对比 `vicon_ws_res`
+
+```bash
+vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+  --metric all --stage step3 --plot --out-dir outputs/res_compare
+```
+
+### 5) 全局配置 `vicon_ws_config`
+
+```bash
+vicon_ws_config set plot false rpe_delta 3
+vicon_ws_config show
+vicon_ws_config unset plot
+```
+
+## 配置系统
+
+所有核心工具支持 `--config <file.json>`。
+
+优先级（高 -> 低）：
+
+1. `--config` 文件
+2. CLI 参数
+3. `vicon_ws_config` 全局配置
+
+生成模板：
+
+```bash
+vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
+```
+
+## 支持输入格式
+
+主流程与工具链支持：
+
+- `auto`
+- `csv` / `euroc`
+- `tum`
+- `kitti`
+- `bag`（ROS1）
+- `bag2` / `mcap`（ROS2）
+
+bag 读取时可指定 topic：
+
+```bash
+vicon_ws \
+  --gt-csv /path/to/run.bag --gt-format bag --gt-topic /vicon/pose \
+  --est-path /path/to/run.bag --est-format bag --est-topic /odom
+```
+
+TF 语法也支持：
 
 ```bash
 --est-topic /tf:map.base_link
 ```
 
-Workspace for trajectory-level replacement and 3-step alignment:
+## Rerun 说明
 
-1. Step1: time alignment
-2. Step2: sensor extrinsic solve (`R_ext`, `t_ext`)
-3. Step3: world-frame rigid alignment (`R_w`, `t_w`)
+`vicon_ws` / `traj` / `ape` / `rpe` 都支持 `--rerun`。
 
-The pipeline is implemented in `pipeline.py` and supports:
+常用参数：
 
-## Project Layout
+- `--rerun`
+- `--rerun-rec-id <id>`
+- `--rerun-no-spawn`
+- `--rerun-stride N`
+- `--rerun-motion-stride N`
 
-- `pipeline.py`: main 3-step pipeline
-- `gt.csv`: GT trajectory (EuRoC-style CSV)
-- `outputs/traj_estimate_v1_01.txt`: example estimation trajectory used by this repo
-- `docs/estimation_artifacts.md`: provenance notes for tracked estimation files
-- `track.md`: Chinese process notes
+说明：行为与 evo 一致，默认仅 viewer logging，不自动写 `.rrd`。
 
-## Independent AlignAnything Benchmark Harness
+## Benchmark（AlignAnything）
 
-`vicon_ws` now includes an independent benchmark harness for AlignAnything:
-
-- `vicon_ws` and `evo` are run separately for each case.
-- `offset` is not shared:
-  - `vicon_ws`: uses internal Step-1 cross-correlation estimate.
-  - `evo`: uses an independent offset sweep inside the harness.
-- Both sides consume normalized TUM files generated from AlignAnything source files.
-
-Run example:
+运行独立 benchmark harness（`vicon_ws` 与 `evo` 独立运行，offset 不共享）：
 
 ```bash
-PYTHONPATH=/home/yifu/vicon_ws/src \
-/home/yifu/miniconda3/envs/vicon_ws310/bin/python -m vicon_ws.benchmark.alignanything_harness \
+vicon_ws_benchmark \
   --alignanything-root /home/yifu/vicon_ws/AlignAnything/AlignAnything \
   --repo-root /home/yifu/vicon_ws \
-  --evo-repo /home/yifu/evo \
-  --limit 10
+  --evo-repo /home/yifu/evo
 ```
 
-Output directory:
-
-- `outputs/alignanything_harness/run_xxx/summary.csv`
-- `outputs/alignanything_harness/run_xxx/summary.md`
-- `outputs/alignanything_harness/run_xxx/cases/*.json`
-
-Useful filters:
+从 harness 的 `summary.csv` 生成图：
 
 ```bash
---methods rovio,svo_stereo
---case-pattern 'euroc_.*_rovio'
---dry-run
+vicon_ws_plot_summary \
+  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
 ```
 
-Plot summary charts from one harness run:
+## 输出目录
 
-```bash
-PYTHONPATH=/home/yifu/vicon_ws/src \
-/home/yifu/miniconda3/envs/vicon_ws310/bin/python -m vicon_ws.benchmark.plot_summary \
-  --summary-csv /home/yifu/vicon_ws/outputs/alignanything_harness/run_xxx/summary.csv
-```
+典型输出：
 
-Generated files are written to:
+- 主流程：`outputs/run_YYYYmmdd_HHMMSS/`
+- traj：`outputs/traj_tool/run_YYYYmmdd_HHMMSS/`
+- ape：`outputs/ape/run_YYYYmmdd_HHMMSS/`
+- rpe：`outputs/rpe/run_YYYYmmdd_HHMMSS/`
+- res：`outputs/res/run_YYYYmmdd_HHMMSS/`
+- harness：`outputs/alignanything_harness/run_YYYYmmdd_HHMMSS/`
 
-- `outputs/alignanything_harness/run_xxx/plots/*.png`
-- `outputs/alignanything_harness/run_xxx/plots/plots.md`
+主流程目录常见文件：
 
-## External Estimation Generation (Optional)
-
-`vicon_ws` consumes estimation trajectory files and does not require a vendored VIO codebase.
-If you need to regenerate estimation, run your estimator externally (e.g. [`sqrtVINS`](https://github.com/rpng/sqrtVINS.git)) and export a supported format (`tum`/`kitti`/`csv`/`bag`).
-
-Example with external `sqrtVINS` workspace:
-
-```bash
-# Step 1: Create the workspace
-mkdir -p ~/sqrt_vins_ws/src
-cd ~/sqrt_vins_ws/src
-git clone https://github.com/rpng/sqrtVINS.git
-
-# Step 2: Build
-cd ~/sqrt_vins_ws
-catkin build
-
-# Step 3: Download EurocMav rosbag:
-# https://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets
-# Put bag files under: $HOME/datasets/euroc_mav
-# Or change the bag path in: ov_srvins/launch/serial.launch (in external workspace)
-
-# Step 4: Run the launch file
-source ~/sqrt_vins_ws/devel/setup.bash
-roslaunch ov_srvins serial.launch
-```
-
-After it finishes, export/copy the trajectory into this repo, e.g.:
-
-`/home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt`
-
-## Run 3-Step Alignment
-
-> Important:
-> If you see `Calculated Time Offset: 0.1230 s`, you are in synthetic mode.
-> `0.123` is the injected ground-truth offset for closed-loop validation, not the real estimation-vs-GT result.
-> For real data evaluation, do NOT pass `--synthetic`.
-
-### Optional: Rerun Visualization
-
-`vicon_ws` now supports optional Rerun trajectory logging in modular mode.
-
-Install dependency:
-
-```bash
-pip install rerun-sdk
-```
-
-Example (real mode + rerun):
-
-```bash
-PYTHONPATH=/home/yifu/vicon_ws/src python3 -m vicon_ws.cli \
-  --engine modular \
-  --gt-csv /home/yifu/vicon_ws/gt.csv \
-  --est-path /home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt \
-  --est-format tum \
-  --rerun
-```
-
-Optional flags:
-
-- `--rerun-no-spawn`: do not auto-open viewer
-- `--rerun-stride N`: downsample static trajectory lines sent to rerun
-- `--rerun-motion-stride N`: downsample timeline replay points (smaller = smoother motion)
-
-Playback note:
-
-- Static context includes 4 trajectories: `raw`, `step2`, `step3`, `gt`
-- Timeline replay shows moving points over time, with `raw` and `gt` emphasized
-- `step2` and `step3` are intentionally lighter as visual references
-- `--rerun` follows evo behavior: viewer logging only, no automatic `.rrd` output
-
-### A) Synthetic Injection vs GT
-
-Run command:
-
-```bash
-MPLBACKEND=Agg python3 pipeline.py --synthetic
-```
-
-Use this mode when you want closed-loop validation with known injected truth.
-
-Corresponding kept output folder in this repo:
-
-- `outputs/run_20260402_172740`
-
-Key files:
-
-- `outputs/run_20260402_172740/step1_cross_correlation.png`
-- `outputs/run_20260402_172740/step1_time_alignment.png`
-- `outputs/run_20260402_172740/step23_trajectory_alignment_3d.png`
-- `outputs/run_20260402_172740/metrics.json`
-- `outputs/run_20260402_172740/metrics_summary.csv`
-
-Visualizations:
-
-![Synthetic Step1 Cross Correlation](outputs/run_20260402_172740/step1_cross_correlation.png)
-![Synthetic Step1 Time Alignment](outputs/run_20260402_172740/step1_time_alignment.png)
-![Synthetic Step2/3 Trajectory Alignment](outputs/run_20260402_172740/step23_trajectory_alignment_3d.png)
-
-Terminal output (excerpt):
-
-```text
---- STEP 1: TIME ALIGNMENT ---
-Calculated Time Offset: 0.1230 s
-
---- TIME ALIGNMENT METRICS ---
-offset_est_s: 0.123000 s
-offset_err_ms: 0.000000 ms
-xcorr_peak_normalized: 0.998538
-xcorr_psr: 13.442643
-omega_rmse_before: 0.095181 rad/s
-omega_rmse_after: 0.001707 rad/s
-omega_rmse_improve_pct: 98.206136 %
-
---- STEP 2: SOLVING EXTRINSICS ---
-Calculated Extrinsic Rotation Matrix:
-[[ 0.6645 -0.6645 -0.342 ]
- [ 0.4915  0.7333 -0.4698]
- [ 0.563   0.1441  0.8138]]
-Calculated Translation: [ 0.5 -0.2  0.1] m
-
---- STEP 3: WORLD ALIGNMENT ---
-Calculated World Rotation Matrix:
-[[ 0.9063 -0.4226  0.    ]
- [ 0.4226  0.9063  0.    ]
- [ 0.      0.      1.    ]]
-Calculated World Translation: [ 1.5 -0.5  0.3] m
-
---- STEP 2 RESIDUAL METRICS ---
-rot_res_mean_deg: 0.000000 deg
-rot_res_median_deg: 0.000000 deg
-rot_res_p95_deg: 0.000000 deg
-trans_eq_rmse_m: 0.000000 m
-trans_eq_p95_m: 0.000000 m
-translation_system_cond: 1.879618
-translation_constraints: 24182.000000
-
---- TRAJECTORY METRICS ---
-ate_rmse_raw_m: 1.514741 m
-ate_rmse_step2_m: 1.626141 m
-ate_rmse_step3_m: 0.000000 m
-ate_p95_raw_m: 2.361690 m
-ate_p95_step2_m: 2.463500 m
-ate_p95_step3_m: 0.000000 m
-ate_rmse_improve_raw_to_step3_pct: 100.000000 %
-ate_rmse_improve_step2_to_step3_pct: 100.000000 %
-```
-
-### B) External Estimation vs GT (Example: sqrtVINS output)
-
-Run command:
-
-```bash
-MPLBACKEND=Agg python3 pipeline.py \
-  --gt-csv /home/yifu/vicon_ws/gt.csv \
-  --est-path /home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt \
-  --est-format tum \
-  --quat-interp linear
-```
-
-Use this mode for real estimation trajectory alignment against GT. (`linear` is the default interpolation mode.)
-Prerequisite: you already have an estimation trajectory file (from sqrtVINS or any other estimator) at `--est-path`.
-
-Quick self-check after running:
-
-- Open `outputs/run_xxx/metrics.json`
-- Ensure `metadata.mode` is `real`
-- If `metadata.mode` is `synthetic`, rerun without `--synthetic`
-
-Corresponding kept output folder in this repo:
-
-- `outputs/run_20260404_195554`
-
-Key files:
-
-- `outputs/run_20260404_195554/step1_cross_correlation.png`
-- `outputs/run_20260404_195554/step1_time_alignment.png`
-- `outputs/run_20260404_195554/step23_trajectory_alignment_3d.png`
-- `outputs/run_20260404_195554/metrics.json`
-- `outputs/run_20260404_195554/metrics_summary.csv`
-- `outputs/run_20260404_195554/metrics_zh.md`
-
-Visualizations:
-
-![Real Step1 Cross Correlation](outputs/run_20260404_195554/step1_cross_correlation.png)
-![Real Step1 Time Alignment](outputs/run_20260404_195554/step1_time_alignment.png)
-![Real Step2/3 Trajectory Alignment](outputs/run_20260404_195554/step23_trajectory_alignment_3d.png)
-
-Terminal output (excerpt):
-
-```text
---- STEP 1: TIME ALIGNMENT ---
-Calculated Time Offset: -4.2100 s
-
---- TIME ALIGNMENT METRICS ---
-offset_est_s: -4.210000 s
-offset_err_ms: nan ms
-xcorr_peak_normalized: 0.946500
-xcorr_psr: 13.044565
-omega_rmse_before: 0.266979 rad/s
-omega_rmse_after: 0.071856 rad/s
-omega_rmse_improve_pct: 73.085639 %
-
---- STEP 2: SOLVING EXTRINSICS ---
-Calculated Extrinsic Rotation Matrix:
-[[ 9.995e-01  3.040e-02  6.000e-04]
- [-3.040e-02  9.989e-01 -3.500e-02]
- [-1.700e-03  3.490e-02  9.994e-01]]
-Calculated Translation: [ 0.0124 -0.0584  0.0035] m
-
---- STEP 3: WORLD ALIGNMENT ---
-Calculated World Rotation Matrix:
-[[ 0.9757 -0.219   0.0028]
- [ 0.219   0.9757 -0.0037]
- [-0.0019  0.0042  1.    ]]
-Calculated World Translation: [0.9195 2.2292 0.9774] m
-
---- STEP 2 RESIDUAL METRICS ---
-rot_res_mean_deg: 0.092905 deg
-rot_res_median_deg: 0.011208 deg
-rot_res_p95_deg: 0.039137 deg
-trans_eq_rmse_m: 0.000161 m
-trans_eq_p95_m: 0.000250 m
-translation_system_cond: 1.879618
-translation_constraints: 24182.000000
-
---- TRAJECTORY METRICS ---
-ate_rmse_raw_m: 2.641057 m
-ate_rmse_step2_m: 2.672112 m
-ate_rmse_step3_m: 0.051962 m
-ate_p95_raw_m: 2.889131 m
-ate_p95_step2_m: 2.930739 m
-ate_p95_step3_m: 0.082088 m
-ate_rmse_improve_raw_to_step3_pct: 98.032546 %
-ate_rmse_improve_step2_to_step3_pct: 98.055411 %
-```
-
-### C) External Estimation vs GT (SLERP Quaternion Interpolation)
-
-Run command:
-
-```bash
-MPLBACKEND=Agg python3 pipeline.py \
-  --gt-csv /home/yifu/vicon_ws/gt.csv \
-  --est-path /home/yifu/vicon_ws/outputs/traj_estimate_v1_01.txt \
-  --est-format tum \
-  --quat-interp slerp
-```
-
-This result is generated with explicit SLERP quaternion interpolation in `pipeline.py`.
-
-Output folder:
-
-- `outputs/run_20260406_202611`
-
-Visualizations:
-
-![SLERP Step1 Cross Correlation](outputs/run_20260406_202611/step1_cross_correlation.png)
-![SLERP Step1 Time Alignment](outputs/run_20260406_202611/step1_time_alignment.png)
-![SLERP Step2/3 Trajectory Alignment](outputs/run_20260406_202611/step23_trajectory_alignment_3d.png)
-
-Terminal output (excerpt):
-
-```text
---- STEP 1: TIME ALIGNMENT ---
-Calculated Time Offset: -4.2100 s
-
---- TIME ALIGNMENT METRICS ---
-offset_est_s: -4.210000 s
-offset_err_ms: nan ms
-xcorr_peak_normalized: 0.946500
-xcorr_psr: 13.044565
-omega_rmse_before: 0.266979 rad/s
-omega_rmse_after: 0.071856 rad/s
-omega_rmse_improve_pct: 73.085639 %
-
---- STEP 2: SOLVING EXTRINSICS ---
-Calculated Extrinsic Rotation Matrix:
-[[ 9.998e-01  1.770e-02  3.000e-04]
- [-1.770e-02  9.998e-01  5.900e-03]
- [-2.000e-04 -5.900e-03  1.000e+00]]
-Calculated Translation: [ 0.0087 -0.0708 -0.0013] m
-
---- STEP 3: WORLD ALIGNMENT ---
-Calculated World Rotation Matrix:
-[[ 0.9759 -0.2183  0.0033]
- [ 0.2183  0.9759 -0.0039]
- [-0.0023  0.0045  1.    ]]
-Calculated World Translation: [0.9187 2.2368 0.9765] m
-
---- STEP 2 RESIDUAL METRICS ---
-rot_res_mean_deg: 0.012536 deg
-rot_res_median_deg: 0.010676 deg
-rot_res_p95_deg: 0.028083 deg
-trans_eq_rmse_m: 0.000221 m
-trans_eq_p95_m: 0.000358 m
-translation_system_cond: 1.879618
-translation_constraints: 24182.000000
-
---- TRAJECTORY METRICS ---
-ate_rmse_raw_m: 2.641057 m
-ate_rmse_step2_m: 2.677696 m
-ate_rmse_step3_m: 0.057018 m
-ate_p95_raw_m: 2.889131 m
-ate_p95_step2_m: 2.937338 m
-ate_p95_step3_m: 0.089880 m
-ate_rmse_improve_raw_to_step3_pct: 97.841105 %
-ate_rmse_improve_step2_to_step3_pct: 97.870645 %
-```
-
-## Output Per Run
-
-Each run creates:
-
-`outputs/run_YYYYMMDD_HHMMSS/`
-
-Artifacts:
-
+- `metrics.json`
+- `metrics_summary.csv`
+- `metrics_zh.md`
 - `step1_cross_correlation.png`
 - `step1_time_alignment.png`
 - `step23_trajectory_alignment_3d.png`
-- `metrics.json`
-- `metrics_summary.csv`
-- `metrics_zh.md` (generated by current `pipeline.py`)
+- `plots/*.png`
 
-## Notes
+## 代码结构
 
-- TUM input accepts at least 8 columns; if covariance columns exist, columns after `t tx ty tz qx qy qz qw` are ignored.
-- `step1_time_alignment.png` uses a 40-second window by default for easier visual inspection.
-- Quaternion interpolation mode is configurable via `--quat-interp {linear,slerp}`; default is `linear`.
-- Each run outputs `metrics_zh.md` (Chinese metric interpretation with value-specific analysis).
+```text
+vicon_ws/
+├── pipeline.py                    # 兼容入口（thin shim）
+├── pyproject.toml
+├── src/vicon_ws/
+│   ├── cli.py                     # vicon_ws 主 CLI
+│   ├── runner.py                  # engine 分发
+│   ├── bridge_legacy.py           # legacy 桥接
+│   ├── config.py                  # PipelineOptions
+│   ├── config_cli.py              # --config / 全局配置注入
+│   ├── config_tool.py             # vicon_ws_config
+│   ├── traj_tool.py               # vicon_ws_traj
+│   ├── ape_tool.py                # vicon_ws_ape
+│   ├── rpe_tool.py                # vicon_ws_rpe
+│   ├── metric_cli_common.py       # APE/RPE 共享 CLI 逻辑
+│   ├── core/
+│   │   ├── pipeline_modular.py    # modular 三步主流程
+│   │   ├── time_alignment.py
+│   │   ├── calibration.py
+│   │   ├── evaluation.py
+│   │   ├── math_utils.py
+│   │   └── io_utils.py
+│   ├── viz/
+│   │   ├── rerun_viz.py           # Rerun logging
+│   │   └── metric_plots.py        # 指标绘图/聚合图
+│   └── benchmark/
+│       ├── alignanything_harness.py
+│       ├── plot_summary.py
+│       ├── metrics_res.py
+│       └── res.py                 # vicon_ws_res
+├── docs/
+│   ├── architecture.md
+│   └── estimation_artifacts.md
+└── tests/
+    ├── unit/
+    └── smoke/
+```
+
+## 开发与测试
+
+```bash
+ruff check src tests
+mypy
+pytest -q
+```
+
+最小 smoke：
+
+```bash
+bash tests/smoke/test_cli_help.sh
+bash tests/smoke/test_engines.sh
+```
+
+## 相关文档
+
+- `docs/architecture.md`
+- `docs/estimation_artifacts.md`
+- `track.md`

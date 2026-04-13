@@ -17,6 +17,10 @@ dependencies = [
 [project.optional-dependencies]
 rerun = ["rerun-sdk>=0.20"]
 ros = ["rosbags>=0.11.0"]
+geo = [
+    "contextily>=1.5",
+    "pyyaml>=6.0",
+]
 dev = [
     "pytest>=7.0",
     "mypy>=1.0",
@@ -26,8 +30,14 @@ dev = [
 [project.scripts]
 vicon_ws = "vicon_ws.cli:main"
 vicon-ws = "vicon_ws.cli:main"
+vicon_ws_config = "vicon_ws.config_tool:main"
+vicon_ws_ape = "vicon_ws.ape_tool:main"
+vicon_ws_rpe = "vicon_ws.rpe_tool:main"
+vicon_ws_traj = "vicon_ws.traj_tool:main"
+vicon_ws_res = "vicon_ws.benchmark.res:main"
 vicon_ws_benchmark = "vicon_ws.benchmark.alignanything_harness:main"
 vicon_ws_plot_summary = "vicon_ws.benchmark.plot_summary:main"
+vicon_ws_metric_res = "vicon_ws.benchmark.metrics_res:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

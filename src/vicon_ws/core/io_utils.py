@@ -2,6 +2,7 @@ import csv
 import json
 from datetime import datetime
 from pathlib import Path
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -66,6 +67,40 @@ def save_metrics(output_dir, metrics_payload):
                 writer = csv.DictWriter(f, fieldnames=["section", "metric", "value"])
                 writer.writeheader()
                 writer.writerows(rows)
+
+
+def write_result_bundle(output_dir, metrics_payload, out_zip):
+    output_dir = Path(output_dir).resolve()
+    out_zip = Path(out_zip).expanduser().resolve()
+    out_zip.parent.mkdir(parents=True, exist_ok=True)
+
+    payload_builtin = to_builtin(metrics_payload)
+    manifest = {
+        "format": "vicon_ws_result_bundle",
+        "version": "1.0",
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "output_dir": str(output_dir),
+        "entries": [
+            "metrics.json",
+            "metrics_summary.csv",
+            "metrics_zh.md",
+            "manifest.json",
+        ],
+    }
+
+    metrics_json = json.dumps(payload_builtin, indent=2, ensure_ascii=False)
+    manifest_json = json.dumps(manifest, indent=2, ensure_ascii=False)
+
+    with ZipFile(out_zip, "w", compression=ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", manifest_json)
+        zf.writestr("metrics.json", metrics_json)
+        metrics_summary = output_dir / "metrics_summary.csv"
+        metrics_zh = output_dir / "metrics_zh.md"
+        if metrics_summary.exists():
+            zf.write(metrics_summary, arcname="metrics_summary.csv")
+        if metrics_zh.exists():
+            zf.write(metrics_zh, arcname="metrics_zh.md")
+    return out_zip
 
 
 METRIC_ZH_EXPLAIN = {

@@ -22,6 +22,20 @@ def run(ns: Namespace) -> int:
         rpe_delta_tol=getattr(ns, "rpe_delta_tol", 0.1),
         rpe_all_pairs=bool(getattr(ns, "rpe_all_pairs", False)),
         rpe_pairs_from_reference=bool(getattr(ns, "rpe_pairs_from_reference", False)),
+        t_max_diff=getattr(ns, "t_max_diff", 0.02),
+        t_offset=getattr(ns, "t_offset", 0.0),
+        t_start=getattr(ns, "t_start", None),
+        t_end=getattr(ns, "t_end", None),
+        eval_align=getattr(ns, "eval_align", "none"),
+        eval_n_to_align=getattr(ns, "eval_n_to_align", -1),
+        eval_project_to_plane=getattr(ns, "eval_project_to_plane", "none"),
+        ape_pose_relation=getattr(ns, "ape_pose_relation", "trans_part"),
+        rpe_pose_relation=getattr(ns, "rpe_pose_relation", "trans_part"),
+        plot=bool(getattr(ns, "plot", True)),
+        plot_x_dimension=getattr(ns, "plot_x_dimension", "seconds"),
+        plot_ape_relation=getattr(ns, "plot_ape_relation", "translation_part"),
+        plot_rpe_relation=getattr(ns, "plot_rpe_relation", "translation_part"),
+        save_results=getattr(ns, "save_results", "") or "",
     )
     repo_root = project_root_from_file(Path(__file__))
     engine = getattr(ns, "engine", "legacy")

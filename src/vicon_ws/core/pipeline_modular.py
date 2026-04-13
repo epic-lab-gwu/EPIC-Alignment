@@ -1,7 +1,10 @@
 from datetime import datetime
+import os
 from pathlib import Path
 
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-vicon_ws")
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -19,6 +22,7 @@ from .calibration import (
 from .evaluation import (
     compute_ape_evo_style,
     compute_rpe_evo_style,
+    normalize_pose_relation,
     print_metric_block,
     summarize_abs_errors,
 )
@@ -27,6 +31,7 @@ from .io_utils import (
     load_reference_trajectory,
     make_output_dir,
     save_metrics,
+    write_result_bundle,
     write_metrics_zh_report,
 )
 from .math_utils import normalize_quat_array, rmse
@@ -38,6 +43,146 @@ from .time_alignment import (
     matching_time_indices,
 )
 from ..viz.rerun_viz import log_alignment_to_rerun
+from ..viz.metric_plots import generate_metric_plots
+
+
+def _apply_time_window(tvals, pos, quat, t_start=None, t_end=None):
+    if t_start is None and t_end is None:
+        return tvals, pos, quat
+    tvals = np.asarray(tvals, dtype=float).reshape(-1)
+    mask = np.ones(tvals.shape[0], dtype=bool)
+    if t_start is not None:
+        mask &= tvals >= float(t_start)
+    if t_end is not None:
+        mask &= tvals <= float(t_end)
+    if np.sum(mask) < 2:
+        raise ValueError("Time window filtering kept fewer than 2 trajectory samples.")
+    t_new = tvals[mask]
+    t_new = t_new - t_new[0]
+    return t_new, np.asarray(pos, dtype=float)[mask], np.asarray(quat, dtype=float)[mask]
+
+
+def _cum_distance(points_xyz):
+    points_xyz = np.asarray(points_xyz, dtype=float)
+    if points_xyz.shape[0] == 0:
+        return np.array([], dtype=float)
+    d = np.zeros(points_xyz.shape[0], dtype=float)
+    if points_xyz.shape[0] > 1:
+        d[1:] = np.cumsum(np.linalg.norm(np.diff(points_xyz, axis=0), axis=1))
+    return d
+
+
+def _umeyama_transform(src_xyz, dst_xyz, with_scale=False):
+    src = np.asarray(src_xyz, dtype=float)
+    dst = np.asarray(dst_xyz, dtype=float)
+    if src.shape != dst.shape or src.shape[0] < 3:
+        raise ValueError("Umeyama alignment requires at least 3 paired 3D points.")
+
+    mu_src = np.mean(src, axis=0)
+    mu_dst = np.mean(dst, axis=0)
+    src_centered = src - mu_src
+    dst_centered = dst - mu_dst
+
+    cov = (dst_centered.T @ src_centered) / float(src.shape[0])
+    U, D, Vt = np.linalg.svd(cov)
+    S = np.eye(3)
+    if np.linalg.det(U) * np.linalg.det(Vt) < 0:
+        S[2, 2] = -1.0
+    R_align = U @ S @ Vt
+
+    scale = 1.0
+    if with_scale:
+        var_src = np.mean(np.sum(src_centered**2, axis=1))
+        if var_src < 1e-12:
+            raise ValueError("Degenerate source trajectory for scale alignment.")
+        scale = float(np.trace(np.diag(D) @ S) / var_src)
+    t_align = mu_dst - scale * (R_align @ mu_src)
+    return scale, R_align, t_align
+
+
+def _align_for_eval(pos_ref, quat_ref, pos_est, quat_est, mode="none", n_to_align=-1):
+    mode = str(mode).lower()
+    if mode == "none":
+        return pos_est, quat_est
+
+    n = pos_ref.shape[0]
+    n_use = n if int(n_to_align) <= 0 else min(n, int(n_to_align))
+    if n_use < 2:
+        return pos_est, quat_est
+
+    pref = np.asarray(pos_ref[:n_use], dtype=float)
+    pest = np.asarray(pos_est[:n_use], dtype=float)
+    q_est = np.asarray(quat_est, dtype=float)
+
+    if mode == "se3":
+        _, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=False)
+        pos_new = (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
+        q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
+        return pos_new, q_new
+
+    if mode == "sim3":
+        s_eval, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=True)
+        pos_new = s_eval * (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
+        q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
+        return pos_new, q_new
+
+    if mode == "scale":
+        src_centered = pest - np.mean(pest, axis=0)
+        dst_centered = pref - np.mean(pref, axis=0)
+        denom = np.sum(src_centered**2)
+        scale = 1.0 if denom < 1e-12 else float(np.sqrt(np.sum(dst_centered**2) / denom))
+        pos_new = scale * np.asarray(pos_est, dtype=float)
+        return pos_new, q_est
+
+    if mode == "origin":
+        R0 = R.from_quat(quat_ref[0]).as_matrix() @ R.from_quat(quat_est[0]).as_matrix().T
+        t0 = np.asarray(pos_ref[0], dtype=float) - (R0 @ np.asarray(pos_est[0], dtype=float))
+        pos_new = (R0 @ np.asarray(pos_est, dtype=float).T).T + t0
+        q_new = normalize_quat_array((R.from_matrix(R0) * R.from_quat(q_est)).as_quat())
+        return pos_new, q_new
+
+    raise ValueError(f"Unsupported eval alignment mode: {mode}")
+
+
+def _project_to_plane(pos_xyz, quat_xyzw, plane="none"):
+    plane = str(plane).lower()
+    pos = np.asarray(pos_xyz, dtype=float).copy()
+    quat = np.asarray(quat_xyzw, dtype=float).copy()
+    if plane == "none":
+        return pos, quat
+
+    if plane == "xy":
+        normal = np.array([0.0, 0.0, 1.0], dtype=float)
+        e1 = np.array([1.0, 0.0, 0.0], dtype=float)
+        e2 = np.array([0.0, 1.0, 0.0], dtype=float)
+        pos[:, 2] = 0.0
+    elif plane == "xz":
+        normal = np.array([0.0, 1.0, 0.0], dtype=float)
+        e1 = np.array([1.0, 0.0, 0.0], dtype=float)
+        e2 = np.array([0.0, 0.0, 1.0], dtype=float)
+        pos[:, 1] = 0.0
+    elif plane == "yz":
+        normal = np.array([1.0, 0.0, 0.0], dtype=float)
+        e1 = np.array([0.0, 1.0, 0.0], dtype=float)
+        e2 = np.array([0.0, 0.0, 1.0], dtype=float)
+        pos[:, 0] = 0.0
+    else:
+        raise ValueError(f"Unsupported projection plane: {plane}")
+
+    mats = R.from_quat(quat).as_matrix()
+    out_quat = np.zeros_like(quat)
+    for i in range(mats.shape[0]):
+        v = mats[i] @ e1
+        v = v - float(np.dot(v, normal)) * normal
+        nv = np.linalg.norm(v)
+        if nv < 1e-12:
+            v = e1.copy()
+            nv = 1.0
+        v = v / nv
+        ang = np.arctan2(np.dot(v, e2), np.dot(v, e1))
+        out_quat[i] = R.from_rotvec(ang * normal).as_quat()
+
+    return pos, normalize_quat_array(out_quat)
 
 
 def run_pipeline_modular(args, script_dir: Path):
@@ -103,6 +248,17 @@ def run_pipeline_modular(args, script_dir: Path):
             est_topic=est_topic,
         )
 
+    t_start = getattr(args, "t_start", None)
+    t_end = getattr(args, "t_end", None)
+    t_offset = float(getattr(args, "t_offset", 0.0))
+    t_vicon, pos_vicon, quat_vicon = _apply_time_window(
+        t_vicon, pos_vicon, quat_vicon, t_start=t_start, t_end=t_end
+    )
+    t_robot = np.asarray(t_robot, dtype=float) + t_offset
+    t_robot, pos_robot, quat_robot = _apply_time_window(
+        t_robot, pos_robot, quat_robot, t_start=t_start, t_end=t_end
+    )
+
     print("--- STEP 1: TIME ALIGNMENT ---")
     t_v_mid, om_v = get_angular_velocity_norm(t_vicon, quat_vicon)
     t_r_mid, om_r = get_angular_velocity_norm(t_robot, quat_robot)
@@ -147,7 +303,7 @@ def run_pipeline_modular(args, script_dir: Path):
     # - our internal shift is t_robot_sync = t_robot - offset_est_s.
     #   Therefore, evo-equivalent t_offset is -offset_est_s.
     evo_t_offset_used_s = -calculated_offset
-    evo_match_max_diff_s = 0.02
+    evo_match_max_diff_s = float(getattr(args, "t_max_diff", 0.02))
     match_ids_ref, match_ids_est = matching_time_indices(
         t_vicon, t_robot, max_diff=evo_match_max_diff_s, offset_2=evo_t_offset_used_s
     )
@@ -348,30 +504,58 @@ def run_pipeline_modular(args, script_dir: Path):
         "step2": {"pos": pr_corrected, "quat": q_step2},
         "step3": {"pos": pr_final, "quat": q_step3},
     }
-    evo_ape = {}
-    evo_rpe = {}
+    eval_align_mode = str(getattr(args, "eval_align", "none"))
+    eval_n_to_align = int(getattr(args, "eval_n_to_align", -1))
+    eval_project_to_plane = str(getattr(args, "eval_project_to_plane", "none"))
+
+    ape_metrics_by_stage = {}
+    rpe_metrics_by_stage = {}
+    seconds_from_start = np.asarray(t_vicon, dtype=float) - float(t_vicon[0])
+    distances_from_start = _cum_distance(pos_vicon)
     for stage_name, stage_data in stage_trajs.items():
-        evo_ape[stage_name] = compute_ape_evo_style(
+        eval_pos, eval_quat = _align_for_eval(
             pos_ref=pos_vicon,
             quat_ref=quat_vicon,
             pos_est=stage_data["pos"],
             quat_est=stage_data["quat"],
+            mode=eval_align_mode,
+            n_to_align=eval_n_to_align,
         )
-        evo_rpe[stage_name] = compute_rpe_evo_style(
-            pos_ref=pos_vicon,
-            quat_ref=quat_vicon,
-            pos_est=stage_data["pos"],
-            quat_est=stage_data["quat"],
+        ref_eval_pos, ref_eval_quat = _project_to_plane(
+            pos_vicon, quat_vicon, plane=eval_project_to_plane
+        )
+        est_eval_pos, est_eval_quat = _project_to_plane(
+            eval_pos, eval_quat, plane=eval_project_to_plane
+        )
+        ape_metrics_by_stage[stage_name] = compute_ape_evo_style(
+            pos_ref=ref_eval_pos,
+            quat_ref=ref_eval_quat,
+            pos_est=est_eval_pos,
+            quat_est=est_eval_quat,
+            include_raw=True,
+        )
+        rpe_metrics_by_stage[stage_name] = compute_rpe_evo_style(
+            pos_ref=ref_eval_pos,
+            quat_ref=ref_eval_quat,
+            pos_est=est_eval_pos,
+            quat_est=est_eval_quat,
             delta=args.rpe_delta,
             delta_unit=args.rpe_delta_unit,
             rel_delta_tol=args.rpe_delta_tol,
             all_pairs=args.rpe_all_pairs,
             pairs_from_reference=args.rpe_pairs_from_reference,
+            include_raw=True,
         )
+        ape_metrics_by_stage[stage_name]["_x_axis"]["seconds_from_start"] = seconds_from_start
+        ape_metrics_by_stage[stage_name]["_x_axis"]["distances_from_start"] = distances_from_start
+        delta_ids = rpe_metrics_by_stage[stage_name]["_x_axis"]["delta_ids"].astype(int)
+        valid = (delta_ids >= 0) & (delta_ids < seconds_from_start.size)
+        rpe_metrics_by_stage[stage_name]["_x_axis"]["seconds_from_start"] = seconds_from_start[delta_ids[valid]]
+        rpe_metrics_by_stage[stage_name]["_x_axis"]["distances_from_start"] = distances_from_start[delta_ids[valid]]
 
-    evo_metrics = {
-        "ape": evo_ape,
-        "rpe": evo_rpe,
+    pose_metrics = {
+        "ape": ape_metrics_by_stage,
+        "rpe": rpe_metrics_by_stage,
         "rpe_config": {
             "delta": args.rpe_delta,
             "delta_unit": args.rpe_delta_unit,
@@ -379,20 +563,31 @@ def run_pipeline_modular(args, script_dir: Path):
             "all_pairs": bool(args.rpe_all_pairs),
             "pairs_from_reference": bool(args.rpe_pairs_from_reference),
         },
+        "eval_config": {
+            "t_max_diff": float(getattr(args, "t_max_diff", 0.02)),
+            "t_offset": float(getattr(args, "t_offset", 0.0)),
+            "t_start": None if getattr(args, "t_start", None) is None else float(args.t_start),
+            "t_end": None if getattr(args, "t_end", None) is None else float(args.t_end),
+            "align": eval_align_mode,
+            "n_to_align": eval_n_to_align,
+            "project_to_plane": eval_project_to_plane,
+        },
     }
 
-    print("\n--- EVO-STYLE METRICS (APE/RPE) ---")
+    print("\n--- METRICS (APE/RPE) ---")
+    ape_pose_relation = normalize_pose_relation("ape", getattr(args, "ape_pose_relation", "trans_part"))
+    rpe_pose_relation = normalize_pose_relation("rpe", getattr(args, "rpe_pose_relation", "trans_part"))
     for stage_name in ("raw", "step2", "step3"):
-        ape_t = evo_metrics["ape"][stage_name]["translation_part"]["rmse"]
-        ape_r = evo_metrics["ape"][stage_name]["rotation_angle_deg"]["rmse"]
-        rpe_t = evo_metrics["rpe"][stage_name]["translation_part"]["rmse"]
-        rpe_r = evo_metrics["rpe"][stage_name]["rotation_angle_deg"]["rmse"]
-        pairs = evo_metrics["rpe"][stage_name]["pair_count"]
+        ape_t = pose_metrics["ape"][stage_name][ape_pose_relation]["rmse"]
+        ape_r = pose_metrics["ape"][stage_name]["rotation_angle_deg"]["rmse"]
+        rpe_t = pose_metrics["rpe"][stage_name][rpe_pose_relation]["rmse"]
+        rpe_r = pose_metrics["rpe"][stage_name]["rotation_angle_deg"]["rmse"]
+        pairs = pose_metrics["rpe"][stage_name]["pair_count"]
         print(
             f"{stage_name}: "
-            f"APE_trans_rmse={ape_t:.6f} m, "
+            f"APE_{ape_pose_relation}_rmse={ape_t:.6f}, "
             f"APE_rot_rmse={ape_r:.6f} deg, "
-            f"RPE_trans_rmse={rpe_t:.6f} m, "
+            f"RPE_{rpe_pose_relation}_rmse={rpe_t:.6f}, "
             f"RPE_rot_rmse={rpe_r:.6f} deg, "
             f"pairs={pairs}"
         )
@@ -440,7 +635,7 @@ def run_pipeline_modular(args, script_dir: Path):
         "time_alignment": time_metrics,
         "step2_residuals": step2_metrics,
         "trajectory": traj_metrics,
-        "evo_metrics": evo_metrics,
+        "pose_metrics": pose_metrics,
         "sanity_check": sanity_metrics,
         "estimated_params": {
             "R_ext": R_calc,
@@ -459,12 +654,59 @@ def run_pipeline_modular(args, script_dir: Path):
             "gt_topic": str(gt_topic),
             "est_topic": str(getattr(args, "est_topic", "")),
             "quat_interp": args.quat_interp,
+            "t_offset": float(getattr(args, "t_offset", 0.0)),
+            "t_max_diff": float(getattr(args, "t_max_diff", 0.02)),
+            "t_start": None if getattr(args, "t_start", None) is None else float(args.t_start),
+            "t_end": None if getattr(args, "t_end", None) is None else float(args.t_end),
+            "ape_pose_relation": str(getattr(args, "ape_pose_relation", "trans_part")),
+            "rpe_pose_relation": str(getattr(args, "rpe_pose_relation", "trans_part")),
+            "eval_align": eval_align_mode,
+            "eval_n_to_align": eval_n_to_align,
+            "eval_project_to_plane": eval_project_to_plane,
             "rerun": rerun_info,
             "output_dir": str(run_dir),
         },
     }
+    save_results_arg = str(getattr(args, "save_results", "") or "").strip()
+    bundle_path = None
+    if save_results_arg:
+        bundle = Path(save_results_arg).expanduser()
+        if not bundle.is_absolute():
+            bundle = (Path.cwd() / bundle).resolve()
+        else:
+            bundle = bundle.resolve()
+        bundle_path = bundle
+        metrics_payload["metadata"]["result_bundle"] = str(bundle_path)
+
+    plot_files = []
+    plot_enabled = bool(getattr(args, "plot", True))
+    if plot_enabled:
+        ape_plot_rel = str(getattr(args, "plot_ape_relation", "translation_part"))
+        rpe_plot_rel = str(getattr(args, "plot_rpe_relation", "translation_part"))
+        plot_rel_ape = normalize_pose_relation("ape", ape_plot_rel)
+        plot_rel_rpe = normalize_pose_relation("rpe", rpe_plot_rel)
+        plot_files = generate_metric_plots(
+            metrics_payload=metrics_payload,
+            out_dir=run_dir / "plots",
+            ape_relation=plot_rel_ape,
+            rpe_relation=plot_rel_rpe,
+            x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+        )
+        plot_meta = {
+            "enabled": True,
+            "files": [str(p) for p in plot_files],
+            "ape_relation": plot_rel_ape,
+            "rpe_relation": plot_rel_rpe,
+            "x_dimension": str(getattr(args, "plot_x_dimension", "seconds")),
+        }
+        metrics_payload["metadata"]["plot"] = plot_meta
+    else:
+        plot_meta = {"enabled": False, "files": []}
+        metrics_payload["metadata"]["plot"] = plot_meta
     save_metrics(run_dir, metrics_payload)
     write_metrics_zh_report(run_dir, metrics_payload)
+    if bundle_path is not None:
+        write_result_bundle(run_dir, metrics_payload, bundle_path)
 
     print("\n--- OUTPUT FILES ---")
     print(f"Saved figure: {fig_corr_path}")
@@ -473,6 +715,10 @@ def run_pipeline_modular(args, script_dir: Path):
     print(f"Saved metrics: {run_dir / 'metrics.json'}")
     print(f"Saved metrics: {run_dir / 'metrics_summary.csv'}")
     print(f"Saved report: {run_dir / 'metrics_zh.md'}")
+    if bundle_path is not None:
+        print(f"Saved results: {bundle_path}")
+    for plot_path in plot_files:
+        print(f"Saved figure: {plot_path}")
 
     plt.close(fig_corr)
     plt.close(fig1)

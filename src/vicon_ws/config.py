@@ -19,6 +19,20 @@ class PipelineOptions:
     rpe_delta_tol: float = 0.1
     rpe_all_pairs: bool = False
     rpe_pairs_from_reference: bool = False
+    t_max_diff: float = 0.02
+    t_offset: float = 0.0
+    t_start: float | None = None
+    t_end: float | None = None
+    eval_align: str = "none"
+    eval_n_to_align: int = -1
+    eval_project_to_plane: str = "none"
+    ape_pose_relation: str = "trans_part"
+    rpe_pose_relation: str = "trans_part"
+    plot: bool = True
+    plot_x_dimension: str = "seconds"
+    plot_ape_relation: str = "translation_part"
+    plot_rpe_relation: str = "translation_part"
+    save_results: str = ""
 
     def to_legacy_argv(self) -> List[str]:
         argv = [
@@ -38,7 +52,29 @@ class PipelineOptions:
             self.rpe_delta_unit,
             "--rpe-delta-tol",
             str(self.rpe_delta_tol),
+            "--t-max-diff",
+            str(self.t_max_diff),
+            "--t-offset",
+            str(self.t_offset),
+            "--eval-align",
+            self.eval_align,
+            "--eval-n-to-align",
+            str(self.eval_n_to_align),
+            "--eval-project-to-plane",
+            self.eval_project_to_plane,
+            "--ape-pose-relation",
+            self.ape_pose_relation,
+            "--rpe-pose-relation",
+            self.rpe_pose_relation,
+            "--plot-x-dimension",
+            self.plot_x_dimension,
+            "--plot-ape-relation",
+            self.plot_ape_relation,
+            "--plot-rpe-relation",
+            self.plot_rpe_relation,
         ]
+        if self.save_results:
+            argv.extend(["--save-results", self.save_results])
         if self.gt_topic:
             argv.extend(["--gt-topic", self.gt_topic])
         if self.est_path:
@@ -51,6 +87,14 @@ class PipelineOptions:
             argv.append("--rpe-all-pairs")
         if self.rpe_pairs_from_reference:
             argv.append("--rpe-pairs-from-reference")
+        if self.t_start is not None:
+            argv.extend(["--t-start", str(self.t_start)])
+        if self.t_end is not None:
+            argv.extend(["--t-end", str(self.t_end)])
+        if self.plot:
+            argv.append("--plot")
+        else:
+            argv.append("--no-plot")
         return argv
 
 

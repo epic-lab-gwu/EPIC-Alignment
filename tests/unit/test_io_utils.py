@@ -9,6 +9,7 @@ from vicon_ws.core.io_utils import (
     load_estimation_tum,
     load_reference_trajectory,
     load_vicon_csv,
+    write_result_bundle,
 )
 
 
@@ -119,3 +120,22 @@ def test_bag_tf_topic_requires_parent_child_format(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="parent.child"):
         load_estimation_trajectory(bag_path, est_format="bag", est_topic="/tf:map")
+
+
+def test_write_result_bundle_creates_zip_with_manifest_and_metrics(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    out_dir.mkdir()
+    (out_dir / "metrics_summary.csv").write_text("section,metric,value\n", encoding="utf-8")
+    (out_dir / "metrics_zh.md").write_text("# metrics\n", encoding="utf-8")
+    payload = {"pose_metrics": {"ape": {"step3": {"translation_part": {"rmse": 0.1}}}}}
+    bundle = write_result_bundle(out_dir, payload, tmp_path / "result.zip")
+    assert bundle.exists()
+
+    import zipfile
+
+    with zipfile.ZipFile(bundle, "r") as zf:
+        names = set(zf.namelist())
+        assert "manifest.json" in names
+        assert "metrics.json" in names
+        assert "metrics_summary.csv" in names
+        assert "metrics_zh.md" in names

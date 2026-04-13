@@ -3,6 +3,30 @@ from scipy.spatial.transform import Rotation as R
 
 from .math_utils import compute_error_statistics, poses_se3_from_traj, relative_se3
 
+APE_RELATION_ALIASES = {
+    "full": "full_transformation",
+    "trans_part": "translation_part",
+    "rot_part": "rotation_part",
+    "angle_rad": "rotation_angle_rad",
+    "angle_deg": "rotation_angle_deg",
+    "point_distance": "point_distance",
+}
+
+RPE_RELATION_ALIASES = {
+    **APE_RELATION_ALIASES,
+    "point_distance_error_ratio": "point_distance_error_ratio",
+}
+
+RELATION_UNITS = {
+    "full_transformation": "",
+    "translation_part": "m",
+    "rotation_part": "",
+    "rotation_angle_rad": "rad",
+    "rotation_angle_deg": "deg",
+    "point_distance": "m",
+    "point_distance_error_ratio": "%",
+}
+
 
 def summarize_abs_errors(errors):
     stats = compute_error_statistics(errors)
@@ -107,7 +131,20 @@ def build_rpe_pairs(poses, delta, delta_unit="f", rel_delta_tol=0.1, all_pairs=F
     raise ValueError(f"Unsupported RPE delta unit: {delta_unit}")
 
 
-def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est):
+def normalize_pose_relation(metric_kind, relation):
+    relation = str(relation)
+    if relation == "all":
+        return "all"
+    aliases = APE_RELATION_ALIASES if metric_kind == "ape" else RPE_RELATION_ALIASES
+    if relation in aliases:
+        return aliases[relation]
+    if relation in aliases.values():
+        return relation
+    supported = ", ".join(sorted(list(aliases.keys()) + list(aliases.values())))
+    raise ValueError(f"Unsupported {metric_kind.upper()} pose relation: {relation}. Supported: {supported}")
+
+
+def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est, include_raw=False):
     if len(pos_ref) != len(pos_est):
         raise ValueError("APE requires trajectories with the same number of poses.")
 
@@ -124,8 +161,16 @@ def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est):
     full_err = np.linalg.norm(E - I4, axis=(1, 2))
     rot_angle_rad = np.abs(R.from_matrix(E[:, :3, :3]).magnitude())
     rot_angle_deg = np.degrees(rot_angle_rad)
+    error_arrays = {
+        "translation_part": trans_err,
+        "point_distance": trans_err,
+        "rotation_part": rot_part_err,
+        "full_transformation": full_err,
+        "rotation_angle_rad": rot_angle_rad,
+        "rotation_angle_deg": rot_angle_deg,
+    }
 
-    return {
+    result = {
         "translation_part": compute_error_statistics(trans_err),
         "point_distance": compute_error_statistics(trans_err),
         "rotation_part": compute_error_statistics(rot_part_err),
@@ -133,6 +178,10 @@ def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est):
         "rotation_angle_rad": compute_error_statistics(rot_angle_rad),
         "rotation_angle_deg": compute_error_statistics(rot_angle_deg),
     }
+    if include_raw:
+        result["_error_arrays"] = {k: np.asarray(v, dtype=float) for k, v in error_arrays.items()}
+        result["_x_axis"] = {"index": np.arange(trans_err.size, dtype=float)}
+    return result
 
 
 def compute_rpe_evo_style(
@@ -145,6 +194,7 @@ def compute_rpe_evo_style(
     rel_delta_tol=0.1,
     all_pairs=False,
     pairs_from_reference=False,
+    include_raw=False,
 ):
     if len(pos_ref) != len(pos_est):
         raise ValueError("RPE requires trajectories with the same number of poses.")
@@ -157,10 +207,11 @@ def compute_rpe_evo_style(
     id_pairs = build_rpe_pairs(
         pair_source, delta=delta, delta_unit=delta_unit, rel_delta_tol=rel_delta_tol, all_pairs=all_pairs
     )
+    delta_ids = [int(j) for _, j in id_pairs]
 
     if len(id_pairs) == 0:
         empty = compute_error_statistics(np.array([]))
-        return {
+        result = {
             "pair_count": 0,
             "translation_part": empty,
             "point_distance": empty,
@@ -170,6 +221,22 @@ def compute_rpe_evo_style(
             "rotation_angle_rad": empty,
             "rotation_angle_deg": empty,
         }
+        if include_raw:
+            result["_error_arrays"] = {
+                "translation_part": np.array([], dtype=float),
+                "point_distance": np.array([], dtype=float),
+                "point_distance_error_ratio": np.array([], dtype=float),
+                "rotation_part": np.array([], dtype=float),
+                "full_transformation": np.array([], dtype=float),
+                "rotation_angle_rad": np.array([], dtype=float),
+                "rotation_angle_deg": np.array([], dtype=float),
+            }
+            result["_x_axis"] = {
+                "index": np.array([], dtype=float),
+                "delta_ids": np.array([], dtype=float),
+            }
+            result["_pair_ids"] = np.array([], dtype=int).reshape(0, 2)
+        return result
 
     ref_distances = np.array([np.linalg.norm(pos_ref[i] - pos_ref[j]) for i, j in id_pairs])
     est_distances = np.array([np.linalg.norm(pos_est[i] - pos_est[j]) for i, j in id_pairs])
@@ -191,8 +258,17 @@ def compute_rpe_evo_style(
     full_err = np.linalg.norm(E - I4, axis=(1, 2))
     rot_angle_rad = np.abs(R.from_matrix(E[:, :3, :3]).magnitude())
     rot_angle_deg = np.degrees(rot_angle_rad)
+    error_arrays = {
+        "translation_part": translation_part_err,
+        "point_distance": point_distance_err,
+        "point_distance_error_ratio": point_ratio,
+        "rotation_part": rotation_part_err,
+        "full_transformation": full_err,
+        "rotation_angle_rad": rot_angle_rad,
+        "rotation_angle_deg": rot_angle_deg,
+    }
 
-    return {
+    result = {
         "pair_count": int(len(id_pairs)),
         "translation_part": compute_error_statistics(translation_part_err),
         "point_distance": compute_error_statistics(point_distance_err),
@@ -202,6 +278,14 @@ def compute_rpe_evo_style(
         "rotation_angle_rad": compute_error_statistics(rot_angle_rad),
         "rotation_angle_deg": compute_error_statistics(rot_angle_deg),
     }
+    if include_raw:
+        result["_error_arrays"] = {k: np.asarray(v, dtype=float) for k, v in error_arrays.items()}
+        result["_x_axis"] = {
+            "index": np.arange(len(id_pairs), dtype=float),
+            "delta_ids": np.asarray(delta_ids, dtype=float),
+        }
+        result["_pair_ids"] = np.asarray(id_pairs, dtype=int)
+    return result
 
 
 def print_metric_block(title, metrics, unit_map=None):
@@ -213,4 +297,3 @@ def print_metric_block(title, metrics, unit_map=None):
             print(f"{key}: nan {unit}".rstrip())
         else:
             print(f"{key}: {value:.6f} {unit}".rstrip())
-
