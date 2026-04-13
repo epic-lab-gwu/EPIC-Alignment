@@ -1,0 +1,15 @@
+site_name: vicon_ws Docs
+site_description: Trajectory alignment and evaluation toolkit documentation
+repo_url: https://github.com/epic-lab-gwu/vicon_ws
+repo_name: epic-lab-gwu/vicon_ws
+
+theme:
+  name: readthedocs
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - CLI Reference: cli.md
+  - Benchmark: benchmark.md
+  - Architecture: architecture.md
+  - Estimation Artifacts: estimation_artifacts.md

@@ -296,6 +296,35 @@ vicon_ws/
     └── smoke/
 ```
 
+## 文档站（替代 Wiki）
+
+本项目使用 `docs/ + MkDocs + GitHub Pages` 搭建文档站（不依赖 GitHub Wiki）。
+
+本地预览：
+
+```bash
+pip install mkdocs
+mkdocs serve
+```
+
+默认访问：`http://127.0.0.1:8000`
+
+静态构建：
+
+```bash
+mkdocs build --strict
+```
+
+站点配置在 `mkdocs.yml`，页面内容在 `docs/`。
+
+已新增自动发布 workflow：`.github/workflows/docs.yml`。
+
+首次启用 GitHub Pages（仓库设置）：
+
+1. `Settings -> Pages`
+2. `Build and deployment` 选择 `GitHub Actions`
+3. 推送 `main` 分支后会自动发布
+
 ## 开发与测试
 
 ```bash
