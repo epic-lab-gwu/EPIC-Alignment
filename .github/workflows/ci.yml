@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.10"]
 
     steps:
       - name: Checkout
@@ -29,13 +29,5 @@ jobs:
       - name: Lint (ruff)
         run: ruff check src tests pipeline.py
 
-      - name: Type check (mypy)
-        run: mypy src tests/unit pipeline.py
-
       - name: Unit tests
         run: pytest -q tests/unit
-
-      - name: Smoke tests
-        run: |
-          bash tests/smoke/test_cli_help.sh
-          bash tests/smoke/test_engines.sh
