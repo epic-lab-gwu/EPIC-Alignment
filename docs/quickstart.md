@@ -1,5 +1,14 @@
 # Quick Start
 
+## 0. Preview Docs Locally
+
+```bash
+pip install mkdocs
+mkdocs serve
+```
+
+Open `http://127.0.0.1:8000`.
+
 ## 1. Install
 
 ```bash

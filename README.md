@@ -9,8 +9,8 @@
 5. 增加了一些todo:
 
 - [ ] 起个名字, 方便代码统一
-- [ ] 参考evo, 补一个serialize_plot
-- [ ] 参考evo_ipython, 补一个 ipython/notebook 入口
+- [x] 参考evo, 补一个serialize_plot（含 `vicon_ws_fig` 重绘）
+- [x] 参考evo_ipython, 补一个 ipython/notebook 入口
 - [ ] 找一些bag/bag2/mcap的数据格式作为输入实测一下
 - [ ] vicon_ws的方法层面也许可能可以微调/改进
 - [ ] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
@@ -66,6 +66,9 @@ pip install -e .[geo]
 
 # 开发与测试
 pip install -e .[dev]
+
+# IPython 交互入口（可选）
+pip install -e .[ipython]
 ```
 
 ## 命令入口
@@ -76,11 +79,13 @@ pip install -e .[dev]
 - `vicon_ws_traj`
 - `vicon_ws_ape`
 - `vicon_ws_rpe`
+- `vicon_ws_fig`
 - `vicon_ws_res`
 - `vicon_ws_config`
 - `vicon_ws_benchmark`
 - `vicon_ws_plot_summary`
 - `vicon_ws_metric_res`
+- `vicon_ws_ipython`
 
 兼容旧入口：
 
@@ -121,6 +126,15 @@ vicon_ws \
 # 轨迹对比绘图
 vicon_ws_traj --format tum --plot --plot-mode xz gt.tum est.tum
 
+# evo 风格子命令也兼容
+vicon_ws_traj tum gt.tum est.tum --plot
+
+# bag 的 evo 风格 topics 位置参数也兼容
+vicon_ws_traj bag /path/run.bag /vicon/pose /odom --plot
+
+# 交互式窗口（evo 风格）
+vicon_ws_traj --format tum --plot --plot-interactive --plot-backend qtagg gt.tum est.tum
+
 # 对齐与同步
 vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
 
@@ -145,6 +159,10 @@ vicon_ws_rpe tum gt.tum est.tum \
   --all_pairs \
   --align \
   --plot --plot_mode xz
+
+# 若需要交互式窗口，可附加：
+# --plot 默认在 TTY 终端会尝试弹交互窗口（evo 风格）；
+# 也可显式指定：--plot-interactive --plot-backend qtagg
 ```
 
 ### 4) 结果对比 `vicon_ws_res`
@@ -152,12 +170,42 @@ vicon_ws_rpe tum gt.tum est.tum \
 ```bash
 vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
   --metric all --stage step3 --plot --out-dir outputs/res_compare
+
+# 交互式窗口
+vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+  --metric all --stage step3 --plot --plot-interactive --plot-backend qtagg
+
+# 也支持 evo 原生结果包（info.json + stats.json + error_array.npz）
+vicon_ws_res /home/yifu/evo/test/data/res_files/orb_ape.zip \
+             /home/yifu/evo/test/data/res_files/sptam_ape.zip \
+             --metric ape --ape-relation trans_part --plot
 ```
 
-### 5) 全局配置 `vicon_ws_config`
+### 5) 图序列化与重绘 `vicon_ws_fig`
 
 ```bash
+# 先在 ape/rpe 中序列化绘图规格
+vicon_ws_ape tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --serialize_plot outputs/ape_plot.json
+
+# 后续可独立重绘（不重算指标）
+vicon_ws_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
+```
+
+### 6) 全局配置 `vicon_ws_config`
+
+```bash
+# 根级默认（所有工具都可继承）
 vicon_ws_config set plot false rpe_delta 3
+
+# 工具级默认（更细粒度，推荐）
+vicon_ws_config set --tool vicon_ws_ape plot_mode xy t_max_diff 0.05
+vicon_ws_config set --tool vicon_ws_traj plot_mode xyz sync_max_diff 0.01
+
+# 查看某个工具生效配置（global + tool 合并后）
+vicon_ws_config show --tool vicon_ws_ape
+
 vicon_ws_config show
 vicon_ws_config unset plot
 ```
@@ -176,6 +224,24 @@ vicon_ws_config unset plot
 
 ```bash
 vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
+```
+
+也支持分层配置（类似 evo settings）：
+
+```json
+{
+  "_global": {
+    "plot": true
+  },
+  "vicon_ws_ape": {
+    "plot_mode": "xy",
+    "t_max_diff": 0.05
+  },
+  "vicon_ws_traj": {
+    "plot_mode": "xyz",
+    "sync_max_diff": 0.01
+  }
+}
 ```
 
 ## 支持输入格式
@@ -216,6 +282,16 @@ TF 语法也支持：
 - `--rerun-motion-stride N`
 
 说明：行为与 evo 一致，默认仅 viewer logging，不自动写 `.rrd`。
+
+## IPython 入口
+
+```bash
+# 进入预加载 vicon_ws 模块的 IPython
+vicon_ws_ipython
+
+# 先查看预加载符号
+vicon_ws_ipython --list
+```
 
 ## Benchmark（AlignAnything）
 

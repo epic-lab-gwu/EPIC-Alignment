@@ -8,8 +8,10 @@ theme:
 
 nav:
   - Home: index.md
+  - Local Docs: local_docs.md
   - Quick Start: quickstart.md
   - CLI Reference: cli.md
   - Benchmark: benchmark.md
+  - Troubleshooting: troubleshooting.md
   - Architecture: architecture.md
   - Estimation Artifacts: estimation_artifacts.md

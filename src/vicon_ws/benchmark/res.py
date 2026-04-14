@@ -5,19 +5,27 @@ import csv
 import json
 import shutil
 from datetime import datetime
+from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
 
 import os
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-vicon_ws")
 import matplotlib
-matplotlib.use("Agg")
+from vicon_ws.viz.backend_bootstrap import bootstrap_matplotlib_backend
+
+bootstrap_matplotlib_backend(matplotlib)
 import matplotlib.pyplot as plt
 import numpy as np
 
 from vicon_ws.config_cli import parse_args_with_config
 from vicon_ws.core.evaluation import normalize_pose_relation
 from vicon_ws.core.math_utils import compute_error_statistics
+from vicon_ws.viz.plot_runtime import (
+    configure_plot_runtime,
+    should_enable_interactive_plot,
+    show_plots,
+)
 from vicon_ws.viz.metric_plots import aggregate_metric_results
 
 _STAT_KEYS = ("rmse", "mean", "median", "std", "min", "max", "sse")
@@ -53,6 +61,8 @@ def _load_payload(path: Path) -> dict:
             elif "result.json" in names:
                 result_obj = json.loads(zf.read("result.json").decode("utf-8"))
                 payload = result_obj.get("metrics_payload", result_obj)
+            elif "info.json" in names and "stats.json" in names:
+                payload = _payload_from_evo_result_zip(zf)
             else:
                 raise ValueError(f"No metrics.json or result.json in zip: {path}")
     else:
@@ -65,6 +75,84 @@ def _load_payload(path: Path) -> dict:
     if "pose_metrics" not in payload:
         raise ValueError(f"Result payload has no pose_metrics: {path}")
     return payload
+
+
+def _read_numpy_archive_1d(zf: ZipFile, name: str) -> np.ndarray:
+    arr = np.load(BytesIO(zf.read(name)), allow_pickle=True)
+    if hasattr(arr, "files"):
+        files = list(getattr(arr, "files", []))
+        if not files:
+            return np.array([], dtype=float)
+        arr = arr[files[0]]
+    return np.asarray(arr, dtype=float).reshape(-1)
+
+
+def _infer_metric_kind(info: dict) -> str:
+    text = f"{info.get('title', '')} {info.get('label', '')}".lower()
+    if "rpe" in text:
+        return "rpe"
+    return "ape"
+
+
+def _infer_relation_key(info: dict) -> str:
+    text = f"{info.get('title', '')} {info.get('label', '')}".lower()
+    if "point distance error ratio" in text:
+        return "point_distance_error_ratio"
+    if "point distance" in text:
+        return "point_distance"
+    if "rotation part" in text:
+        return "rotation_part"
+    if "angle" in text:
+        if "deg" in text:
+            return "rotation_angle_deg"
+        if "rad" in text:
+            return "rotation_angle_rad"
+    if "full transformation" in text:
+        return "full_transformation"
+    return "translation_part"
+
+
+def _payload_from_evo_result_zip(zf: ZipFile) -> dict:
+    info = json.loads(zf.read("info.json").decode("utf-8"))
+    raw_stats = json.loads(zf.read("stats.json").decode("utf-8"))
+    errors = (
+        _read_numpy_archive_1d(zf, "error_array.npz")
+        if "error_array.npz" in set(zf.namelist())
+        else np.array([], dtype=float)
+    )
+    seconds = (
+        _read_numpy_archive_1d(zf, "seconds_from_start.npz")
+        if "seconds_from_start.npz" in set(zf.namelist())
+        else np.array([], dtype=float)
+    )
+
+    computed_stats = compute_error_statistics(errors)
+    stats: dict[str, float] = dict(computed_stats)
+    if isinstance(raw_stats, dict):
+        for k in _STAT_KEYS:
+            v = raw_stats.get(k, None)
+            if isinstance(v, (int, float)):
+                stats[k] = float(v)
+
+    metric_kind = _infer_metric_kind(info)
+    relation = _infer_relation_key(info)
+    stage_block: dict[str, object] = {
+        relation: stats,
+        "_error_arrays": {relation: errors.tolist()},
+        "_x_axis": (
+            {"seconds_from_start": seconds.tolist()}
+            if int(seconds.size) > 0
+            else {"index": np.arange(errors.size, dtype=float).tolist()}
+        ),
+    }
+    if metric_kind == "rpe":
+        stage_block["pair_count"] = int(errors.size)
+
+    return {
+        "info": info,
+        "metadata": {"title": str(info.get("title", "") or "")},
+        "pose_metrics": {metric_kind: {"step3": stage_block}},
+    }
 
 
 def _infer_label(path: Path) -> str:
@@ -157,6 +245,7 @@ def _plot_raw_series(
     title: str,
     out_path: Path,
     plot_markers: bool,
+    keep_open: bool = False,
 ) -> Path:
     plt.figure(figsize=(11.0, 4.8))
     xlabel = "index"
@@ -186,7 +275,8 @@ def _plot_raw_series(
     plt.legend(loc="best")
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
     return out_path
 
 
@@ -295,7 +385,24 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--use-filenames", "--use_filenames", action="store_true", help="Use source filenames as labels.")
     p.add_argument("--ignore-title", "--ignore_title", action="store_true", help="Ignore title mismatch checks.")
     p.add_argument("--plot-markers", "--plot_markers", action="store_true", help="Use markers in raw plots.")
-    p.add_argument("-p", "--plot", action="store_true", help="Generate aggregate plots.")
+    p.add_argument(
+        "--plot-interactive",
+        "--plot_interactive",
+        action="store_true",
+        help="Show interactive matplotlib window after generating plots.",
+    )
+    p.add_argument(
+        "--plot-backend",
+        "--plot_backend",
+        default="",
+        help="Optional matplotlib backend override (e.g. qtagg, tkagg).",
+    )
+    p.add_argument(
+        "-p",
+        "--plot",
+        action="store_true",
+        help="Generate aggregate plots (evo-style: in TTY sessions also opens interactive window).",
+    )
     p.add_argument("--out-dir", default="", help="Output directory for generated files.")
     p.add_argument("--save-plot", "--save_plot", default="", help="Path prefix (file or dir) to export plots.")
     p.add_argument("--save-table", "--save_table", default="", help="Path to save comparison table as CSV.")
@@ -413,8 +520,22 @@ def run(args: argparse.Namespace) -> int:
         print(f"Saved table: {table_path}")
 
     produced: list[Path] = []
+    interactive_enabled = False
     if bool(args.plot or str(getattr(args, "save_plot", "")).strip()):
         assert out_dir is not None
+        interactive_requested = should_enable_interactive_plot(
+            plot=bool(getattr(args, "plot", False)),
+            plot_interactive=bool(getattr(args, "plot_interactive", False)),
+        )
+        interactive_enabled, active_backend = configure_plot_runtime(
+            plot_interactive=interactive_requested,
+            plot_backend=str(getattr(args, "plot_backend", "") or ""),
+        )
+        if interactive_requested:
+            if interactive_enabled:
+                print(f"[plot] Interactive backend: {active_backend}")
+            else:
+                print("[plot] Interactive mode requested but no interactive backend is available.")
         for metric_kind in metric_kinds:
             relation = ape_rel if metric_kind == "ape" else rpe_rel
             metric_out = out_dir / f"{metric_kind}_{relation}_{args.stage}"
@@ -445,6 +566,7 @@ def run(args: argparse.Namespace) -> int:
                     metric_kind=metric_kind,
                     relation=relation,
                     stage=args.stage,
+                    keep_open=interactive_enabled,
                 )
             )
 
@@ -465,9 +587,13 @@ def run(args: argparse.Namespace) -> int:
                     title=f"{metric_kind.upper()} raw values ({relation}, {args.stage})",
                     out_path=raw_path,
                     plot_markers=bool(args.plot_markers),
+                    keep_open=interactive_enabled,
                 )
             )
         print(f"Generated {len(produced)} plot/artifact file(s) in: {out_dir}")
+        if interactive_enabled:
+            show_plots()
+            plt.close("all")
 
     if str(getattr(args, "save_plot", "")).strip():
         exported = _export_plot_artifacts(produced, str(args.save_plot))
@@ -478,7 +604,7 @@ def run(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = build_parser()
-    args = parse_args_with_config(parser, config_dest="config")
+    args = parse_args_with_config(parser, config_dest="config", tool_name="vicon_ws_res")
     return run(args)
 
 

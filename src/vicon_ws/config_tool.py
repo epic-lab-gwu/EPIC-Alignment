@@ -5,13 +5,26 @@ import importlib
 import json
 from pathlib import Path
 
-from vicon_ws.config_cli import get_global_config_path
+from vicon_ws.config_cli import get_global_config_path, resolve_scoped_config
+
+
+_TOOL_CHOICES = [
+    "vicon_ws",
+    "vicon_ws_traj",
+    "vicon_ws_res",
+    "vicon_ws_metric_res",
+    "vicon_ws_ape",
+    "vicon_ws_rpe",
+]
 
 
 def _load_settings(path: Path) -> dict:
     if not path.exists():
         return {}
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    if not str(text).strip():
+        return {}
+    raw = json.loads(text)
     if not isinstance(raw, dict):
         raise ValueError(f"Settings file must be a JSON object: {path}")
     return raw
@@ -86,6 +99,14 @@ def _default_settings() -> dict:
         return {}
 
 
+def _ensure_tool_section(data: dict, tool: str) -> dict:
+    raw = data.get(tool, None)
+    if not isinstance(raw, dict):
+        raw = {}
+    data[tool] = raw
+    return raw
+
+
 def _resolve_cfg_path(args: argparse.Namespace) -> Path:
     cmd_cfg = str(getattr(args, "config", "") or "").strip()
     top_cfg = str(getattr(args, "config_path", "") or "").strip()
@@ -127,6 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     show = sub.add_parser("show", help="Show global settings.")
     show.add_argument("-c", "--config", default="", help="Optional settings file path.")
+    show.add_argument(
+        "--tool",
+        choices=_TOOL_CHOICES,
+        default="",
+        help="Show effective scoped config for one tool.",
+    )
     show.add_argument("--brief", action="store_true", help="Print only JSON payload.")
     show.add_argument("--diff", action="store_true", help="Show only keys differing from defaults.")
     show.add_argument("--json", action="store_true", help="Alias of --brief.")
@@ -134,16 +161,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     setp = sub.add_parser("set", help="Set one or more key-value pairs.")
     setp.add_argument("-c", "--config", default="", help="Optional settings file path.")
+    setp.add_argument(
+        "--tool",
+        choices=_TOOL_CHOICES,
+        default="",
+        help="Write keys into a tool-specific section instead of root.",
+    )
     setp.add_argument("-m", "--merge", default="", help="Merge another JSON config file first.")
     setp.add_argument("--soft", action="store_true", help="Soft merge: do not overwrite existing keys.")
     setp.add_argument("params", nargs=argparse.REMAINDER, help="Pairs: key value [key value ...]")
 
     unset = sub.add_parser("unset", help="Unset one or more keys.")
     unset.add_argument("-c", "--config", default="", help="Optional settings file path.")
+    unset.add_argument(
+        "--tool",
+        choices=_TOOL_CHOICES,
+        default="",
+        help="Unset keys from a tool-specific section.",
+    )
     unset.add_argument("keys", nargs="+", help="Keys to remove.")
 
     reset = sub.add_parser("reset", help="Reset settings to defaults.")
     reset.add_argument("-c", "--config", default="", help="Optional settings file path.")
+    reset.add_argument(
+        "--tool",
+        choices=_TOOL_CHOICES,
+        default="",
+        help="Reset one tool section instead of whole file.",
+    )
     reset.add_argument("-y", action="store_true", help="Acknowledge full reset.")
     reset.add_argument("params", nargs="*", help="Optional keys to reset/remove.")
 
@@ -152,12 +197,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--tool",
         default="vicon_ws",
         choices=[
-            "vicon_ws",
-            "vicon_ws_traj",
-            "vicon_ws_res",
-            "vicon_ws_metric_res",
-            "vicon_ws_ape",
-            "vicon_ws_rpe",
+            *(_TOOL_CHOICES),
         ],
         help="Tool name to generate defaults for.",
     )
@@ -171,11 +211,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> int:
     cfg_path = _resolve_cfg_path(args)
+    tool = str(getattr(args, "tool", "") or "").strip()
 
     if args.cmd == "show":
-        data = _load_settings(cfg_path)
+        raw_data = _load_settings(cfg_path)
+        data = resolve_scoped_config(raw_data, tool_name=tool if tool else None)
         if bool(getattr(args, "diff", False)):
-            data = _diff_entries(data, _default_settings())
+            defaults = _generate_template(tool) if tool else _default_settings()
+            data = _diff_entries(data, defaults)
         data = _subset(data, [str(x) for x in getattr(args, "params", [])])
         if bool(getattr(args, "brief", False) or getattr(args, "json", False)):
             print(json.dumps(data, ensure_ascii=False))
@@ -186,43 +229,57 @@ def run(args: argparse.Namespace) -> int:
 
     if args.cmd == "set":
         data = _load_settings(cfg_path)
+        target = _ensure_tool_section(data, tool) if tool else data
         merge_path = str(getattr(args, "merge", "") or "").strip()
         if merge_path:
-            merged = _load_settings(Path(merge_path).expanduser().resolve())
+            merged_raw = _load_settings(Path(merge_path).expanduser().resolve())
+            merged = resolve_scoped_config(merged_raw, tool_name=tool if tool else None)
             if bool(getattr(args, "soft", False)):
                 for key, value in merged.items():
-                    data.setdefault(_normalize_key(key), value)
+                    target.setdefault(_normalize_key(key), value)
             else:
                 for key, value in merged.items():
-                    data[_normalize_key(key)] = value
+                    target[_normalize_key(key)] = value
         params = [str(x) for x in getattr(args, "params", [])]
         if len(params) % 2 != 0:
             raise ValueError("`set` expects even number of args: key value [key value ...]")
         for i in range(0, len(params), 2):
-            data[_normalize_key(params[i])] = _parse_value(params[i + 1])
+            target[_normalize_key(params[i])] = _parse_value(params[i + 1])
         _save_settings(cfg_path, data)
         print(f"Saved: {cfg_path}")
         return 0
 
     if args.cmd == "unset":
         data = _load_settings(cfg_path)
+        target = _ensure_tool_section(data, tool) if tool else data
         for key in getattr(args, "keys", []):
-            data.pop(_normalize_key(key), None)
+            target.pop(_normalize_key(key), None)
+        if tool and isinstance(data.get(tool, None), dict) and len(data[tool]) == 0:
+            data.pop(tool, None)
         _save_settings(cfg_path, data)
         print(f"Saved: {cfg_path}")
         return 0
 
     if args.cmd == "reset":
-        defaults = _default_settings()
+        defaults = _generate_template(tool) if tool else _default_settings()
         params = [str(x) for x in getattr(args, "params", [])]
+        if tool and not params:
+            data = _load_settings(cfg_path)
+            data[tool] = dict(defaults)
+            _save_settings(cfg_path, data)
+            print(f"Saved: {cfg_path}")
+            return 0
         if params:
             data = _load_settings(cfg_path)
+            target = _ensure_tool_section(data, tool) if tool else data
             for key in params:
                 nk = _normalize_key(key)
                 if nk in defaults:
-                    data[nk] = defaults[nk]
+                    target[nk] = defaults[nk]
                 else:
-                    data.pop(nk, None)
+                    target.pop(nk, None)
+            if tool and isinstance(data.get(tool, None), dict) and len(data[tool]) == 0:
+                data.pop(tool, None)
             _save_settings(cfg_path, data)
             print(f"Saved: {cfg_path}")
             return 0

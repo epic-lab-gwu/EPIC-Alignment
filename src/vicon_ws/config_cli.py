@@ -6,6 +6,72 @@ import sys
 from pathlib import Path
 
 GLOBAL_CONFIG_ENV = "VICON_WS_GLOBAL_CONFIG"
+_GLOBAL_SECTION_KEYS = ("_global", "global", "defaults")
+
+
+def _tool_aliases(tool_name: str) -> list[str]:
+    name = str(tool_name or "").strip()
+    if not name:
+        return []
+    aliases = [name]
+    mapping = {
+        "vicon_ws": ["main", "pipeline"],
+        "vicon_ws_ape": ["ape"],
+        "vicon_ws_rpe": ["rpe"],
+        "vicon_ws_traj": ["traj"],
+        "vicon_ws_res": ["res"],
+        "vicon_ws_metric_res": ["metric_res", "metrics_res"],
+    }
+    aliases.extend(mapping.get(name, []))
+    return aliases
+
+
+def _is_section_key(key: str, value) -> bool:
+    text = str(key).strip()
+    if text in _GLOBAL_SECTION_KEYS or text == "tools":
+        return isinstance(value, dict)
+    if text.startswith("vicon_ws_") and isinstance(value, dict):
+        return True
+    if text in {"main", "pipeline", "ape", "rpe", "traj", "res", "metric_res", "metrics_res"} and isinstance(value, dict):
+        return True
+    return False
+
+
+def resolve_scoped_config(config: dict, tool_name: str | None = None) -> dict:
+    if not isinstance(config, dict):
+        return {}
+
+    scoped: dict = {}
+    for key, value in config.items():
+        if _is_section_key(key, value):
+            continue
+        scoped[_normalize_key(key)] = value
+
+    for gk in _GLOBAL_SECTION_KEYS:
+        section = config.get(gk, {})
+        if isinstance(section, dict):
+            for key, value in section.items():
+                scoped[_normalize_key(key)] = value
+
+    if not str(tool_name or "").strip():
+        return scoped
+
+    aliases = _tool_aliases(str(tool_name))
+    tools_obj = config.get("tools", {})
+    if isinstance(tools_obj, dict):
+        for alias in aliases:
+            section = tools_obj.get(alias, {})
+            if isinstance(section, dict):
+                for key, value in section.items():
+                    scoped[_normalize_key(key)] = value
+
+    for alias in aliases:
+        section = config.get(alias, {})
+        if isinstance(section, dict):
+            for key, value in section.items():
+                scoped[_normalize_key(key)] = value
+
+    return scoped
 
 
 def _normalize_key(key: str) -> str:
@@ -102,13 +168,14 @@ def config_to_argv(
     return argv
 
 
-def parse_args_with_config(parser, argv=None, config_dest: str = "config"):
+def parse_args_with_config(parser, argv=None, config_dest: str = "config", tool_name: str | None = None):
     raw = list(sys.argv[1:] if argv is None else argv)
-    global_cfg = _load_json_if_exists(get_global_config_path())
+    global_cfg_raw = _load_json_if_exists(get_global_config_path())
+    global_cfg = resolve_scoped_config(global_cfg_raw, tool_name=tool_name)
     global_argv = config_to_argv(
         parser,
         global_cfg,
-        reserved_keys={config_dest},
+        reserved_keys={config_dest, "subcommand"},
         ignore_unknown=True,
     )
 
@@ -125,6 +192,7 @@ def parse_args_with_config(parser, argv=None, config_dest: str = "config"):
         return parser.parse_args(global_argv + raw)
 
     cfg = _load_json_config(cfg_path)
-    cfg_argv = config_to_argv(parser, cfg, reserved_keys={config_dest})
+    cfg = resolve_scoped_config(cfg, tool_name=tool_name)
+    cfg_argv = config_to_argv(parser, cfg, reserved_keys={config_dest, "subcommand"})
     merged = global_argv + raw + cfg_argv
     return parser.parse_args(merged)

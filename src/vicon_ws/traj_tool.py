@@ -27,12 +27,23 @@ from vicon_ws.metric_cli_common import (
     project_to_plane,
     resolve_map_tile_contextily,
 )
+from vicon_ws.viz.plot_runtime import (
+    configure_plot_runtime,
+    should_enable_interactive_plot,
+    show_plots,
+)
 from vicon_ws.viz.rerun_viz import log_trajectories_to_rerun
 
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-vicon_ws")
 import matplotlib
 
-matplotlib.use("Agg")
+from vicon_ws.viz.backend_bootstrap import bootstrap_matplotlib_backend
+
+bootstrap_matplotlib_backend(matplotlib)
+try:
+    from mpl_toolkits.mplot3d import Axes3D as _Axes3D  # noqa: F401
+except Exception:
+    _Axes3D = None
 import matplotlib.pyplot as plt
 
 
@@ -83,6 +94,26 @@ def _parse_spec(spec: str, default_topic: str) -> tuple[Path, str]:
         p, topic = text.split("::", 1)
         return Path(p).expanduser().resolve(), topic.strip()
     return Path(text).expanduser().resolve(), default_topic
+
+
+def _normalize_evo_bag_topics(specs: list[str], fmt: str, all_topics: bool) -> list[str]:
+    fmt_norm = str(fmt).strip().lower()
+    if fmt_norm not in {"bag", "bag2", "mcap"}:
+        return specs
+    if len(specs) < 2:
+        return specs
+    first = str(specs[0]).strip()
+    if not first or "::" in first:
+        return specs
+    bag_path = Path(first).expanduser().resolve()
+    if not bag_path.exists():
+        return specs
+    rest = [str(x).strip() for x in specs[1:]]
+    if any((not x) or ("::" in x) or Path(x).expanduser().exists() for x in rest):
+        return specs
+    if all_topics:
+        return specs
+    return [f"{bag_path}::{topic}" for topic in rest]
 
 
 def _path_length(pos: np.ndarray) -> float:
@@ -544,7 +575,7 @@ def _plot_trajectories(
     out_path: Path,
     ros_map_yaml: str = "",
     map_tile: str = "",
-) -> None:
+) -> matplotlib.figure.Figure:
     stride = max(1, int(stride))
     mode = str(mode).lower()
     if mode == "xyz":
@@ -610,10 +641,10 @@ def _plot_trajectories(
     ax.legend(loc="best")
     fig.tight_layout()
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    return fig
 
 
-def _plot_xyz_series(trajs: list[Trajectory], out_path: Path, relative_time: bool) -> None:
+def _plot_xyz_series(trajs: list[Trajectory], out_path: Path, relative_time: bool) -> matplotlib.figure.Figure:
     fig, axarr = plt.subplots(3, 1, sharex=True, figsize=(10.2, 7.0))
     labels = ("x (m)", "y (m)", "z (m)")
     for tr in trajs:
@@ -628,10 +659,10 @@ def _plot_xyz_series(trajs: list[Trajectory], out_path: Path, relative_time: boo
         axarr[0].legend(loc="best")
     fig.tight_layout()
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    return fig
 
 
-def _plot_rpy_series(trajs: list[Trajectory], out_path: Path, relative_time: bool) -> None:
+def _plot_rpy_series(trajs: list[Trajectory], out_path: Path, relative_time: bool) -> matplotlib.figure.Figure:
     fig, axarr = plt.subplots(3, 1, sharex=True, figsize=(10.2, 7.0))
     labels = ("roll (deg)", "pitch (deg)", "yaw (deg)")
     for tr in trajs:
@@ -647,10 +678,10 @@ def _plot_rpy_series(trajs: list[Trajectory], out_path: Path, relative_time: boo
         axarr[0].legend(loc="best")
     fig.tight_layout()
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    return fig
 
 
-def _plot_speed_series(trajs: list[Trajectory], out_path: Path, relative_time: bool) -> None:
+def _plot_speed_series(trajs: list[Trajectory], out_path: Path, relative_time: bool) -> matplotlib.figure.Figure:
     fig = plt.figure(figsize=(10.2, 4.2))
     ax = fig.add_subplot(111)
     for tr in trajs:
@@ -673,7 +704,7 @@ def _plot_speed_series(trajs: list[Trajectory], out_path: Path, relative_time: b
     ax.legend(loc="best")
     fig.tight_layout()
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    return fig
 
 
 def _resolve_plot_targets(save_plot: str, out_dir: Path | None) -> dict[str, list[Path]]:
@@ -790,7 +821,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--sync-max-diff",
         "--t_max_diff",
         type=float,
-        default=0.02,
+        default=0.01,
         help="Maximum timestamp difference used for --sync association.",
     )
     p.add_argument(
@@ -856,7 +887,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="For bag inputs, load all supported topics from each bag path.",
     )
-    p.add_argument("--plot", action="store_true", help="Generate a trajectory plot.")
+    p.add_argument(
+        "--plot",
+        action="store_true",
+        help="Generate trajectory plots (evo-style: in TTY sessions also opens interactive window).",
+    )
+    p.add_argument(
+        "--plot-interactive",
+        "--plot_interactive",
+        action="store_true",
+        help="Show interactive matplotlib window after generating plots.",
+    )
+    p.add_argument(
+        "--plot-backend",
+        "--plot_backend",
+        default="",
+        help="Optional matplotlib backend override (e.g. qtagg, tkagg).",
+    )
     p.add_argument(
         "--plot-relative-time",
         "--plot_relative_time",
@@ -867,7 +914,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--plot-mode",
         "--plot_mode",
         choices=["xy", "xz", "yx", "yz", "zx", "zy", "xyz"],
-        default="xz",
+        default="xyz",
         help="Plot projection mode.",
     )
     p.add_argument("--plot-stride", type=int, default=1, help="Downsample stride for plotting.")
@@ -932,6 +979,12 @@ def run(args: argparse.Namespace) -> int:
         ):
             args.format = first
             args.trajectories = args.trajectories[1:]
+
+    args.trajectories = _normalize_evo_bag_topics(
+        [str(x) for x in args.trajectories],
+        fmt=str(getattr(args, "format", "auto")),
+        all_topics=bool(getattr(args, "all_topics", False)),
+    )
 
     if bool(args.transform_left) and bool(args.transform_right):
         raise ValueError("--transform-left and --transform-right are mutually exclusive.")
@@ -1092,10 +1145,24 @@ def run(args: argparse.Namespace) -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
 
     if bool(args.plot):
+        interactive_requested = should_enable_interactive_plot(
+            plot=bool(getattr(args, "plot", False)),
+            plot_interactive=bool(getattr(args, "plot_interactive", False)),
+        )
+        interactive_enabled, active_backend = configure_plot_runtime(
+            plot_interactive=interactive_requested,
+            plot_backend=str(getattr(args, "plot_backend", "") or ""),
+        )
+        if interactive_requested:
+            if interactive_enabled:
+                print(f"[plot] Interactive backend: {active_backend}")
+            else:
+                print("[plot] Interactive mode requested but no interactive backend is available.")
+        open_figures: list[matplotlib.figure.Figure] = []
         targets = _resolve_plot_targets(str(args.save_plot), out_dir)
         primary_traj_plot = targets["trajectories"][0]
         primary_traj_plot.parent.mkdir(parents=True, exist_ok=True)
-        _plot_trajectories(
+        fig_traj = _plot_trajectories(
             trajs,
             mode=args.plot_mode,
             stride=args.plot_stride,
@@ -1103,20 +1170,37 @@ def run(args: argparse.Namespace) -> int:
             ros_map_yaml=str(getattr(args, "ros_map_yaml", "") or ""),
             map_tile=str(getattr(args, "map_tile", "") or ""),
         )
+        open_figures.append(fig_traj)
         for pth in targets["trajectories"][1:]:
             pth.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(primary_traj_plot, pth)
-        for pth in targets["xyz"]:
+        for idx, pth in enumerate(targets["xyz"]):
             pth.parent.mkdir(parents=True, exist_ok=True)
-            _plot_xyz_series(trajs, pth, relative_time=bool(getattr(args, "plot_relative_time", False)))
-        for pth in targets["rpy"]:
+            fig = _plot_xyz_series(trajs, pth, relative_time=bool(getattr(args, "plot_relative_time", False)))
+            if idx == 0:
+                open_figures.append(fig)
+            else:
+                plt.close(fig)
+        for idx, pth in enumerate(targets["rpy"]):
             pth.parent.mkdir(parents=True, exist_ok=True)
-            _plot_rpy_series(trajs, pth, relative_time=bool(getattr(args, "plot_relative_time", False)))
-        for pth in targets["speeds"]:
+            fig = _plot_rpy_series(trajs, pth, relative_time=bool(getattr(args, "plot_relative_time", False)))
+            if idx == 0:
+                open_figures.append(fig)
+            else:
+                plt.close(fig)
+        for idx, pth in enumerate(targets["speeds"]):
             pth.parent.mkdir(parents=True, exist_ok=True)
-            _plot_speed_series(trajs, pth, relative_time=bool(getattr(args, "plot_relative_time", False)))
+            fig = _plot_speed_series(trajs, pth, relative_time=bool(getattr(args, "plot_relative_time", False)))
+            if idx == 0:
+                open_figures.append(fig)
+            else:
+                plt.close(fig)
         all_plots = targets["trajectories"] + targets["xyz"] + targets["rpy"] + targets["speeds"]
         print(f"Saved plots: {', '.join(str(p) for p in all_plots)}")
+        if interactive_enabled and open_figures:
+            show_plots()
+        for fig in open_figures:
+            plt.close(fig)
 
     if str(save_kind):
         export_dir = out_dir if out_dir is not None else _default_out_dir(Path.cwd())
@@ -1214,7 +1298,7 @@ def run(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = build_parser()
-    args = parse_args_with_config(parser, config_dest="config")
+    args = parse_args_with_config(parser, config_dest="config", tool_name="vicon_ws_traj")
     return run(args)
 
 

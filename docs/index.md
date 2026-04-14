@@ -7,6 +7,12 @@
 - optional rerun visualization
 - AlignAnything benchmark harness
 
+## Start Here
+
+- local docs first: `mkdocs serve`
+- local docs check: `mkdocs build --strict`
+- see [Local Docs](local_docs.md) for full setup
+
 ## Who This Is For
 
 - team members who need to run alignment and evaluation quickly

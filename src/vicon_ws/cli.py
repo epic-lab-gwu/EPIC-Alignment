@@ -231,7 +231,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     parser = build_parser()
-    args = parse_args_with_config(parser, argv=argv, config_dest="config")
+    args = parse_args_with_config(parser, argv=argv, config_dest="config", tool_name="vicon_ws")
     return run(args)
 
 
