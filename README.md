@@ -10,8 +10,8 @@
 5. 增加了一些todo:
 
 - [ ] 起个名字, 方便代码统一
-- [ ] 参考evo, 补一个serialize_plot
-- [ ] 参考evo_ipython, 补一个 ipython/notebook 入口
+- [x] 参考evo, 补一个serialize_plot # 4/14
+- [x] 参考evo_ipython, 补一个 ipython/notebook 入口
 - [ ] 找一些bag/bag2/mcap的数据格式作为输入实测一下
 - [ ] vicon_ws的方法层面也许可能可以微调/改进
 - [ ] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
