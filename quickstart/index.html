@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Quick Start - vicon_ws Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Quick Start";
+        var mkdocs_page_input_path = "quickstart.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> vicon_ws Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../local_docs/">Local Docs</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Quick Start</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#0-preview-docs-locally">0. Preview Docs Locally</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#1-install">1. Install</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#2-run-main-pipeline">2. Run Main Pipeline</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#3-run-ape-rpe">3. Run APE / RPE</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#4-optional-rerun">4. Optional rerun</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#5-verify-local-quality-gates">5. Verify Local Quality Gates</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmark/">Benchmark</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../troubleshooting/">Troubleshooting</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../architecture/">Architecture</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../estimation_artifacts/">Estimation Artifacts</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">vicon_ws Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Quick Start</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/epic-lab-gwu/vicon_ws/edit/master/docs/quickstart.md">Edit on epic-lab-gwu/vicon_ws</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="quick-start">Quick Start</h1>
+<h2 id="0-preview-docs-locally">0. Preview Docs Locally</h2>
+<pre><code class="language-bash">pip install mkdocs
+mkdocs serve
+</code></pre>
+<p>Open <code>http://127.0.0.1:8000</code>.</p>
+<h2 id="1-install">1. Install</h2>
+<pre><code class="language-bash">pip install -e .
+</code></pre>
+<p>Optional extras:</p>
+<pre><code class="language-bash">pip install -e .[dev]
+pip install -e .[rerun]
+pip install -e .[ros]
+pip install -e .[geo]
+</code></pre>
+<h2 id="2-run-main-pipeline">2. Run Main Pipeline</h2>
+<pre><code class="language-bash">vicon_ws \
+  --engine modular \
+  --gt-csv gt.csv \
+  --est-path outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --t-max-diff 0.02 \
+  --plot
+</code></pre>
+<p>Expected outputs (example):</p>
+<ul>
+<li><code>outputs/run_YYYYmmdd_HHMMSS/metrics.json</code></li>
+<li><code>outputs/run_YYYYmmdd_HHMMSS/metrics_summary.csv</code></li>
+<li><code>outputs/run_YYYYmmdd_HHMMSS/plots/*.png</code></li>
+</ul>
+<h2 id="3-run-ape-rpe">3. Run APE / RPE</h2>
+<pre><code class="language-bash">vicon_ws_ape tum gt.tum est.tum --pose_relation trans_part --plot
+vicon_ws_rpe tum gt.tum est.tum --pose_relation trans_part --delta 1 --delta_unit f --plot
+</code></pre>
+<h2 id="4-optional-rerun">4. Optional rerun</h2>
+<pre><code class="language-bash">vicon_ws --engine modular --gt-csv gt.csv --est-path outputs/traj_estimate_v1_01.txt --est-format tum --rerun
+</code></pre>
+<h2 id="5-verify-local-quality-gates">5. Verify Local Quality Gates</h2>
+<pre><code class="language-bash">ruff check src tests pipeline.py
+pytest -q tests/unit
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../local_docs/" class="btn btn-neutral float-left" title="Local Docs"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../cli/" class="btn btn-neutral float-right" title="CLI Reference">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/epic-lab-gwu/vicon_ws" class="fa fa-code-fork" style="color: #fcfcfc"> epic-lab-gwu/vicon_ws</a>
+        </span>
+    
+    
+      <span><a href="../local_docs/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../cli/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>

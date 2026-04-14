@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" >
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+      <link rel="shortcut icon" href="../img/favicon.ico" />
+    <title>Troubleshooting - vicon_ws Docs</title>
+    <link rel="stylesheet" href="../css/theme.css" />
+    <link rel="stylesheet" href="../css/theme_extra.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github.min.css" />
+    
+      <script>
+        // Current page data
+        var mkdocs_page_name = "Troubleshooting";
+        var mkdocs_page_input_path = "troubleshooting.md";
+        var mkdocs_page_url = null;
+      </script>
+    
+    <!--[if lt IE 9]>
+      <script src="../js/html5shiv.min.js"></script>
+    <![endif]-->
+      <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
+      <script>hljs.highlightAll();</script> 
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+          <a href=".." class="icon icon-home"> vicon_ws Docs
+        </a><div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+      <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="..">Home</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../local_docs/">Local Docs</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../quickstart/">Quick Start</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../cli/">CLI Reference</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../benchmark/">Benchmark</a>
+                </li>
+              </ul>
+              <ul class="current">
+                <li class="toctree-l1 current"><a class="reference internal current" href="#">Troubleshooting</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#mkdocs-command-not-found">mkdocs: command not found</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#docs-build-fails-with-strict">Docs build fails with --strict</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#cannot-publish-with-github-pages">Cannot publish with GitHub Pages</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#pr-cannot-merge-due-workflow-conflicts">PR cannot merge due workflow conflicts</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#git-push-rejected-with-fetch-first">git push rejected with fetch first</a>
+    </li>
+    </ul>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../architecture/">Architecture</a>
+                </li>
+              </ul>
+              <ul>
+                <li class="toctree-l1"><a class="reference internal" href="../estimation_artifacts/">Estimation Artifacts</a>
+                </li>
+              </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+      <nav class="wy-nav-top" role="navigation" aria-label="Mobile navigation menu">
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="..">vicon_ws Docs</a>
+        
+      </nav>
+      <div class="wy-nav-content">
+        <div class="rst-content"><div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href=".." class="icon icon-home" aria-label="Docs"></a></li>
+      <li class="breadcrumb-item active">Troubleshooting</li>
+    <li class="wy-breadcrumbs-aside">
+          <a href="https://github.com/epic-lab-gwu/vicon_ws/edit/master/docs/troubleshooting.md">Edit on epic-lab-gwu/vicon_ws</a>
+    </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+            <div class="section" itemprop="articleBody">
+              
+                <h1 id="troubleshooting">Troubleshooting</h1>
+<h2 id="mkdocs-command-not-found"><code>mkdocs: command not found</code></h2>
+<p>Install MkDocs first:</p>
+<pre><code class="language-bash">pip install mkdocs
+</code></pre>
+<h2 id="docs-build-fails-with-strict">Docs build fails with <code>--strict</code></h2>
+<p>Common causes:</p>
+<ul>
+<li>broken markdown link</li>
+<li>nav entry in <code>mkdocs.yml</code> points to a missing file</li>
+</ul>
+<p>Check:</p>
+<pre><code class="language-bash">mkdocs build --strict
+</code></pre>
+<h2 id="cannot-publish-with-github-pages">Cannot publish with GitHub Pages</h2>
+<p>If repository is private and your plan does not include private Pages,
+GitHub will block deployment.</p>
+<p>Current recommended mode for this repo:</p>
+<ul>
+<li>local preview (<code>mkdocs serve</code>)</li>
+<li>local docs build check in CI (<code>mkdocs build --strict</code>)</li>
+</ul>
+<h2 id="pr-cannot-merge-due-workflow-conflicts">PR cannot merge due workflow conflicts</h2>
+<p>If conflict appears in <code>.github/workflows/ci.yml</code>:</p>
+<ol>
+<li>keep <code>main</code> branch version as baseline</li>
+<li>re-apply only your intended workflow edits</li>
+<li>push conflict resolution commit to the same PR branch</li>
+</ol>
+<h2 id="git-push-rejected-with-fetch-first"><code>git push</code> rejected with <code>fetch first</code></h2>
+<p>Run:</p>
+<pre><code class="language-bash">git fetch origin main
+git rebase origin/main
+git push origin main
+</code></pre>
+<p>If there are local uncommitted files, stash first:</p>
+<pre><code class="language-bash">git stash push -m &quot;temp&quot;
+</code></pre>
+              
+            </div>
+          </div><footer>
+    <div class="rst-footer-buttons" role="navigation" aria-label="Footer Navigation">
+        <a href="../benchmark/" class="btn btn-neutral float-left" title="Benchmark"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+        <a href="../architecture/" class="btn btn-neutral float-right" title="Architecture">Next <span class="icon icon-circle-arrow-right"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+          
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="Versions">
+  <span class="rst-current-version" data-toggle="rst-current-version">
+    
+        <span>
+          <a href="https://github.com/epic-lab-gwu/vicon_ws" class="fa fa-code-fork" style="color: #fcfcfc"> epic-lab-gwu/vicon_ws</a>
+        </span>
+    
+    
+      <span><a href="../benchmark/" style="color: #fcfcfc">&laquo; Previous</a></span>
+    
+    
+      <span><a href="../architecture/" style="color: #fcfcfc">Next &raquo;</a></span>
+    
+  </span>
+</div>
+    <script src="../js/jquery-3.6.0.min.js"></script>
+    <script>var base_url = "..";</script>
+    <script src="../js/theme_extra.js"></script>
+    <script src="../js/theme.js"></script>
+      <script src="../search/main.js"></script>
+    <script>
+        jQuery(function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        });
+    </script>
+
+</body>
+</html>
