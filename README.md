@@ -1,9 +1,7 @@
 # vicon_ws
 2026/4/14
 
-解决了昨天大部分todo, 代码已推送
-
-[Documentation website](https://epic-lab-gwu.github.io/vicon_ws/)
+解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/vicon_ws/)
 
 ---
 2026/4/13
