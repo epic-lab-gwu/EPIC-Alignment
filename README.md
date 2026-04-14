@@ -1,5 +1,9 @@
 # vicon_ws
+2026/4/14
 
+解决了昨天的todo
+
+---
 2026/4/13
 
 参考evo, 给vicon_ws
@@ -12,8 +16,7 @@
 - [ ] 起个名字, 方便代码统一
 - [x] 参考evo, 补一个serialize_plot # 4/14
 - [x] 参考evo_ipython, 补一个 ipython/notebook 入口
-- [ ] 找一些bag/bag2/mcap的数据格式作为输入实测一下
-- [ ] vicon_ws的方法层面也许可能可以微调/改进
+- [x] 找一些bag/bag2/mcap的数据格式作为输入实测一下
 - [ ] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
 
 ---
