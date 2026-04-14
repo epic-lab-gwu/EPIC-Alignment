@@ -6,7 +6,9 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-vicon_ws")
 import matplotlib
 
-matplotlib.use("Agg")
+from vicon_ws.viz.backend_bootstrap import bootstrap_matplotlib_backend
+
+bootstrap_matplotlib_backend(matplotlib)
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -65,6 +67,7 @@ def _plot_raw(
     ylabel: str,
     xlabel: str,
     out_path: Path,
+    keep_open: bool = False,
 ) -> None:
     plt.figure(figsize=(11, 4.8))
     for label, xvals, errs in traces:
@@ -79,13 +82,15 @@ def _plot_raw(
     plt.legend(loc="best")
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
 
 
 def _plot_stats(
     stage_stats: list[tuple[str, dict[str, float]]],
     title: str,
     out_path: Path,
+    keep_open: bool = False,
 ) -> None:
     labels = [name for name, _ in stage_stats]
     values = np.array(
@@ -106,7 +111,8 @@ def _plot_stats(
     plt.legend(loc="best")
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
 
 
 def _plot_hist(
@@ -114,6 +120,7 @@ def _plot_hist(
     title: str,
     xlabel: str,
     out_path: Path,
+    keep_open: bool = False,
 ) -> None:
     plt.figure(figsize=(11, 4.8))
     for label, errs in stage_errors:
@@ -129,10 +136,17 @@ def _plot_hist(
     plt.legend(loc="best")
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
 
 
-def _plot_box(stage_errors: list[tuple[str, np.ndarray]], title: str, ylabel: str, out_path: Path) -> None:
+def _plot_box(
+    stage_errors: list[tuple[str, np.ndarray]],
+    title: str,
+    ylabel: str,
+    out_path: Path,
+    keep_open: bool = False,
+) -> None:
     labels = []
     values = []
     for label, errs in stage_errors:
@@ -151,10 +165,17 @@ def _plot_box(stage_errors: list[tuple[str, np.ndarray]], title: str, ylabel: st
     plt.grid(True, axis="y", linestyle=":", alpha=0.4)
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
 
 
-def _plot_violin(stage_errors: list[tuple[str, np.ndarray]], title: str, ylabel: str, out_path: Path) -> None:
+def _plot_violin(
+    stage_errors: list[tuple[str, np.ndarray]],
+    title: str,
+    ylabel: str,
+    out_path: Path,
+    keep_open: bool = False,
+) -> None:
     labels = []
     values = []
     for label, errs in stage_errors:
@@ -174,7 +195,8 @@ def _plot_violin(stage_errors: list[tuple[str, np.ndarray]], title: str, ylabel:
     plt.grid(True, axis="y", linestyle=":", alpha=0.4)
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
 
 
 def generate_metric_plots(
@@ -183,6 +205,7 @@ def generate_metric_plots(
     ape_relation: str = "translation_part",
     rpe_relation: str = "translation_part",
     x_dimension: str = "seconds",
+    keep_open: bool = False,
 ) -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -210,6 +233,7 @@ def generate_metric_plots(
             ylabel=ylabel,
             xlabel=x_label,
             out_path=raw_path,
+            keep_open=keep_open,
         )
         produced.append(raw_path)
 
@@ -218,6 +242,7 @@ def generate_metric_plots(
             stage_stats,
             title=f"{metric_kind.upper()} stats ({relation})",
             out_path=stats_path,
+            keep_open=keep_open,
         )
         produced.append(stats_path)
 
@@ -227,6 +252,7 @@ def generate_metric_plots(
             title=f"{metric_kind.upper()} distribution ({relation})",
             xlabel=ylabel,
             out_path=hist_path,
+            keep_open=keep_open,
         )
         produced.append(hist_path)
 
@@ -236,6 +262,7 @@ def generate_metric_plots(
             title=f"{metric_kind.upper()} box ({relation})",
             ylabel=ylabel,
             out_path=box_path,
+            keep_open=keep_open,
         )
         if box_path.exists():
             produced.append(box_path)
@@ -246,6 +273,7 @@ def generate_metric_plots(
             title=f"{metric_kind.upper()} violin ({relation})",
             ylabel=ylabel,
             out_path=violin_path,
+            keep_open=keep_open,
         )
         if violin_path.exists():
             produced.append(violin_path)
@@ -276,6 +304,7 @@ def aggregate_metric_results(
     metric_kind: str,
     relation: str,
     stage: str,
+    keep_open: bool = False,
 ) -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -312,16 +341,35 @@ def aggregate_metric_results(
     plt.grid(True, axis="y", linestyle=":", alpha=0.4)
     plt.tight_layout()
     plt.savefig(rmse_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    if not keep_open:
+        plt.close()
 
     hist_path = out_dir / "aggregated_hist.png"
-    _plot_hist(series, title=f"{metric_kind.upper()} {relation} distribution ({stage})", xlabel=ylabel, out_path=hist_path)
+    _plot_hist(
+        series,
+        title=f"{metric_kind.upper()} {relation} distribution ({stage})",
+        xlabel=ylabel,
+        out_path=hist_path,
+        keep_open=keep_open,
+    )
 
     box_path = out_dir / "aggregated_box.png"
-    _plot_box(series, title=f"{metric_kind.upper()} {relation} box ({stage})", ylabel=ylabel, out_path=box_path)
+    _plot_box(
+        series,
+        title=f"{metric_kind.upper()} {relation} box ({stage})",
+        ylabel=ylabel,
+        out_path=box_path,
+        keep_open=keep_open,
+    )
 
     violin_path = out_dir / "aggregated_violin.png"
-    _plot_violin(series, title=f"{metric_kind.upper()} {relation} violin ({stage})", ylabel=ylabel, out_path=violin_path)
+    _plot_violin(
+        series,
+        title=f"{metric_kind.upper()} {relation} violin ({stage})",
+        ylabel=ylabel,
+        out_path=violin_path,
+        keep_open=keep_open,
+    )
 
     produced = [csv_path, rmse_path, hist_path]
     if box_path.exists():

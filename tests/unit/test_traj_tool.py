@@ -304,6 +304,55 @@ def test_traj_tool_evo_subcommand_and_save_as_flag(tmp_path: Path) -> None:
     assert (out_dir / "a.tum").exists()
 
 
+def test_traj_tool_defaults_align_with_evo() -> None:
+    parser = traj_tool.build_parser()
+    args = parser.parse_args(["tum", "dummy.tum"])
+    assert args.plot_mode == "xyz"
+    assert float(args.sync_max_diff) == 0.01
+
+
+def test_traj_tool_evo_bag_positional_topics(tmp_path: Path, monkeypatch) -> None:
+    bag = tmp_path / "run.bag"
+    bag.write_text("dummy", encoding="utf-8")
+    out_dir = tmp_path / "out_bag_topics"
+    loaded_topics: list[str] = []
+
+    def _fake_load(path: Path, fmt: str, topic: str):
+        loaded_topics.append(str(topic))
+        t = np.asarray([0.0, 1.0, 2.0], dtype=float)
+        pos = np.asarray(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [2.0, 0.0, 0.0],
+            ],
+            dtype=float,
+        )
+        quat = np.asarray(
+            [
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        )
+        return t, pos, quat
+
+    monkeypatch.setattr(traj_tool, "_load_traj", _fake_load)
+    args = traj_tool.build_parser().parse_args(
+        [
+            "bag",
+            str(bag),
+            "/vicon/pose",
+            "/odom",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    assert traj_tool.run(args) == 0
+    assert loaded_topics == ["/vicon/pose", "/odom"]
+
+
 def test_traj_tool_project_to_plane_and_save_plot_prefix(tmp_path: Path) -> None:
     t1 = tmp_path / "a.tum"
     _write_tum(t1, x_offset=0.0)

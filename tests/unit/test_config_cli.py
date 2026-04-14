@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from vicon_ws.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config
+from vicon_ws.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config, resolve_scoped_config
 
 
 def test_parse_args_with_config_supports_required_fields(tmp_path) -> None:
@@ -139,3 +139,57 @@ def test_single_bool_flag_allows_default_value_from_global_config(tmp_path, monk
 
     args = parse_args_with_config(parser, argv=[], config_dest="config")
     assert args.plot is False
+
+
+def test_resolve_scoped_config_merges_global_and_tool_sections() -> None:
+    cfg = {
+        "count": 1,
+        "_global": {"count": 2, "plot": False},
+        "vicon_ws_ape": {"count": 3, "pose_relation": "rot_part"},
+    }
+    out = resolve_scoped_config(cfg, tool_name="vicon_ws_ape")
+    assert out["count"] == 3
+    assert out["plot"] is False
+    assert out["pose_relation"] == "rot_part"
+
+
+def test_parse_args_with_config_reads_tool_section_from_global(tmp_path, monkeypatch) -> None:
+    gcfg = tmp_path / "global.json"
+    gcfg.write_text(
+        json.dumps(
+            {
+                "_global": {"count": 2},
+                "vicon_ws_ape": {"count": 5},
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GLOBAL_CONFIG_ENV, str(gcfg))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="")
+    parser.add_argument("--count", type=int, default=0)
+    args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="vicon_ws_ape")
+    assert args.count == 5
+
+
+def test_parse_args_with_config_reads_tools_container_section(tmp_path, monkeypatch) -> None:
+    gcfg = tmp_path / "global.json"
+    gcfg.write_text(
+        json.dumps(
+            {
+                "_global": {"count": 2},
+                "tools": {
+                    "vicon_ws_traj": {"count": 8},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(GLOBAL_CONFIG_ENV, str(gcfg))
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", default="")
+    parser.add_argument("--count", type=int, default=0)
+    args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="vicon_ws_traj")
+    assert args.count == 8

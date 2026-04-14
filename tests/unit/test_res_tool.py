@@ -1,8 +1,10 @@
 from pathlib import Path
+from io import BytesIO
 import json
 import zipfile
 
 import pytest
+import numpy as np
 
 from vicon_ws.benchmark import res
 
@@ -50,6 +52,12 @@ def _payload_with_arrays(ape_vals, rpe_vals, title: str) -> dict:
             },
         },
     }
+
+
+def _make_npy_bytes(values) -> bytes:
+    bio = BytesIO()
+    np.save(bio, np.asarray(values, dtype=float))
+    return bio.getvalue()
 
 
 def test_res_tool_compare_metrics_json_and_plot(tmp_path: Path) -> None:
@@ -103,6 +111,99 @@ def test_res_tool_load_zip_bundle(tmp_path: Path) -> None:
     )
     ret = res.run(args)
     assert ret == 0
+
+
+def test_res_tool_load_evo_native_zip_ape(tmp_path: Path) -> None:
+    bundle = tmp_path / "evo_ape.zip"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr(
+            "info.json",
+            json.dumps(
+                {
+                    "title": "APE w.r.t. translation part (m)",
+                    "label": "APE (m)",
+                    "ref_name": "gt",
+                    "est_name": "est",
+                }
+            ),
+        )
+        zf.writestr(
+            "stats.json",
+            json.dumps(
+                {
+                    "rmse": 0.5,
+                    "mean": 0.4,
+                    "median": 0.3,
+                    "std": 0.1,
+                    "min": 0.2,
+                    "max": 0.6,
+                    "sse": 1.0,
+                }
+            ),
+        )
+        zf.writestr("error_array.npz", _make_npy_bytes([0.2, 0.4, 0.6]))
+
+    args = res.build_parser().parse_args(
+        [
+            str(bundle),
+            "--metric",
+            "ape",
+            "--ape-relation",
+            "trans_part",
+            "--stage",
+            "step3",
+            "--stat",
+            "rmse",
+        ]
+    )
+    assert res.run(args) == 0
+
+
+def test_res_tool_load_evo_native_zip_rpe_for_each(tmp_path: Path) -> None:
+    bundle = tmp_path / "evo_rpe_each.zip"
+    with zipfile.ZipFile(bundle, "w") as zf:
+        zf.writestr(
+            "info.json",
+            json.dumps(
+                {
+                    "title": "mean RPE w.r.t. translation part for different path sub-sequences",
+                    "label": "RPE (m)",
+                    "ref_name": "gt",
+                    "est_name": "est",
+                }
+            ),
+        )
+        zf.writestr(
+            "stats.json",
+            json.dumps(
+                {
+                    "10.0": 0.10,
+                    "20.0": 0.20,
+                    "30.0": 0.30,
+                }
+            ),
+        )
+        zf.writestr("error_array.npz", _make_npy_bytes([0.1, 0.2, 0.3]))
+        zf.writestr("seconds_from_start.npz", _make_npy_bytes([10.0, 20.0, 30.0]))
+
+    out_dir = tmp_path / "out_rpe_each"
+    args = res.build_parser().parse_args(
+        [
+            str(bundle),
+            "--metric",
+            "rpe",
+            "--rpe-relation",
+            "trans_part",
+            "--stage",
+            "step3",
+            "--plot",
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    assert res.run(args) == 0
+    assert (out_dir / "summary.csv").exists()
+    assert (out_dir / "rpe_translation_part_step3" / "aggregated_raw.png").exists()
 
 
 def test_res_tool_merge_and_use_rel_time(tmp_path: Path) -> None:

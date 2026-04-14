@@ -125,7 +125,7 @@ def run(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = build_parser()
-    args = parse_args_with_config(parser, config_dest="config")
+    args = parse_args_with_config(parser, config_dest="config", tool_name="vicon_ws_metric_res")
     return run(args)
 
 

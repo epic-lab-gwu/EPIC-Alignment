@@ -80,3 +80,82 @@ def test_config_tool_show_diff_and_merge_soft(tmp_path: Path) -> None:
 
     args = parser.parse_args(["--config-path", str(cfg_path), "show", "--brief", "--diff"])
     assert config_tool.run(args) == 0
+
+
+def test_config_tool_set_and_reset_tool_section(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "settings.json"
+    parser = config_tool.build_parser()
+
+    args = parser.parse_args(
+        [
+            "--config-path",
+            str(cfg_path),
+            "set",
+            "--tool",
+            "vicon_ws_ape",
+            "plot_mode",
+            "\"xy\"",
+            "t_max_diff",
+            "0.05",
+        ]
+    )
+    assert config_tool.run(args) == 0
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["vicon_ws_ape"]["plot_mode"] == "xy"
+    assert data["vicon_ws_ape"]["t_max_diff"] == 0.05
+
+    args = parser.parse_args(
+        [
+            "--config-path",
+            str(cfg_path),
+            "reset",
+            "--tool",
+            "vicon_ws_ape",
+        ]
+    )
+    assert config_tool.run(args) == 0
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["vicon_ws_ape"]["subcommand"] == "tum"
+
+
+def test_config_tool_unset_tool_section_key(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "settings.json"
+    cfg_path.write_text(
+        json.dumps({"vicon_ws_rpe": {"delta": 3, "plot_mode": "xy"}}, indent=2),
+        encoding="utf-8",
+    )
+    parser = config_tool.build_parser()
+    args = parser.parse_args(
+        [
+            "--config-path",
+            str(cfg_path),
+            "unset",
+            "--tool",
+            "vicon_ws_rpe",
+            "plot_mode",
+        ]
+    )
+    assert config_tool.run(args) == 0
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert "plot_mode" not in data["vicon_ws_rpe"]
+    assert data["vicon_ws_rpe"]["delta"] == 3
+
+
+def test_config_tool_set_on_empty_existing_file(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "settings.json"
+    cfg_path.write_text("", encoding="utf-8")
+    parser = config_tool.build_parser()
+    args = parser.parse_args(
+        [
+            "--config-path",
+            str(cfg_path),
+            "set",
+            "--tool",
+            "vicon_ws_ape",
+            "plot_mode",
+            "xy",
+        ]
+    )
+    assert config_tool.run(args) == 0
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert data["vicon_ws_ape"]["plot_mode"] == "xy"

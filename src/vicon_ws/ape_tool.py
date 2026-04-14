@@ -8,7 +8,13 @@ from pathlib import Path
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-vicon_ws")
 import matplotlib
 
-matplotlib.use("Agg")
+from vicon_ws.viz.backend_bootstrap import bootstrap_matplotlib_backend
+
+bootstrap_matplotlib_backend(matplotlib)
+try:
+    from mpl_toolkits.mplot3d import Axes3D as _Axes3D  # noqa: F401
+except Exception:
+    _Axes3D = None
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -30,32 +36,46 @@ from vicon_ws.metric_cli_common import (
     resolve_map_tile_contextily,
     sync_trajectories,
 )
+from vicon_ws.viz.plot_bundle import (
+    make_plot_bundle,
+    make_raw_line_spec,
+    make_trajectory_error_map_spec,
+    save_plot_bundle,
+)
+from vicon_ws.viz.plot_runtime import (
+    configure_plot_runtime,
+    should_enable_interactive_plot,
+    show_plots,
+)
 from vicon_ws.viz.rerun_viz import log_metric_to_rerun
 
 
-def _add_time_sync_args(p: argparse.ArgumentParser) -> None:
+def _add_time_sync_args(p: argparse.ArgumentParser, suppress_defaults: bool = False) -> None:
+    def dflt(value):
+        return argparse.SUPPRESS if suppress_defaults else value
+
     p.add_argument(
         "--t_max_diff",
         type=float,
-        default=0.01,
+        default=dflt(0.01),
         help="maximum timestamp difference for data association",
     )
     p.add_argument(
         "--t_offset",
         type=float,
-        default=0.0,
+        default=dflt(0.0),
         help="constant timestamp offset for data association",
     )
     p.add_argument(
         "--t_start",
         type=float,
-        default=None,
+        default=dflt(None),
         help="only use data with timestamps >= this start time",
     )
     p.add_argument(
         "--t_end",
         type=float,
-        default=None,
+        default=dflt(None),
         help="only use data with timestamps <= this end time",
     )
 
@@ -109,8 +129,8 @@ def _plot_raw_errors(
     y_label: str,
     title: str,
     out_path: Path,
-) -> None:
-    plt.figure(figsize=(10.8, 4.8))
+) -> matplotlib.figure.Figure | None:
+    fig = plt.figure(figsize=(10.8, 4.8))
     plt.plot(x_vals, errors, linewidth=1.4)
     plt.title(title)
     plt.xlabel(x_label)
@@ -118,7 +138,7 @@ def _plot_raw_errors(
     plt.grid(True, linestyle=":", alpha=0.5)
     plt.tight_layout()
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close()
+    return fig
 
 
 def _plot_map(
@@ -133,7 +153,7 @@ def _plot_map(
     cmax_percentile: float | None,
     ros_map_yaml: str,
     map_tile: str,
-) -> None:
+) -> matplotlib.figure.Figure | None:
     mode = str(plot_mode).lower()
     vmin, vmax = _compute_color_bounds(errors, cmin, cmax, cmax_percentile)
 
@@ -213,7 +233,7 @@ def _plot_map(
     cbar.set_label("error")
     fig.tight_layout()
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
+    return fig
 
 
 def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False) -> None:
@@ -276,11 +296,17 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
     )
 
     output = p.add_argument_group("output options")
-    output.add_argument("-p", "--plot", action="store_true", default=dflt(False), help="generate raw/map plots")
+    output.add_argument(
+        "-p",
+        "--plot",
+        action="store_true",
+        default=dflt(False),
+        help="generate raw/map plots (evo-style: in TTY sessions also opens interactive window)",
+    )
     output.add_argument(
         "--plot_mode",
         choices=["xy", "xz", "yx", "yz", "zx", "zy", "xyz"],
-        default=dflt("xz"),
+        default=dflt("xyz"),
         help="axes for map projection",
     )
     output.add_argument(
@@ -324,6 +350,25 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
         help="use percentile as colormap max (overrides --plot_colormap_max)",
     )
     output.add_argument("--save_plot", default=dflt(""), help="path stem to save plot files")
+    output.add_argument(
+        "--plot_interactive",
+        "--plot-interactive",
+        action="store_true",
+        default=dflt(False),
+        help="Show interactive matplotlib window after generating plots.",
+    )
+    output.add_argument(
+        "--plot_backend",
+        "--plot-backend",
+        default=dflt(""),
+        help="Optional matplotlib backend override (e.g. qtagg, tkagg).",
+    )
+    output.add_argument(
+        "--serialize_plot",
+        "--serialize-plot",
+        default=dflt(""),
+        help="path to save serialized plot bundle JSON for later re-rendering",
+    )
     output.add_argument("--rerun", action="store_true", default=dflt(False), help="Log visualization data to rerun.")
     output.add_argument(
         "--rerun_rec_id",
@@ -339,6 +384,7 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
     usability.add_argument("--silent", action="store_true", default=dflt(False), help="reserved for compatibility")
     usability.add_argument("--debug", action="store_true", default=dflt(False), help="reserved for compatibility")
     usability.add_argument("--logfile", default=dflt(None), help="reserved for compatibility")
+    _add_time_sync_args(p, suppress_defaults=suppress_defaults)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -358,24 +404,20 @@ def _build_parser() -> argparse.ArgumentParser:
     tum = subs.add_parser("tum", help="TUM trajectories", parents=[shared])
     tum.add_argument("ref_file", help="reference trajectory file")
     tum.add_argument("est_file", help="estimated trajectory file")
-    _add_time_sync_args(tum)
 
     euroc = subs.add_parser("euroc", help="EuRoC files", parents=[shared])
     euroc.add_argument("state_gt_csv", help="ground truth csv")
     euroc.add_argument("est_file", help="estimated trajectory file in TUM format")
-    _add_time_sync_args(euroc)
 
     bag = subs.add_parser("bag", help="ROS1 bag", parents=[shared])
     bag.add_argument("bag", help="bag path")
     bag.add_argument("ref_topic", help="reference trajectory topic")
     bag.add_argument("est_topic", help="estimated trajectory topic")
-    _add_time_sync_args(bag)
 
     bag2 = subs.add_parser("bag2", aliases=["mcap"], help="ROS2 bag / MCAP", parents=[shared])
     bag2.add_argument("bag", help="bag path")
     bag2.add_argument("ref_topic", help="reference trajectory topic")
     bag2.add_argument("est_topic", help="estimated trajectory topic")
-    _add_time_sync_args(bag2)
     return p
 
 
@@ -554,49 +596,129 @@ def run(args: argparse.Namespace) -> int:
     print(f"Saved metrics: {metrics_json}")
 
     plot_files: list[Path] = []
-    if bool(getattr(args, "plot", False)) or str(getattr(args, "save_plot", "")).strip():
-        raw_plot, map_plot = _resolve_plot_paths(out_dir=out_dir, save_plot=str(getattr(args, "save_plot", "")))
-        raw_plot.parent.mkdir(parents=True, exist_ok=True)
-        map_plot.parent.mkdir(parents=True, exist_ok=True)
-
+    raw_spec: dict | None = None
+    map_spec: dict | None = None
+    interactive_enabled = False
+    need_plot_data = (
+        bool(getattr(args, "plot", False))
+        or str(getattr(args, "save_plot", "")).strip()
+        or str(getattr(args, "serialize_plot", "")).strip()
+    )
+    if need_plot_data:
+        interactive_requested = should_enable_interactive_plot(
+            plot=bool(getattr(args, "plot", False)),
+            plot_interactive=bool(getattr(args, "plot_interactive", False)),
+        )
+        interactive_enabled, active_backend = configure_plot_runtime(
+            plot_interactive=interactive_requested,
+            plot_backend=str(getattr(args, "plot_backend", "") or ""),
+        )
+        if interactive_requested:
+            if interactive_enabled:
+                print(f"[plot] Interactive backend: {active_backend}")
+            else:
+                print("[plot] Interactive mode requested but no interactive backend is available.")
         errs = np.asarray(ape_block["_error_arrays"][pose_relation], dtype=float).reshape(-1)
-        x_vals, x_label = _pick_x_axis(ape_block["_x_axis"], str(getattr(args, "plot_x_dimension", "seconds")), errs.size)
+        x_vals, x_label = _pick_x_axis(
+            ape_block["_x_axis"],
+            str(getattr(args, "plot_x_dimension", "seconds")),
+            errs.size,
+        )
         ylabel = f"error ({unit})" if unit else "error"
-        _plot_raw_errors(
-            errors=errs,
-            x_vals=x_vals,
+        map_ref = (
+            project_to_plane(
+                np.asarray(data.full_ref_pos, dtype=float),
+                np.asarray(data.full_ref_quat, dtype=float),
+                project_plane,
+            )[0]
+            if bool(getattr(args, "plot_full_ref", False))
+            and data.full_ref_pos is not None
+            and data.full_ref_quat is not None
+            else ref_eval_pos
+        )
+        raw_spec = make_raw_line_spec(
+            name="raw",
+            title=f"APE raw ({pose_relation})",
+            x=x_vals,
+            y=errs,
             x_label=x_label,
             y_label=ylabel,
-            title=f"APE raw ({pose_relation})",
-            out_path=raw_plot,
         )
-        _plot_map(
-            pos_ref=(
-                project_to_plane(
-                    np.asarray(data.full_ref_pos, dtype=float),
-                    np.asarray(data.full_ref_quat, dtype=float),
-                    project_plane,
-                )[0]
-                if bool(getattr(args, "plot_full_ref", False))
-                and data.full_ref_pos is not None
-                and data.full_ref_quat is not None
-                else ref_eval_pos
-            ),
-            pos_est=est_eval_pos,
-            errors=errs,
-            plot_mode=str(getattr(args, "plot_mode", "xz")),
+        map_spec = make_trajectory_error_map_spec(
+            name="map",
             title=f"APE map ({pose_relation})",
-            out_path=map_plot,
+            plot_mode=str(getattr(args, "plot_mode", "xyz")),
+            ref_positions=map_ref,
+            est_positions=est_eval_pos,
+            scatter_positions=est_eval_pos,
+            errors=errs[: est_eval_pos.shape[0]],
             cmin=getattr(args, "plot_colormap_min", None),
             cmax=getattr(args, "plot_colormap_max", None),
             cmax_percentile=getattr(args, "plot_colormap_max_percentile", None),
             ros_map_yaml=str(getattr(args, "ros_map_yaml", "") or ""),
             map_tile=str(getattr(args, "map_tile", "") or ""),
         )
+
+    if bool(getattr(args, "plot", False)) or str(getattr(args, "save_plot", "")).strip():
+        open_figures: list[matplotlib.figure.Figure] = []
+        raw_plot, map_plot = _resolve_plot_paths(
+            out_dir=out_dir,
+            save_plot=str(getattr(args, "save_plot", "")),
+        )
+        raw_plot.parent.mkdir(parents=True, exist_ok=True)
+        map_plot.parent.mkdir(parents=True, exist_ok=True)
+        assert raw_spec is not None and map_spec is not None
+        raw_fig = _plot_raw_errors(
+            errors=np.asarray(raw_spec["y"], dtype=float),
+            x_vals=np.asarray(raw_spec["x"], dtype=float),
+            x_label=str(raw_spec["x_label"]),
+            y_label=str(raw_spec["y_label"]),
+            title=str(raw_spec["title"]),
+            out_path=raw_plot,
+        )
+        if raw_fig is not None:
+            open_figures.append(raw_fig)
+        map_fig = _plot_map(
+            pos_ref=np.asarray(map_spec["ref_positions"], dtype=float),
+            pos_est=np.asarray(map_spec["est_positions"], dtype=float),
+            errors=np.asarray(map_spec["errors"], dtype=float),
+            plot_mode=str(map_spec["plot_mode"]),
+            title=str(map_spec["title"]),
+            out_path=map_plot,
+            cmin=map_spec.get("cmin", None),
+            cmax=map_spec.get("cmax", None),
+            cmax_percentile=map_spec.get("cmax_percentile", None),
+            ros_map_yaml=str(map_spec.get("ros_map_yaml", "") or ""),
+            map_tile=str(map_spec.get("map_tile", "") or ""),
+        )
+        if map_fig is not None:
+            open_figures.append(map_fig)
         plot_files = [raw_plot, map_plot]
         payload["metadata"]["plot_files"] = [str(p) for p in plot_files]
         for p in plot_files:
             print(f"Saved figure: {p}")
+        if interactive_enabled and open_figures:
+            show_plots()
+        for fig in open_figures:
+            plt.close(fig)
+
+    if str(getattr(args, "serialize_plot", "")).strip():
+        assert raw_spec is not None and map_spec is not None
+        bundle_path = save_plot_bundle(
+            make_plot_bundle(
+                tool="vicon_ws_ape",
+                figures=[raw_spec, map_spec],
+                metadata={
+                    "metric": "ape",
+                    "pose_relation": pose_relation,
+                    "ref_name": data.ref_name,
+                    "est_name": data.est_name,
+                },
+            ),
+            str(getattr(args, "serialize_plot")),
+        )
+        payload["metadata"]["serialize_plot"] = str(bundle_path)
+        print(f"Saved serialized plot: {bundle_path}")
 
     rerun_info = {
         "enabled": "false",
@@ -645,7 +767,7 @@ def run(args: argparse.Namespace) -> int:
 
 def main() -> int:
     parser = _build_parser()
-    args = parse_args_with_config(parser, config_dest="config")
+    args = parse_args_with_config(parser, config_dest="config", tool_name="vicon_ws_ape")
     return run(args)
 
 
