@@ -1,7 +1,9 @@
 # vicon_ws
 2026/4/14
 
-解决了昨天的todo
+解决了昨天的部分todo
+1. 弄个网站, 但是organization的repo搭建github pages需要充钱(个人不需要)
+2. 起个名字
 
 ---
 2026/4/13
