@@ -1,4 +1,10 @@
 # vicon_ws
+
+2026/4/15
+
+完善了文档, 内容更完整, 加了点配色, 代码块, 数学公式块
+
+---
 2026/4/14
 
 解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/vicon_ws/)
