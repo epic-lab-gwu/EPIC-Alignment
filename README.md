@@ -1,6 +1,11 @@
 # vicon_ws
+2026/4/14
 
+解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/vicon_ws/)
+
+---
 2026/4/13
+
 参考evo, 给vicon_ws
 1. 补齐了工具链的接口
 2. 做了可安装化: pyproject.toml + entry points
@@ -9,11 +14,7 @@
 5. 增加了一些todo:
 
 - [ ] 起个名字, 方便代码统一
-- [x] 参考evo, 补一个serialize_plot（含 `vicon_ws_fig` 重绘）
-- [x] 参考evo_ipython, 补一个 ipython/notebook 入口
-- [ ] 找一些bag/bag2/mcap的数据格式作为输入实测一下
-- [ ] vicon_ws的方法层面也许可能可以微调/改进
-- [ ] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
+- [x] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
 
 ---
 2026/4/12

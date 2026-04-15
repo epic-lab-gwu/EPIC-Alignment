@@ -3,7 +3,15 @@ name: CI
 on:
   push:
     branches: ["main", "master"]
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+      - "**/*.md"
   pull_request:
+    paths-ignore:
+      - "README.md"
+      - "docs/**"
+      - "**/*.md"
 
 jobs:
   test:
@@ -31,3 +39,4 @@ jobs:
 
       - name: Unit tests
         run: pytest -q tests/unit
+
