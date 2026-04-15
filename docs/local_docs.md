@@ -5,7 +5,7 @@ This project supports local documentation preview with MkDocs.
 ## Install Docs Dependency
 
 ```bash
-pip install mkdocs
+pip install mkdocs pymdown-extensions
 ```
 
 If you already use the dev extra:

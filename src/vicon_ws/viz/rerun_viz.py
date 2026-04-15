@@ -409,29 +409,41 @@ def _send_blueprint(timeline_name: str):
         start=rrb.TimeRangeBoundary.infinite(),
         end=rrb.TimeRangeBoundary.cursor_relative(seconds=0.0 if timeline_name == "time" else 0),
     )
-    xyz_views = []
-    for label in ("x", "y", "z"):
-        xyz_views.append(
-            rrb.TimeSeriesView(
-                name=label.upper(),
-                time_ranges=history_range,
-                plot_legend=rrb.PlotLegend(visible=False),
-                contents=[f"/vicon_ws/time_series/{label}/**"],
-                axis_x=rrb.TimeAxis(link="LinkToGlobal"),
+    def _make_series_views(labels: tuple[str, ...], *, capitalize: bool = False) -> list:
+        views = []
+        for label in labels:
+            title = label.capitalize() if capitalize else label.upper()
+            views.append(
+                rrb.TimeSeriesView(
+                    name=title,
+                    time_ranges=history_range,
+                    plot_legend=rrb.PlotLegend(visible=False),
+                    contents=[f"/vicon_ws/time_series/{label}/**"],
+                    axis_x=rrb.TimeAxis(link="LinkToGlobal"),
+                )
             )
+        return views
+
+    def _make_ate_view() -> object:
+        return rrb.TimeSeriesView(
+            name="ATE Error",
+            time_ranges=history_range,
+            plot_legend=rrb.Corner2D.RightTop,
+            contents=["/vicon_ws/error/scalars/**"],
+            axis_x=rrb.TimeAxis(link="LinkToGlobal"),
         )
 
-    rpy_views = []
-    for label in ("roll", "pitch", "yaw"):
-        rpy_views.append(
-            rrb.TimeSeriesView(
-                name=label.capitalize(),
-                time_ranges=history_range,
-                plot_legend=rrb.PlotLegend(visible=False),
-                contents=[f"/vicon_ws/time_series/{label}/**"],
-                axis_x=rrb.TimeAxis(link="LinkToGlobal"),
-            )
+    def _make_speed_view() -> object:
+        return rrb.TimeSeriesView(
+            name="Speed",
+            time_ranges=history_range,
+            plot_legend=rrb.Corner2D.RightTop,
+            contents=["/vicon_ws/time_series/speed/**"],
+            axis_x=rrb.TimeAxis(link="LinkToGlobal"),
         )
+
+    xyz_views = _make_series_views(("x", "y", "z"))
+    rpy_views = _make_series_views(("roll", "pitch", "yaw"), capitalize=True)
 
     rr.send_blueprint(
         rrb.Blueprint(
@@ -469,17 +481,73 @@ def _send_blueprint(timeline_name: str):
                         grid_columns=1,
                     ),
                     rrb.Grid(
+                        name="Follow Views",
+                        contents=[
+                            rrb.Grid(
+                                name="Tracked 3D",
+                                contents=[
+                                    rrb.Spatial3DView(
+                                        name="Follow GT",
+                                        time_ranges=history_range,
+                                        contents=[
+                                            "/vicon_ws/replay/gt/**",
+                                            "/vicon_ws/replay/step3/**",
+                                        ],
+                                        eye_controls=rrb.EyeControls3D(
+                                            tracking_entity="/vicon_ws/replay/gt/pose",
+                                        ),
+                                    ),
+                                    rrb.Spatial3DView(
+                                        name="Follow Step3",
+                                        time_ranges=history_range,
+                                        contents=[
+                                            "/vicon_ws/replay/gt/**",
+                                            "/vicon_ws/replay/step3/**",
+                                        ],
+                                        eye_controls=rrb.EyeControls3D(
+                                            tracking_entity="/vicon_ws/replay/step3/pose",
+                                        ),
+                                    ),
+                                ],
+                                grid_columns=2,
+                                column_shares=[1, 1],
+                            ),
+                            rrb.Grid(
+                                name="Follow Metrics",
+                                contents=[
+                                    _make_ate_view(),
+                                    rrb.BarChartView(
+                                        name="Statistics",
+                                        origin="/vicon_ws/error/statistics",
+                                        plot_legend=rrb.PlotLegend(None, visible=False),
+                                    ),
+                                    _make_speed_view(),
+                                ],
+                                grid_columns=3,
+                                column_shares=[2, 1, 1],
+                            ),
+                            rrb.Grid(
+                                name="Position",
+                                contents=_make_series_views(("x", "y", "z")),
+                                grid_columns=3,
+                                column_shares=[1, 1, 1],
+                            ),
+                            rrb.Grid(
+                                name="Orientation",
+                                contents=_make_series_views(("roll", "pitch", "yaw"), capitalize=True),
+                                grid_columns=3,
+                                column_shares=[1, 1, 1],
+                            ),
+                        ],
+                        grid_columns=1,
+                        row_shares=[3.2, 1.1, 1.0, 1.0],
+                    ),
+                    rrb.Grid(
                         name="Trajectory Series",
                         contents=[
                             rrb.Vertical(name="Position", contents=xyz_views),
                             rrb.Vertical(name="Orientation", contents=rpy_views),
-                            rrb.TimeSeriesView(
-                                name="Speed",
-                                time_ranges=history_range,
-                                plot_legend=rrb.Corner2D.RightTop,
-                                contents=["/vicon_ws/time_series/speed/**"],
-                                axis_x=rrb.TimeAxis(link="LinkToGlobal"),
-                            ),
+                            _make_speed_view(),
                         ],
                         column_shares=1,
                     ),

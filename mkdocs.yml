@@ -6,12 +6,23 @@ repo_name: epic-lab-gwu/vicon_ws
 theme:
   name: readthedocs
 
+markdown_extensions:
+  - pymdownx.arithmatex:
+      generic: true
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - javascripts/code-copy.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - stylesheets/openvins-like.css
+
 nav:
   - Home: index.md
-  - Local Docs: local_docs.md
   - Quick Start: quickstart.md
   - CLI Reference: cli.md
   - Benchmark: benchmark.md
-  - Troubleshooting: troubleshooting.md
   - Architecture: architecture.md
-  - Estimation Artifacts: estimation_artifacts.md
+  - Evaluation Inputs: evaluation_inputs.md
+  - Troubleshooting: troubleshooting.md

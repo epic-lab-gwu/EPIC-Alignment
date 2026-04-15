@@ -366,7 +366,7 @@ vicon_ws/
 │       └── res.py                 # vicon_ws_res
 ├── docs/
 │   ├── architecture.md
-│   └── estimation_artifacts.md
+│   └── evaluation_inputs.md
 └── tests/
     ├── unit/
     └── smoke/
@@ -419,5 +419,5 @@ bash tests/smoke/test_engines.sh
 ## 相关文档
 
 - `docs/architecture.md`
-- `docs/estimation_artifacts.md`
+- `docs/evaluation_inputs.md`
 - `track.md`

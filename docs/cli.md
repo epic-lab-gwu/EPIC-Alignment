@@ -1,15 +1,85 @@
 # CLI Reference
 
-## Core Entry Points
+This page summarizes the main `vicon_ws` command-line tools, what they do, and the options you will use most often.
 
-- `vicon_ws`: main 3-step pipeline wrapper
-- `vicon_ws_traj`: trajectory utility
-- `vicon_ws_ape`: absolute pose error tool
-- `vicon_ws_rpe`: relative pose error tool
-- `vicon_ws_res`: compare result bundles / metrics files
-- `vicon_ws_config`: global config manager
+## Command Overview
 
-## Help Commands
+Core pipeline:
+
+- `vicon_ws`: run the full 3-step alignment and evaluation pipeline
+
+Trajectory and metric tools:
+
+- `vicon_ws_traj`: inspect, synchronize, align, transform, plot, and export trajectories
+- `vicon_ws_ape`: compute absolute pose error metrics
+- `vicon_ws_rpe`: compute relative pose error metrics
+- `vicon_ws_res`: compare result bundles, run directories, or metrics files
+
+Utilities:
+
+- `vicon_ws_config`: manage reusable global and tool-level defaults
+- `vicon_ws_fig`: re-render plots from serialized plot bundles
+
+Benchmark tools are documented separately in [Benchmark](benchmark.md).
+
+## Shared Concepts
+
+### Supported Formats
+
+Most tools support these input formats:
+
+- `auto`
+- `csv`
+- `euroc`
+- `tum`
+- `kitti`
+- `bag`
+- `bag2`
+- `mcap`
+
+For ROS log formats, install:
+
+```bash
+pip install -e .[ros]
+```
+
+### Topics for ROS Inputs
+
+For ROS logs, you usually need to provide a topic:
+
+```bash
+vicon_ws \
+  --gt-csv /path/to/run.bag \
+  --gt-format bag \
+  --gt-topic /vicon/pose \
+  --est-path /path/to/run.bag \
+  --est-format bag \
+  --est-topic /odom
+```
+
+For `vicon_ws_traj`, you can also encode the topic inside each trajectory spec:
+
+```bash
+vicon_ws_traj --format bag /path/to/run.bag::/vicon/pose /path/to/run.bag::/odom --plot
+```
+
+### Time Association
+
+Several tools match trajectories by timestamp before computing metrics.
+
+Key options:
+
+- `t_offset`: shifts estimation timestamps before matching
+- `t_max_diff`: maximum residual timestamp difference allowed for a valid match
+- `t_start` and `t_end`: crop trajectories to a time window before evaluation
+
+Guidelines:
+
+- Use smaller `t_max_diff` values when timestamps are already well aligned
+- Increase `t_max_diff` only when you know the logs are sparse or noisy
+- Use `t_offset` when one trajectory is consistently ahead of or behind the other
+
+### Help Commands
 
 ```bash
 vicon_ws --help
@@ -20,36 +90,315 @@ vicon_ws_res --help
 vicon_ws_config --help
 ```
 
-## Common Formats
+## `vicon_ws`
 
-Supported trajectory formats:
+`vicon_ws` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots and summaries into a new run directory.
 
-- `auto`
-- `csv` / `euroc`
-- `tum`
-- `kitti`
-- `bag` / `bag2` / `mcap`
+Common options:
 
-Bag examples:
+- `--gt-csv`: reference trajectory path
+- `--gt-format`: reference format
+- `--gt-topic`: reference topic for ROS logs
+- `--est-path`: estimation trajectory path
+- `--est-format`: estimation format
+- `--est-topic`: estimation topic for ROS logs
+- `--t-max-diff`: maximum timestamp association gap
+- `--t-offset`: constant offset applied to estimation timestamps before sync
+- `--plot` and `--no-plot`: enable or disable metric plot generation
+- `--save-results`: write a bundled result zip
+- `--rerun`: enable Rerun logging
+
+Minimal example:
 
 ```bash
 vicon_ws \
-  --gt-csv /path/to/run.bag --gt-format bag --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag --est-format bag --est-topic /odom
+  --engine modular \
+  --gt-csv gt.csv \
+  --est-path outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --t-max-diff 0.02 \
+  --plot
 ```
 
-TF topic syntax:
+With result bundle export:
 
 ```bash
---est-topic /tf:map.base_link
+vicon_ws \
+  --engine modular \
+  --gt-csv gt.csv \
+  --est-path outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --save-results outputs/results/run_a.zip
+```
+
+## `vicon_ws_traj`
+
+`vicon_ws_traj` is the general trajectory utility. Use it to inspect, synchronize, align, plot, or export trajectories.
+
+Common options:
+
+- `--format`: input format for all trajectories
+- `--topic`: default topic for bag-style inputs
+- `--sync`: associate all non-reference trajectories to the reference by timestamp
+- `--sync-max-diff`: timestamp tolerance for `--sync`
+- `--sync-offset`: constant timestamp offset before `--sync`
+- `--align`: align non-reference trajectories to the reference
+- `--correct-scale`: enable scale correction with alignment
+- `--ref`: reference trajectory label or 1-based index
+- `--plot`: generate plots
+- `--plot-mode`: choose `xy`, `xz`, `yz`, or `xyz`
+- `--save-as`: export loaded trajectories in another format
+- `--out-dir`: output directory for exported files or generated outputs
+
+Plot two TUM trajectories:
+
+```bash
+vicon_ws_traj --format tum --plot --plot-mode xz gt.tum est.tum
+```
+
+Synchronize and align to the first trajectory:
+
+```bash
+vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
+```
+
+Export trajectories as TUM:
+
+```bash
+vicon_ws_traj \
+  --format auto \
+  --save-as tum \
+  --out-dir outputs/traj_exports \
+  gt.csv outputs/traj_estimate_v1_01.txt
+```
+
+## `vicon_ws_ape`
+
+`vicon_ws_ape` computes absolute pose error between a reference trajectory and an estimated trajectory.
+
+Common options:
+
+- `--pose_relation`: metric relation such as `trans_part`, `rot_part`, `angle_deg`, or `full`
+- `--align`: run SE(3) alignment before evaluation
+- `--correct_scale`: enable scale correction
+- `--align_origin`: align the first pose to the reference origin
+- `--t_max_diff`: timestamp matching tolerance
+- `--t_offset`: constant timestamp shift before matching
+- `--plot`: generate metric plots
+- `--save_results`: export a result zip
+- `--serialize_plot`: save a reusable plot bundle
+
+Example:
+
+```bash
+vicon_ws_ape tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --align \
+  --t_max_diff 0.02 \
+  --plot
+```
+
+<div class="doc-image-grid two-col">
+  <img src="../images/cli_ape_raw.png" alt="APE raw error curve">
+  <img src="../images/cli_ape_map.png" alt="APE map view">
+</div>
+
+*Example `vicon_ws_ape` outputs: raw error curve and map-colored trajectory.*
+
+Save a reusable plot bundle:
+
+```bash
+vicon_ws_ape tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --serialize_plot outputs/ape_plot.json
+```
+
+## `vicon_ws_rpe`
+
+`vicon_ws_rpe` computes relative pose error. The key extra concept is `delta`, which defines the spacing between pose pairs.
+
+Common options:
+
+- `--pose_relation`: metric relation such as `trans_part`, `rot_part`, or `point_distance_error_ratio`
+- `--delta`: separation between pose pairs
+- `--delta_unit`: `f` for frames, `m` for meters, `d` for degrees, `r` for radians
+- `--delta_tol`: relative tolerance used in all-pairs mode for non-frame deltas
+- `--all_pairs`: use all candidate pairs
+- `--pairs_from_reference`: build RPE pairs from the reference instead of the estimate
+- `--align`: run SE(3) alignment before evaluation
+- `--plot`: generate metric plots
+
+Example:
+
+```bash
+vicon_ws_rpe tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --delta 1 \
+  --delta_unit f \
+  --all_pairs \
+  --align \
+  --plot
+```
+
+<div class="doc-image-grid two-col">
+  <img src="../images/cli_rpe_raw.png" alt="RPE raw error curve">
+  <img src="../images/cli_rpe_map.png" alt="RPE map view">
+</div>
+
+*Example `vicon_ws_rpe` outputs: raw relative error curve and map-colored trajectory.*
+
+Path-based RPE example:
+
+```bash
+vicon_ws_rpe tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --delta 1.0 \
+  --delta_unit m \
+  --all_pairs
+```
+
+## `vicon_ws_res`
+
+`vicon_ws_res` compares previous evaluation outputs. Each input can be:
+
+- a `.zip` result bundle
+- a `metrics.json` file
+- a run directory containing `metrics.json`
+
+Common options:
+
+- `--metric`: compare `ape`, `rpe`, or `all`
+- `--stage`: select `raw`, `step2`, or `step3`
+- `--stat`: choose the statistic to compare such as `rmse`, `mean`, or `median`
+- `--plot`: generate comparison plots
+- `--out-dir`: directory for generated outputs
+- `--save-plot`: export plots
+- `--save-table`: export a comparison table
+
+Example:
+
+```bash
+vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+  --metric all \
+  --stage step3 \
+  --plot \
+  --out-dir outputs/res_compare
+```
+
+<div class="doc-image-grid two-col">
+  <img src="../images/cli_res_aggregated_raw.png" alt="Aggregated raw comparison">
+  <img src="../images/cli_res_aggregated_hist.png" alt="Aggregated histogram comparison">
+  <img src="../images/cli_res_aggregated_box.png" alt="Aggregated box comparison">
+  <img src="../images/cli_res_aggregated_violin.png" alt="Aggregated violin comparison">
+</div>
+
+*Example `vicon_ws_res` outputs for multi-run comparison.*
+
+## `vicon_ws_config`
+
+`vicon_ws_config` manages reusable defaults so you do not need to repeat the same flags.
+
+It supports:
+
+- root-level defaults shared across tools
+- tool-specific defaults such as `vicon_ws_ape` or `vicon_ws_traj`
+- generated template configs for supported tools
+
+Common commands:
+
+Show current settings:
+
+```bash
+vicon_ws_config show
+```
+
+Show effective config for one tool:
+
+```bash
+vicon_ws_config show --tool vicon_ws_ape
+```
+
+Set shared defaults:
+
+```bash
+vicon_ws_config set plot false rpe_delta 3
+```
+
+Set tool-specific defaults:
+
+```bash
+vicon_ws_config set --tool vicon_ws_ape plot_mode xy t_max_diff 0.05
+vicon_ws_config set --tool vicon_ws_traj plot_mode xyz sync_max_diff 0.01
+```
+
+Generate a template config:
+
+```bash
+vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
+```
+
+## `vicon_ws_fig`
+
+`vicon_ws_fig` re-renders serialized plot bundles produced by tools such as `vicon_ws_ape` and `vicon_ws_rpe`.
+
+Common options:
+
+- `--out_dir`: directory for rendered figures
+- `--save_plot`: custom output name stem
+- `--dpi`: output resolution
+- `--list`: list figure names in a bundle without rendering
+
+Example:
+
+```bash
+vicon_ws_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
+```
+
+## Common Recipes
+
+Run one pair end to end:
+
+```bash
+vicon_ws \
+  --engine modular \
+  --gt-csv gt.csv \
+  --est-path outputs/traj_estimate_v1_01.txt \
+  --est-format tum \
+  --plot
+```
+
+Inspect alignment before metric evaluation:
+
+```bash
+vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
+```
+
+Compute APE with explicit sync tolerance:
+
+```bash
+vicon_ws_ape tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --t_max_diff 0.02 \
+  --t_offset 0.0 \
+  --plot
+```
+
+Compare two previous runs:
+
+```bash
+vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+  --metric ape \
+  --stage step3 \
+  --stat rmse \
+  --plot
 ```
 
 ## Config Priority
 
 All core tools support `--config <file.json>`.
 
-Priority order (high -> low):
+Priority order:
 
-1. config file values
-2. CLI values
-3. global config from `vicon_ws_config`
+1. values loaded from `--config`
+2. values passed on the command line
+3. defaults stored through `vicon_ws_config`
