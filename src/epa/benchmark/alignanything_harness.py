@@ -15,6 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .latex_summary import write_latex_tables
+
 
 @dataclass(frozen=True)
 class BenchmarkCase:
@@ -742,6 +744,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.05,
         help="Minimum match ratio used when selecting evo offset.",
     )
+    parser.add_argument(
+        "--latex-main-max-rows",
+        type=int,
+        default=18,
+        help="Maximum per-case rows kept in paper LaTeX main table.",
+    )
     return parser
 
 
@@ -938,6 +946,15 @@ def run(args: argparse.Namespace) -> int:
 
     _write_csv(summary_rows, run_dir / "summary.csv")
     _write_summary_md(summary_rows, run_dir / "summary.md")
+
+    try:
+        write_latex_tables(
+            summary_rows,
+            run_dir / "paper_tables",
+            max_main_rows=max(1, int(args.latex_main_max_rows)),
+        )
+    except Exception as exc:
+        print(f"[warn] Failed to generate LaTeX tables: {exc}")
 
     done = sum(1 for row in summary_rows if row["status"] == "ok")
     print(f"Finished: {done}/{len(summary_rows)} cases both_ok")

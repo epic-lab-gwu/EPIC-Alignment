@@ -76,6 +76,32 @@ This command:
 3. run `epa` and the comparison pipeline independently
 4. aggregate the per-case outputs into a summary table
 
+## Per-Case Visualization (Raw / GT / Aligned)
+
+For each dataset case, use the main pipeline with `--rerun` to visualize:
+
+- GT trajectory
+- raw trajectory after step-1 time sync
+- aligned trajectory after step-3 world alignment
+
+Example:
+
+```bash
+epa \
+  --engine modular \
+  --gt-csv /path/to/gt.tum \
+  --gt-format tum \
+  --est-path /path/to/est.tum \
+  --est-format tum \
+  --rerun \
+  --rerun-visual-separation-m 0.05
+```
+
+Tips:
+
+- If trajectories overlap too much, increase `--rerun-visual-separation-m` (for example `0.05` to `0.20`).
+- This separation is visualization-only and does not affect alignment or metrics.
+
 ## Useful Filters
 
 Use these options for smaller or more targeted runs:
@@ -145,6 +171,9 @@ Common contents:
 
 - `summary.csv`: machine-readable per-case summary
 - `summary.md`: human-readable summary table
+- `paper_tables/main_table.tex`: paper-ready short LaTeX table
+- `paper_tables/dataset_table.tex`: dataset-level aggregate LaTeX table
+- `paper_tables/appendix_full_table.tex`: full per-case LaTeX longtable for appendix
 - `cases/*.json`: one JSON file per case
 - `logs/`: stdout and stderr logs for executed tools
 - `prepared_tum/`: prepared TUM files used by the harness
@@ -211,6 +240,43 @@ The tool also generates `plots.md` as a small index page.
 Useful option:
 
 - `--top-k`: number of cases included in the top-case bar chart
+
+## LaTeX Table Generation
+
+Use `epa_latex_summary` to generate paper-ready LaTeX tables from a harness `summary.csv`.
+
+```bash
+epa_latex_summary \
+  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
+```
+
+By default, tables are written to `<summary_dir>/paper_tables/` with:
+
+- `main_table.tex`: compact main-paper table (automatically compressed when cases are too many)
+- `dataset_table.tex`: dataset-level aggregate table
+- `appendix_full_table.tex`: full longtable for appendix
+
+`epa_benchmark` also generates this `paper_tables/` directory automatically at the end of each run.
+
+### Use in Overleaf (2 ways)
+
+1. Directly drag files into your Overleaf project
+
+- Drag `paper_tables/*.tex` into the project root (or a subfolder).
+- In your manuscript preamble, add `\usepackage{booktabs}` and `\usepackage{longtable}`.
+- Insert tables where needed (if files are in a subfolder such as `tables/`, use relative paths like `\input{tables/main_table.tex}`):
+
+```tex
+\input{main_table.tex}
+\input{dataset_table.tex}
+\input{appendix_full_table.tex}
+```
+
+2. Copy and paste table code
+
+- Open the target `.tex` table file and copy the table block into your manuscript body/appendix.
+- Keep the same preamble requirements: `\usepackage{booktabs}` and `\usepackage{longtable}`.
+- `main_table.tex` and `dataset_table.tex` are `table` environments, while `appendix_full_table.tex` is a `longtable` environment.
 
 ## `metrics.json` Aggregation
 

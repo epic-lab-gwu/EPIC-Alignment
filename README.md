@@ -91,6 +91,7 @@ pip install -e .[ipython]
 - `epa_config`
 - `epa_benchmark`
 - `epa_plot_summary`
+- `epa_latex_summary`
 - `epa_metric_res`
 - `epa_ipython`
 
@@ -323,6 +324,44 @@ epa_benchmark \
 epa_plot_summary \
   --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
 ```
+
+从 harness 的 `summary.csv` 生成可直接放论文的 LaTeX 表格：
+
+```bash
+epa_latex_summary \
+  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
+```
+
+输出目录默认是 `<summary_dir>/paper_tables/`，包含：
+
+- `main_table.tex`：正文短表（超长时自动抽样压缩）
+- `dataset_table.tex`：按数据集聚合表
+- `appendix_full_table.tex`：完整长表（适合附录）
+
+在论文里使用（两种方式）：
+
+1. 方式 A：拖入 Overleaf
+
+- 把 `paper_tables/*.tex` 拖到 Overleaf 项目根目录（或子目录）
+- 在论文主文件导言区加：`\usepackage{booktabs}` 和 `\usepackage{longtable}`
+- 在正文中插入（若你放在子目录，例如 `tables/`，则用 `\input{tables/main_table.tex}` 这种相对路径）：
+
+```tex
+% 主文短表
+\input{main_table.tex}
+
+% 数据集聚合表
+\input{dataset_table.tex}
+
+% 附录长表
+\input{appendix_full_table.tex}
+```
+
+2. 方式 B：复制粘贴
+
+- 直接打开对应 `.tex` 文件，复制表格代码并粘贴到论文正文/附录位置
+- 同样需要在导言区加入：`\usepackage{booktabs}` 和 `\usepackage{longtable}`
+- `main_table.tex` 与 `dataset_table.tex` 是 `table` 环境，`appendix_full_table.tex` 是 `longtable` 环境
 
 ## 输出目录
 

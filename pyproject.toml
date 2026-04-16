@@ -39,6 +39,7 @@ epa_fig = "epa.fig_tool:main"
 epa_res = "epa.benchmark.res:main"
 epa_benchmark = "epa.benchmark.alignanything_harness:main"
 epa_plot_summary = "epa.benchmark.plot_summary:main"
+epa_latex_summary = "epa.benchmark.latex_summary:main"
 epa_metric_res = "epa.benchmark.metrics_res:main"
 epa_ipython = "epa.ipython_tool:main"
 

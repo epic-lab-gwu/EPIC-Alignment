@@ -1,7 +1,7 @@
 site_name: Epic Alignment Docs
 site_description: Trajectory alignment and evaluation toolkit documentation
-repo_url: https://github.com/epic-lab-gwu/epic-alignment
-repo_name: epic-lab-gwu/epic-alignment
+repo_url: https://github.com/epic-lab-gwu/epa
+repo_name: epa
 
 theme:
   name: readthedocs
