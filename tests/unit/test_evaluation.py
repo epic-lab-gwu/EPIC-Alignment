@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from vicon_ws.core.evaluation import (
+from epa.core.evaluation import (
     build_rpe_pairs,
     compute_ape_evo_style,
     compute_rpe_evo_style,

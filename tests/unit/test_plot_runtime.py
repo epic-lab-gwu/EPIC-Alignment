@@ -1,4 +1,4 @@
-from vicon_ws.viz import plot_runtime
+from epa.viz import plot_runtime
 
 
 def test_should_enable_interactive_plot_explicit_true() -> None:

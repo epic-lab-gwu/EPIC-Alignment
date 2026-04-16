@@ -1,14 +1,14 @@
 # Troubleshooting
 
-This page covers the most common local `vicon_ws` problems and the fastest ways to fix them.
+This page covers the most common local `epa` problems and the fastest ways to fix them.
 
 ## Before You Debug
 
 Start with:
 
 ```bash
-vicon_ws --help
-vicon_ws_traj --help
+epa --help
+epa_traj --help
 ```
 
 For docs issues:
@@ -19,7 +19,7 @@ mkdocs build --strict
 
 Also confirm that you are using the intended Python environment.
 
-## `vicon_ws: command not found`
+## `epa: command not found`
 
 Cause:
 
@@ -35,7 +35,7 @@ pip install -e .
 If you use the local conda environment:
 
 ```bash
-conda activate vicon_ws310
+conda activate epa
 pip install -e .
 ```
 
@@ -100,7 +100,7 @@ Cause:
 Fix:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -125,7 +125,7 @@ Try this:
 Example:
 
 ```bash
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --t_max_diff 0.05 \
   --t_offset 0.0 \
   --plot
@@ -134,7 +134,7 @@ vicon_ws_ape tum gt.tum est.tum \
 For a quick inspection before metric computation:
 
 ```bash
-vicon_ws_traj --format tum --sync --ref 1 gt.tum est.tum --plot
+epa_traj --format tum --sync --ref 1 gt.tum est.tum --plot
 ```
 
 ## `Not enough overlap between GT and estimation for robust time alignment`
@@ -216,7 +216,7 @@ Cause:
 Fix:
 
 ```bash
-vicon_ws \
+epa \
   --gt-csv /path/to/run.bag \
   --gt-format bag \
   --gt-topic /vicon/pose \
@@ -240,8 +240,8 @@ Fix:
 Examples:
 
 ```bash
-vicon_ws_traj --format tum gt.tum est.tum --plot
-vicon_ws --gt-format csv --est-format tum --gt-csv gt.csv --est-path est.tum
+epa_traj --format tum gt.tum est.tum --plot
+epa --gt-format csv --est-format tum --gt-csv gt.csv --est-path est.tum
 ```
 
 ## `--align and --align_origin cannot be used together`
@@ -275,7 +275,7 @@ Cause:
 Fix:
 
 ```bash
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --plot \
   --plot_mode xy \
   --ros_map_yaml /path/to/map.yaml
@@ -300,7 +300,7 @@ Fix:
 Useful command:
 
 ```bash
-vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
+epa_config generate --tool epa_ape --out ape_config.json
 ```
 
 ## Docs Build Fails with `--strict`
@@ -340,4 +340,4 @@ If the failure is still unclear, collect:
 - the selected format and topic
 - any non-default `t_max_diff`, `t_offset`, `t_start`, or `t_end` values
 
-For runtime debugging, `vicon_ws_traj` is often the fastest way to inspect whether the trajectories load and synchronize correctly before running the full pipeline.
+For runtime debugging, `epa_traj` is often the fastest way to inspect whether the trajectories load and synchronize correctly before running the full pipeline.

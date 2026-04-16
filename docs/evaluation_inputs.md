@@ -2,7 +2,7 @@
 
 This page describes the stored trajectory files used as evaluation inputs in this repository.
 
-`vicon_ws` evaluates trajectory outputs, but the estimators that produce those trajectories are maintained outside this repository.
+`epa` evaluates trajectory outputs, but the estimators that produce those trajectories are maintained outside this repository.
 
 ## What This Page Covers
 
@@ -12,13 +12,13 @@ The files listed here are typically:
 - reused inputs for examples or reproducible evaluation runs
 - stored files that keep benchmarks and documentation examples repeatable
 
-This page does not document estimator source code. It tracks the evaluation-side files consumed by `vicon_ws`.
+This page does not document estimator source code. It tracks the evaluation-side files consumed by `epa`.
 
 ## Example: `sqrtVINS`
 
 `sqrtVINS` is a good example of the intended workflow.
 
-The estimator itself is maintained outside `vicon_ws`, but one of its exported trajectory results is stored here:
+The estimator itself is maintained outside `epa`, but one of its exported trajectory results is stored here:
 
 - `outputs/traj_estimate_v1_01.txt`
 
@@ -27,12 +27,12 @@ Typical workflow:
 1. run `sqrtVINS` in its own workspace
 2. export the estimated trajectory in a format such as `tum`
 3. copy the trajectory file into this repository only if it is needed for reproducible evaluation
-4. evaluate it with `vicon_ws` against the matching ground-truth trajectory
+4. evaluate it with `epa` against the matching ground-truth trajectory
 
 For example:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -44,7 +44,7 @@ vicon_ws \
 In this setup:
 
 - `sqrtVINS` is the external producer of the estimated trajectory
-- `vicon_ws` is the evaluation and analysis tool
+- `epa` is the evaluation and analysis tool
 - the stored trajectory file is a stable, reusable evaluation input
 
 ## Tracked Input Files
@@ -61,7 +61,7 @@ These files are commonly used for:
 - manual local testing
 - repeatable comparisons across code changes
 
-In most cases, the matching reference trajectory is stored separately and passed with the estimation file into `vicon_ws`, `vicon_ws_ape`, `vicon_ws_rpe`, or benchmark tools.
+In most cases, the matching reference trajectory is stored separately and passed with the estimation file into `epa`, `epa_ape`, `epa_rpe`, or benchmark tools.
 
 ## Update Policy
 

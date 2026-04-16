@@ -1,6 +1,6 @@
 import numpy as np
 
-from vicon_ws.core.math_utils import (
+from epa.core.math_utils import (
     compute_error_statistics,
     normalize_time_to_seconds,
     relative_se3,

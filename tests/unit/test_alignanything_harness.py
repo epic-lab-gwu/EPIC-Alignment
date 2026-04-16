@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vicon_ws.benchmark.alignanything_harness import (
+from epa.benchmark.alignanything_harness import (
     _write_summary_md,
     discover_cases,
     load_pose_table,
@@ -63,21 +63,21 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
         {
             "case": "demo_case",
             "status": "ok",
-            "vicon_status": "ok",
+            "epa_status": "ok",
             "evo_status": "ok",
-            "vicon_ate_rmse_raw_m": 2.0,
-            "vicon_ate_rmse_step3_m": 1.0,
+            "epa_ate_rmse_raw_m": 2.0,
+            "epa_ate_rmse_step3_m": 1.0,
             "evo_ape_raw_rmse_m": 2.5,
             "evo_ape_se3_rmse_m": 1.5,
-            "vicon_improve_pct": 50.0,
+            "epa_improve_pct": 50.0,
             "evo_improve_pct": 40.0,
-            "vicon_offset_est_s": 0.3,
+            "epa_offset_est_s": 0.3,
             "evo_offset_s": 0.1,
-            "vicon_matches_equivalent": 100.0,
+            "epa_matches_equivalent": 100.0,
             "evo_matches": 80.0,
-            "vicon_xcorr_peak": 0.9,
-            "vicon_xcorr_psr": 12.0,
-            "vicon_omega_improve_pct": 70.0,
+            "epa_xcorr_peak": 0.9,
+            "epa_xcorr_psr": 12.0,
+            "epa_omega_improve_pct": 70.0,
             "evo_sweep_evals": 88,
         }
     ]
@@ -86,4 +86,4 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert "raw_rmse_m (v/e, ↓)" in text
     assert "improve_pct (v/e, ↑)" in text
-    assert "vicon_xcorr_peak (↑)" in text
+    assert "epa_xcorr_peak (↑)" in text

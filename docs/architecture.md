@@ -1,6 +1,6 @@
-# vicon_ws Architecture
+# epa Architecture
 
-This page explains how `vicon_ws` is organized, how the main pipeline runs, and where each responsibility lives in the codebase.
+This page explains how `epa` is organized, how the main pipeline runs, and where each responsibility lives in the codebase.
 
 ## Design Goals
 
@@ -16,9 +16,9 @@ The architecture is built around a few goals:
 For the main pipeline, the execution path is:
 
 ```text
-vicon_ws CLI
-  -> vicon_ws.runner
-  -> vicon_ws.core.pipeline_modular
+epa CLI
+  -> epa.runner
+  -> epa.core.pipeline_modular
   -> outputs/run_YYYYmmdd_HHMMSS/
 ```
 
@@ -66,12 +66,12 @@ This gives the time shift that best aligns the rotational dynamics of the two tr
 
 This logic lives primarily in:
 
-- `src/vicon_ws/core/time_alignment.py`
-- `src/vicon_ws/core/pipeline_modular.py`
+- `src/epa/core/time_alignment.py`
+- `src/epa/core/pipeline_modular.py`
 
 ### Step 2: Extrinsic Calibration
 
-After temporal alignment, `vicon_ws` estimates the rigid relationship between the reference-side and estimation-side motion.
+After temporal alignment, `epa` estimates the rigid relationship between the reference-side and estimation-side motion.
 
 This stage includes:
 
@@ -99,7 +99,7 @@ where each row block comes from consecutive-pose motion constraints after substi
 
 Core implementation:
 
-- `src/vicon_ws/core/calibration.py`
+- `src/epa/core/calibration.py`
 
 ### Step 3: World-Frame Alignment
 
@@ -125,7 +125,7 @@ The result is the world-frame transform that best overlays the aligned estimatio
 
 This stage is also implemented in:
 
-- `src/vicon_ws/core/calibration.py`
+- `src/epa/core/calibration.py`
 
 ## Module Layout
 
@@ -133,35 +133,35 @@ The codebase is organized by responsibility.
 
 Core modules:
 
-- `src/vicon_ws/core/time_alignment.py`: temporal association and signal-based offset estimation
-- `src/vicon_ws/core/calibration.py`: extrinsic and world alignment solvers
-- `src/vicon_ws/core/evaluation.py`: APE/RPE computation and pose-relation handling
-- `src/vicon_ws/core/io_utils.py`: trajectory loading, output directory creation, metrics export, and result bundling
-- `src/vicon_ws/core/math_utils.py`: shared math helpers and trajectory transforms
-- `src/vicon_ws/core/pipeline_modular.py`: orchestration of the full modular pipeline
+- `src/epa/core/time_alignment.py`: temporal association and signal-based offset estimation
+- `src/epa/core/calibration.py`: extrinsic and world alignment solvers
+- `src/epa/core/evaluation.py`: APE/RPE computation and pose-relation handling
+- `src/epa/core/io_utils.py`: trajectory loading, output directory creation, metrics export, and result bundling
+- `src/epa/core/math_utils.py`: shared math helpers and trajectory transforms
+- `src/epa/core/pipeline_modular.py`: orchestration of the full modular pipeline
 
 CLI and tool modules:
 
-- `src/vicon_ws/cli.py`: main `vicon_ws` CLI parser
-- `src/vicon_ws/runner.py`: dispatch between modular and legacy execution
-- `src/vicon_ws/traj_tool.py`: trajectory inspection and export tool
-- `src/vicon_ws/ape_tool.py`: APE tool
-- `src/vicon_ws/rpe_tool.py`: RPE tool
-- `src/vicon_ws/config_tool.py`: configuration manager
-- `src/vicon_ws/fig_tool.py`: plot bundle re-rendering
+- `src/epa/cli.py`: main `epa` CLI parser
+- `src/epa/runner.py`: dispatch between modular and legacy execution
+- `src/epa/traj_tool.py`: trajectory inspection and export tool
+- `src/epa/ape_tool.py`: APE tool
+- `src/epa/rpe_tool.py`: RPE tool
+- `src/epa/config_tool.py`: configuration manager
+- `src/epa/fig_tool.py`: plot bundle re-rendering
 
 Visualization modules:
 
-- `src/vicon_ws/viz/metric_plots.py`: metric figure generation
-- `src/vicon_ws/viz/plot_bundle.py`: serialized plot bundle format and rendering
-- `src/vicon_ws/viz/rerun_viz.py`: Rerun logging
+- `src/epa/viz/metric_plots.py`: metric figure generation
+- `src/epa/viz/plot_bundle.py`: serialized plot bundle format and rendering
+- `src/epa/viz/rerun_viz.py`: Rerun logging
 
 Benchmark modules:
 
-- `src/vicon_ws/benchmark/alignanything_harness.py`
-- `src/vicon_ws/benchmark/plot_summary.py`
-- `src/vicon_ws/benchmark/metrics_res.py`
-- `src/vicon_ws/benchmark/res.py`
+- `src/epa/benchmark/alignanything_harness.py`
+- `src/epa/benchmark/plot_summary.py`
+- `src/epa/benchmark/metrics_res.py`
+- `src/epa/benchmark/res.py`
 
 ## Main Entry Points
 
@@ -169,31 +169,31 @@ The project exposes several entry points.
 
 Primary user-facing commands:
 
-- `vicon_ws`
-- `vicon_ws_traj`
-- `vicon_ws_ape`
-- `vicon_ws_rpe`
-- `vicon_ws_res`
-- `vicon_ws_config`
-- `vicon_ws_fig`
+- `epa`
+- `epa_traj`
+- `epa_ape`
+- `epa_rpe`
+- `epa_res`
+- `epa_config`
+- `epa_fig`
 
 Compatibility entry point:
 
 - `python pipeline.py`
 
-The compatibility path is still available, but the core algorithm implementation now lives in `src/vicon_ws/core`.
+The compatibility path is still available, but the core algorithm implementation now lives in `src/epa/core`.
 
 ## Modular vs Legacy Execution
 
-`vicon_ws` currently supports two execution modes:
+`epa` currently supports two execution modes:
 
 - `--engine modular`
 - `--engine legacy`
 
 Behavior:
 
-- `modular` runs the actively maintained implementation in `src/vicon_ws/core/pipeline_modular.py`
-- `legacy` routes through `src/vicon_ws/bridge_legacy.py` and then invokes `pipeline.py`
+- `modular` runs the actively maintained implementation in `src/epa/core/pipeline_modular.py`
+- `legacy` routes through `src/epa/bridge_legacy.py` and then invokes `pipeline.py`
 
 `pipeline.py` is now primarily a compatibility shim and import bridge for older command paths.
 
@@ -215,7 +215,7 @@ The loader layer normalizes:
 
 This logic is concentrated in:
 
-- `src/vicon_ws/core/io_utils.py`
+- `src/epa/core/io_utils.py`
 
 ## Evaluation Layer
 
@@ -230,10 +230,10 @@ The evaluation layer is responsible for:
 
 Main implementation files:
 
-- `src/vicon_ws/core/evaluation.py`
-- `src/vicon_ws/metric_cli_common.py`
-- `src/vicon_ws/ape_tool.py`
-- `src/vicon_ws/rpe_tool.py`
+- `src/epa/core/evaluation.py`
+- `src/epa/metric_cli_common.py`
+- `src/epa/ape_tool.py`
+- `src/epa/rpe_tool.py`
 
 ## Output Layer
 
@@ -250,8 +250,8 @@ Typical outputs:
 
 This output layer is handled mainly by:
 
-- `src/vicon_ws/core/io_utils.py`
-- `src/vicon_ws/viz/metric_plots.py`
+- `src/epa/core/io_utils.py`
+- `src/epa/viz/metric_plots.py`
 
 ## Visualization Layer
 
@@ -275,13 +275,13 @@ This separation makes it easier to:
 Configuration is handled at two levels:
 
 - per-run CLI arguments
-- reusable defaults managed by `vicon_ws_config`
+- reusable defaults managed by `epa_config`
 
 The configuration layer is implemented through:
 
-- `src/vicon_ws/config.py`
-- `src/vicon_ws/config_cli.py`
-- `src/vicon_ws/config_tool.py`
+- `src/epa/config.py`
+- `src/epa/config_cli.py`
+- `src/epa/config_tool.py`
 
 This allows:
 
@@ -293,9 +293,9 @@ This allows:
 
 Common extension points:
 
-- add a new trajectory format in `src/vicon_ws/core/io_utils.py`
-- add a new metric or pose relation in `src/vicon_ws/core/evaluation.py`
-- add new plotting behavior in `src/vicon_ws/viz/`
-- add new benchmark workflows in `src/vicon_ws/benchmark/`
+- add a new trajectory format in `src/epa/core/io_utils.py`
+- add a new metric or pose relation in `src/epa/core/evaluation.py`
+- add new plotting behavior in `src/epa/viz/`
+- add new benchmark workflows in `src/epa/benchmark/`
 
 Because the architecture separates algorithm logic from command-line parsing, most features can be added without rewriting the whole pipeline.

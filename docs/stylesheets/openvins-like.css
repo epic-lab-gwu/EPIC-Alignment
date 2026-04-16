@@ -332,6 +332,17 @@ code {
   box-shadow: 0 8px 22px rgba(92, 121, 152, 0.12);
 }
 
+.rst-content video.doc-video {
+  border-radius: 8px;
+  display: block;
+  width: min(88%, 960px);
+  height: auto;
+  margin: 1.05rem auto 0.7rem;
+  border: 1px solid #d7e3ef;
+  box-shadow: 0 8px 22px rgba(92, 121, 152, 0.14);
+  background: #e7f0fa;
+}
+
 .doc-image-grid {
   display: grid;
   gap: 1rem;

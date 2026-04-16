@@ -1,4 +1,4 @@
-from vicon_ws import ipython_tool
+from epa import ipython_tool
 
 
 def test_build_user_namespace_keys() -> None:

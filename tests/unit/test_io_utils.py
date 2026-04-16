@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from vicon_ws.core.io_utils import (
+from epa.core.io_utils import (
     load_estimation_kitti,
     load_estimation_trajectory,
     load_estimation_tum,

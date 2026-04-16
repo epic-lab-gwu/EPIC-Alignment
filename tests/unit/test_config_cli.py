@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from vicon_ws.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config, resolve_scoped_config
+from epa.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config, resolve_scoped_config
 
 
 def test_parse_args_with_config_supports_required_fields(tmp_path) -> None:
@@ -145,9 +145,9 @@ def test_resolve_scoped_config_merges_global_and_tool_sections() -> None:
     cfg = {
         "count": 1,
         "_global": {"count": 2, "plot": False},
-        "vicon_ws_ape": {"count": 3, "pose_relation": "rot_part"},
+        "epa_ape": {"count": 3, "pose_relation": "rot_part"},
     }
-    out = resolve_scoped_config(cfg, tool_name="vicon_ws_ape")
+    out = resolve_scoped_config(cfg, tool_name="epa_ape")
     assert out["count"] == 3
     assert out["plot"] is False
     assert out["pose_relation"] == "rot_part"
@@ -159,7 +159,7 @@ def test_parse_args_with_config_reads_tool_section_from_global(tmp_path, monkeyp
         json.dumps(
             {
                 "_global": {"count": 2},
-                "vicon_ws_ape": {"count": 5},
+                "epa_ape": {"count": 5},
             }
         ),
         encoding="utf-8",
@@ -169,7 +169,7 @@ def test_parse_args_with_config_reads_tool_section_from_global(tmp_path, monkeyp
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="")
     parser.add_argument("--count", type=int, default=0)
-    args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="vicon_ws_ape")
+    args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="epa_ape")
     assert args.count == 5
 
 
@@ -180,7 +180,7 @@ def test_parse_args_with_config_reads_tools_container_section(tmp_path, monkeypa
             {
                 "_global": {"count": 2},
                 "tools": {
-                    "vicon_ws_traj": {"count": 8},
+                    "epa_traj": {"count": 8},
                 },
             }
         ),
@@ -191,5 +191,6 @@ def test_parse_args_with_config_reads_tools_container_section(tmp_path, monkeypa
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="")
     parser.add_argument("--count", type=int, default=0)
-    args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="vicon_ws_traj")
+    args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="epa_traj")
     assert args.count == 8
+

@@ -1,4 +1,4 @@
-# vicon_ws modular wrapper defaults
+# epa modular wrapper defaults
 gt_csv: gt.csv
 gt_format: csv
 gt_topic: ""

@@ -1,19 +1,16 @@
-# vicon_ws Documentation
+# epa Documentation
 
-`vicon_ws` is a toolkit for trajectory alignment and evaluation in Vicon-grounded workflows. It is built for reproducible benchmarking, practical analysis, and scalable experiment comparison.
+`epa` is a toolkit for trajectory alignment and evaluation in Vicon-grounded workflows. It is built for reproducible benchmarking, practical analysis, and scalable experiment comparison.
 
-<video 
-  src="https://videotourl.com/videos/1776264406889-7a49889b-4ab6-4201-b69d-6190ca2ca008.mp4" 
-  controls 
-  autoplay 
-  muted 
-  loop 
-  style="display: block; margin: 0 auto; width: 80%; max-width: 800px;">
+<video class="doc-video" controls autoplay muted loop playsinline preload="metadata">
+  <source src="images/rerun.mp4" type="video/mp4">
 </video>
 
-## What vicon_ws Does
+*Rerun demo: follow-view inspection of GT and Step3 trajectories.*
 
-`vicon_ws` helps you:
+## What epa Does
+
+`epa` helps you:
 
 - Align estimated trajectories with reference trajectories
 - Evaluate trajectory quality with reproducible metrics
@@ -25,13 +22,13 @@
 - 3-step alignment pipeline: time alignment -> extrinsic solve -> world-frame alignment
 - Dedicated CLI suite for end-to-end runs, metric analysis, plotting, and result comparison
 - Reusable configuration system with global and tool-level defaults
-- Plot serialization and offline re-rendering via `vicon_ws_fig`
+- Plot serialization and offline re-rendering via `epa_fig`
 - Optional Rerun-based visual inspection for trajectories and intermediate stages
 - Benchmark harness for large-scale evaluation and summary generation
 
 ## Supported Input Formats
 
-`vicon_ws` supports these trajectory and log formats:
+`epa` supports these trajectory and log formats:
 
 - `auto` for automatic format detection when possible
 - `csv` / `euroc`
@@ -50,32 +47,32 @@ pip install -e .[ros]
 
 Core pipeline:
 
-- `vicon_ws`: run the full 3-step alignment and evaluation pipeline
+- `epa`: run the full 3-step alignment and evaluation pipeline
 
 Trajectory and metric tools:
 
-- `vicon_ws_traj`: inspect, sync, align, and plot trajectories
-- `vicon_ws_ape`: compute absolute pose error metrics
-- `vicon_ws_rpe`: compute relative pose error metrics
-- `vicon_ws_res`: compare result bundles and metric outputs
+- `epa_traj`: inspect, sync, align, and plot trajectories
+- `epa_ape`: compute absolute pose error metrics
+- `epa_rpe`: compute relative pose error metrics
+- `epa_res`: compare result bundles and metric outputs
 
 Utilities:
 
-- `vicon_ws_config`: manage reusable configuration defaults
-- `vicon_ws_fig`: re-render plots from serialized plot specifications
+- `epa_config`: manage reusable configuration defaults
+- `epa_fig`: re-render plots from serialized plot specifications
 
 Benchmark tools:
 
-- `vicon_ws_benchmark`: run batch benchmarks across many cases
-- `vicon_ws_plot_summary`: generate summary plots from benchmark CSV outputs
-- `vicon_ws_metric_res`: aggregate and compare metric result files
+- `epa_benchmark`: run batch benchmarks across many cases
+- `epa_plot_summary`: generate summary plots from benchmark CSV outputs
+- `epa_metric_res`: aggregate and compare metric result files
 
 ## Typical Workflow
 
 1. Prepare a reference trajectory and an estimated trajectory
-2. Run `vicon_ws` for end-to-end alignment and evaluation
-3. Use `vicon_ws_ape` or `vicon_ws_rpe` for focused metric analysis
-4. Use `vicon_ws_res` to compare multiple runs
+2. Run `epa` for end-to-end alignment and evaluation
+3. Use `epa_ape` or `epa_rpe` for focused metric analysis
+4. Use `epa_res` to compare multiple runs
 5. Use benchmark tools for large-scale experiment summaries
 
 ## Typical Outputs

@@ -2,8 +2,8 @@
 """Compatibility shim for the legacy pipeline entrypoint.
 
 This module keeps the historical ``python pipeline.py`` interface while
-forwarding execution to the modular implementation in ``src/vicon_ws``.
-Core algorithm code lives only in ``vicon_ws.core``.
+forwarding execution to the modular implementation in ``src/epa``.
+Core algorithm code lives only in ``epa.core``.
 """
 
 from __future__ import annotations
@@ -17,13 +17,13 @@ _SRC_DIR = _REPO_ROOT / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from vicon_ws.core.calibration import (
+from epa.core.calibration import (
     build_translation_system,
     solve_extrinsic_rotation,
     solve_extrinsic_translation,
     solve_world_alignment,
 )
-from vicon_ws.core.evaluation import (
+from epa.core.evaluation import (
     build_rpe_pairs,
     compute_ape_evo_style,
     compute_rpe_evo_style,
@@ -33,7 +33,7 @@ from vicon_ws.core.evaluation import (
     rpe_pairs_by_path,
     summarize_abs_errors,
 )
-from vicon_ws.core.io_utils import (
+from epa.core.io_utils import (
     _analyze_metric_value,
     _as_float,
     find_col,
@@ -50,7 +50,7 @@ from vicon_ws.core.io_utils import (
     to_builtin,
     write_metrics_zh_report,
 )
-from vicon_ws.core.math_utils import (
+from epa.core.math_utils import (
     compute_error_statistics,
     normalize_quat_array,
     normalize_time_to_seconds,
@@ -58,13 +58,13 @@ from vicon_ws.core.math_utils import (
     relative_se3,
     rmse,
 )
-from vicon_ws.core.time_alignment import (
+from epa.core.time_alignment import (
     compute_psr,
     get_angular_velocity_norm,
     interpolate_quat_linear,
     interpolate_quat_slerp,
 )
-from vicon_ws.config_cli import parse_args_with_config
+from epa.config_cli import parse_args_with_config
 
 
 __all__ = [
@@ -330,7 +330,7 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 
 def _load_modular_runner():
-    from vicon_ws.core.pipeline_modular import run_pipeline_modular
+    from epa.core.pipeline_modular import run_pipeline_modular
 
     return run_pipeline_modular
 

@@ -6,7 +6,7 @@ import zipfile
 import pytest
 import numpy as np
 
-from vicon_ws.benchmark import res
+from epa.benchmark import res
 
 
 def _payload(ape_val: float, rpe_val: float) -> dict:

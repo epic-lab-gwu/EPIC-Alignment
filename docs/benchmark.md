@@ -1,32 +1,32 @@
 # Benchmark
 
-This page covers the batch evaluation tools built around `vicon_ws`, including case discovery, repeated execution, and summary analysis.
+This page covers the batch evaluation tools built around `epa`, including case discovery, repeated execution, and summary analysis.
 
 ## Benchmark Scope
 
-`vicon_ws` includes a benchmark harness for large-scale case evaluation. The main goal is to run the same evaluation workflow over many prepared cases and collect consistent summaries.
+`epa` includes a benchmark harness for large-scale case evaluation. The main goal is to run the same evaluation workflow over many prepared cases and collect consistent summaries.
 
-In the current repository, the primary benchmark workflow is the AlignAnything harness. That harness includes an independent `vicon_ws` vs `evo` comparison, but the page is mainly about large-scale evaluation workflow and summary outputs.
+In the current repository, the primary benchmark workflow is the AlignAnything harness. That harness includes an independent `epa` vs `evo` comparison, but the page is mainly about large-scale evaluation workflow and summary outputs.
 
 ## AlignAnything Harness
 
-`vicon_ws_benchmark` runs an independent benchmark over cases discovered from an AlignAnything-style directory layout.
+`epa_benchmark` runs an independent benchmark over cases discovered from an AlignAnything-style directory layout.
 
 It:
 
 - discover benchmark cases from prepared dataset and ground-truth directories
-- run `vicon_ws` on each case
+- run `epa` on each case
 - run the comparison pipeline on the same case
 - write per-case JSON records, logs, and summary tables
 
 ## Fairness and Comparison Logic
 
-The harness evaluates `vicon_ws` and the comparison pipeline independently.
+The harness evaluates `epa` and the comparison pipeline independently.
 
 Important properties:
 
 - offsets are not shared between systems
-- `vicon_ws` uses its own internal step-1 time alignment estimate
+- `epa` uses its own internal step-1 time alignment estimate
 - the comparison pipeline uses its own offset search logic inside the harness
 - summary tables record both systems' offsets, match counts, and final errors
 
@@ -37,8 +37,8 @@ This avoids giving one system the timing result produced by the other.
 Before running the harness, make sure you have:
 
 - the AlignAnything data root with `benchmark/` and `GT/`
-- the `vicon_ws` repository root
-- a Python 3.10+ executable that can run `vicon_ws`
+- the `epa` repository root
+- a Python 3.10+ executable that can run `epa`
 - the comparison repository path if you want cross-tool benchmarking
 
 The harness exposes these main path options:
@@ -46,7 +46,7 @@ The harness exposes these main path options:
 - `--alignanything-root`
 - `--repo-root`
 - `--python-bin`
-- `--vicon-src`
+- `--epa-src`
 - `--evo-repo`
 
 ## Basic Run
@@ -54,10 +54,10 @@ The harness exposes these main path options:
 Typical command:
 
 ```bash
-vicon_ws_benchmark \
-  --alignanything-root /home/yifu/vicon_ws/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/vicon_ws \
-  --python-bin /home/yifu/miniconda3/envs/vicon_ws310/bin/python \
+epa_benchmark \
+  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --repo-root /home/yifu/epa \
+  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo
 ```
 
@@ -65,7 +65,7 @@ This command:
 
 1. discover benchmark cases
 2. prepare temporary TUM trajectories for each case
-3. run `vicon_ws` and the comparison pipeline independently
+3. run `epa` and the comparison pipeline independently
 4. aggregate the per-case outputs into a summary table
 
 ## Useful Filters
@@ -82,10 +82,10 @@ Examples:
 List matching cases only:
 
 ```bash
-vicon_ws_benchmark \
-  --alignanything-root /home/yifu/vicon_ws/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/vicon_ws \
-  --python-bin /home/yifu/miniconda3/envs/vicon_ws310/bin/python \
+epa_benchmark \
+  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --repo-root /home/yifu/epa \
+  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo \
   --case-pattern euroc \
   --dry-run
@@ -94,10 +94,10 @@ vicon_ws_benchmark \
 Run only a subset of methods:
 
 ```bash
-vicon_ws_benchmark \
-  --alignanything-root /home/yifu/vicon_ws/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/vicon_ws \
-  --python-bin /home/yifu/miniconda3/envs/vicon_ws310/bin/python \
+epa_benchmark \
+  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --repo-root /home/yifu/epa \
+  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo \
   --methods rovio,svo_stereo \
   --limit 20
@@ -152,25 +152,25 @@ Common contents:
 Important fields include:
 
 - `case`, `dataset`, `method`
-- `status`, `vicon_status`, `evo_status`
-- `vicon_offset_est_s`, `evo_offset_s`
-- `vicon_ate_rmse_raw_m`, `vicon_ate_rmse_step3_m`
+- `status`, `epa_status`, `evo_status`
+- `epa_offset_est_s`, `evo_offset_s`
+- `epa_ate_rmse_raw_m`, `epa_ate_rmse_step3_m`
 - `evo_ape_raw_rmse_m`, `evo_ape_se3_rmse_m`
-- `vicon_improve_pct`, `evo_improve_pct`
-- `vicon_matches_equivalent`, `evo_matches`
-- `vicon_run_dir`
+- `epa_improve_pct`, `evo_improve_pct`
+- `epa_matches_equivalent`, `evo_matches`
+- `epa_run_dir`
 - `error`
 
 These fields cover both metric comparison and failure diagnosis.
 
 ## Summary Plot Generation
 
-Use `vicon_ws_plot_summary` to generate charts from a harness `summary.csv`.
+Use `epa_plot_summary` to generate charts from a harness `summary.csv`.
 
 Example:
 
 ```bash
-vicon_ws_plot_summary \
+epa_plot_summary \
   --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
 ```
 
@@ -192,7 +192,7 @@ Typical figures:
 
 ![Aligned RMSE scatter plot](images/benchmark_aligned_rmse_scatter_log.png)
 
-*Example benchmark comparison: aligned RMSE for `vicon_ws` vs the comparison pipeline.*
+*Example benchmark comparison: aligned RMSE for `epa` vs the comparison pipeline.*
 
 ![Aligned RMSE by dataset](images/benchmark_aligned_rmse_by_dataset_box.png)
 
@@ -206,12 +206,12 @@ Useful option:
 
 ## `metrics.json` Aggregation
 
-Use `vicon_ws_metric_res` to aggregate or compare one or more `metrics.json` files directly, without using the full harness summary workflow.
+Use `epa_metric_res` to aggregate or compare one or more `metrics.json` files directly, without using the full harness summary workflow.
 
 Typical example:
 
 ```bash
-vicon_ws_metric_res \
+epa_metric_res \
   --metrics-json /path/to/metrics_a.json /path/to/metrics_b.json \
   --mode aggregate \
   --metric all \
@@ -237,11 +237,11 @@ Useful options:
 
 Recommended workflow:
 
-1. Run `vicon_ws_benchmark`
+1. Run `epa_benchmark`
 2. Inspect `summary.csv` and `summary.md`
-3. Generate charts with `vicon_ws_plot_summary`
+3. Generate charts with `epa_plot_summary`
 4. Drill into failed cases using `cases/*.json` and `logs/`
-5. Use `vicon_ws_metric_res` when you want additional aggregation across selected runs
+5. Use `epa_metric_res` when you want additional aggregation across selected runs
 
 ## Troubleshooting Hints
 

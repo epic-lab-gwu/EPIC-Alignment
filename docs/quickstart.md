@@ -1,6 +1,6 @@
 # Quick Start
 
-This page walks through a first run using files provided by `vicon_ws`.
+This page walks through a first run using files provided by `epa`.
 
 ## Requirements
 
@@ -11,8 +11,8 @@ This page walks through a first run using files provided by `vicon_ws`.
 Clone the repository and enter the project directory:
 
 ```bash
-git clone https://github.com/epic-lab-gwu/vicon_ws.git
-cd vicon_ws
+git clone https://github.com/epic-lab-gwu/epic-alignment.git epa
+cd epa
 ```
 
 Install the base package:
@@ -43,7 +43,7 @@ Use:
 Run the main pipeline with the bundled example files:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -76,7 +76,7 @@ Typical outputs:
 - `plots/*.png`
 - stage figures such as time alignment and 3D trajectory plots
 
-If `--plot` is enabled, `vicon_ws` also writes metric plots into `outputs/run_.../plots/`.
+If `--plot` is enabled, `epa` also writes metric plots into `outputs/run_.../plots/`.
 
 ![Step 1 time alignment result](images/quickstart_step1_time_alignment.png)
 
@@ -91,7 +91,7 @@ If `--plot` is enabled, `vicon_ws` also writes metric plots into `outputs/run_..
 You can evaluate the same trajectories directly with the metric tools:
 
 ```bash
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --pose_relation trans_part \
   --align \
   --t_max_diff 0.02 \
@@ -99,7 +99,7 @@ vicon_ws_ape tum gt.tum est.tum \
 ```
 
 ```bash
-vicon_ws_rpe tum gt.tum est.tum \
+epa_rpe tum gt.tum est.tum \
   --pose_relation trans_part \
   --delta 1 \
   --delta_unit f \
@@ -112,17 +112,17 @@ Use these commands when you want metric analysis without running the full pipeli
 
 ## Inspect Trajectories
 
-Use `vicon_ws_traj` to inspect, synchronize, and plot trajectories:
+Use `epa_traj` to inspect, synchronize, and plot trajectories:
 
 ```bash
-vicon_ws_traj --format tum --plot --plot-mode xz gt.tum est.tum
+epa_traj --format tum --plot --plot-mode xz gt.tum est.tum
 ```
 
 Common variants:
 
-- Synchronize before plotting: `vicon_ws_traj --format tum --sync --ref 1 gt.tum est.tum --plot`
-- Align to the reference: `vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot`
-- Export converted trajectories: `vicon_ws_traj --format auto --save-as tum --out-dir outputs/traj_exports gt.csv outputs/traj_estimate_v1_01.txt`
+- Synchronize before plotting: `epa_traj --format tum --sync --ref 1 gt.tum est.tum --plot`
+- Align to the reference: `epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot`
+- Export converted trajectories: `epa_traj --format auto --save-as tum --out-dir outputs/traj_exports gt.csv outputs/traj_estimate_v1_01.txt`
 
 ## ROS Bag Inputs
 
@@ -135,7 +135,7 @@ pip install -e .[ros]
 Then provide both the format and topic:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv /path/to/run.bag \
   --gt-format bag \
@@ -156,7 +156,7 @@ Supported ROS log inputs:
 If Rerun support is installed, add `--rerun` to the main pipeline or metric tools:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -165,17 +165,23 @@ vicon_ws \
   --rerun
 ```
 
+<video class="doc-video" controls muted loop playsinline preload="metadata">
+  <source src="../images/rerun.mp4" type="video/mp4">
+</video>
+
+*Rerun demo: interactive follow-view playback during trajectory inspection.*
+
 Use this to inspect trajectory geometry and intermediate alignment stages.
 
 ## Useful Help Commands
 
 ```bash
-vicon_ws --help
-vicon_ws_traj --help
-vicon_ws_ape --help
-vicon_ws_rpe --help
-vicon_ws_res --help
-vicon_ws_config --help
+epa --help
+epa_traj --help
+epa_ape --help
+epa_rpe --help
+epa_res --help
+epa_config --help
 ```
 
 ## Next Steps

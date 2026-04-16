@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # vicon_ws
 
 2026/4/15
@@ -5,14 +6,17 @@
 完善了文档, 内容更完整, 加了点配色, 代码块, 数学公式块
 
 ---
+=======
+# Epic Alignment (epa)
+>>>>>>> rename project to epa and migrate workspace naming
 2026/4/14
 
-解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/vicon_ws/)
+解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/epic-alignment/)
 
 ---
 2026/4/13
 
-参考evo, 给vicon_ws
+参考evo, 给epa
 1. 补齐了工具链的接口
 2. 做了可安装化: pyproject.toml + entry points
 3. 加了各种指标的可视化和绘图
@@ -26,7 +30,7 @@
 2026/4/12
 1. 扩展了输入格式, 但有一些格式还没实测能否work, 比如rosbag
 2. 优化了部分代码结构, 今天晚点上传
-3. evo的time offset换成非vicon_ws的offset, 重新跑了师兄给的case, 结果更新至summary.md
+3. evo的time offset换成非epa的offset, 重新跑了师兄给的case, 结果更新至summary.md
 4. 总共跑出来的有138个case, 有一些case fail了, 后面再看看原因; 有一些case没有匹配到对应的ground truth和estimation, 没跑
 
 ---
@@ -36,22 +40,22 @@
 
 - [x] 重写了项目结构, 使其易于扩展和复用, 也保留了上个版本的pipeline.py;
 - [x] 把evo的metrics加了进来, 再看看有什么可以新增的metrics;
-- [x] 用现在的vicon_ws和evo分别跑了alignanything, 结果在vicon_ws/summary_final.md;
+- [x] 用现在的epa和evo分别跑了alignanything, 结果在epa/summary_final.md;
 - [x] evo支持更多的格式输入, vicon后面可以加上 # 4/12
 - [x] 可考虑模仿evo, 补齐成一个完整的工具链cli # 4/13
 - [x] 指标可视化支持 rerun（APE/RPE/traj/3-step） # 4/13
 - [x] rerun 配置补齐（工具入口支持 `--rerun` 与 `--rerun-rec-id`） # 4/13
-- [x] 现在evo的结果用了vicon_ws的offset, 后面可以改成人工sweep最优 # 4/12
+- [x] 现在evo的结果用了epa的offset, 后面可以改成人工sweep最优 # 4/12
 
 ---
-`vicon_ws` 是一个轨迹对齐与评估工具集，包含：
+`epa` 是一个轨迹对齐与评估工具集，包含：
 
 - 三步对齐主流程（时间对齐 -> 外参求解 -> 世界系对齐）
 - evo 风格的轨迹工具链（`traj / ape / rpe / res / config`）
 - 可选的 Rerun 可视化
 - AlignAnything 独立 benchmark harness
 
-核心算法代码在 `src/vicon_ws/core`，`pipeline.py` 仅作为兼容入口（thin shim）。
+核心算法代码在 `src/epa/core`，`pipeline.py` 仅作为兼容入口（thin shim）。
 
 ## 安装
 
@@ -82,17 +86,17 @@ pip install -e .[ipython]
 
 安装后可直接使用：
 
-- `vicon_ws`
-- `vicon_ws_traj`
-- `vicon_ws_ape`
-- `vicon_ws_rpe`
-- `vicon_ws_fig`
-- `vicon_ws_res`
-- `vicon_ws_config`
-- `vicon_ws_benchmark`
-- `vicon_ws_plot_summary`
-- `vicon_ws_metric_res`
-- `vicon_ws_ipython`
+- `epa`
+- `epa_traj`
+- `epa_ape`
+- `epa_rpe`
+- `epa_fig`
+- `epa_res`
+- `epa_config`
+- `epa_benchmark`
+- `epa_plot_summary`
+- `epa_metric_res`
+- `epa_ipython`
 
 兼容旧入口：
 
@@ -105,7 +109,7 @@ python pipeline.py --help
 ### 1) 三步主流程（modular engine）
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -117,7 +121,7 @@ vicon_ws \
 启用 Rerun：
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -127,40 +131,40 @@ vicon_ws \
   --rerun
 ```
 
-### 2) 轨迹工具 `vicon_ws_traj`
+### 2) 轨迹工具 `epa_traj`
 
 ```bash
 # 轨迹对比绘图
-vicon_ws_traj --format tum --plot --plot-mode xz gt.tum est.tum
+epa_traj --format tum --plot --plot-mode xz gt.tum est.tum
 
 # evo 风格子命令也兼容
-vicon_ws_traj tum gt.tum est.tum --plot
+epa_traj tum gt.tum est.tum --plot
 
 # bag 的 evo 风格 topics 位置参数也兼容
-vicon_ws_traj bag /path/run.bag /vicon/pose /odom --plot
+epa_traj bag /path/run.bag /vicon/pose /odom --plot
 
 # 交互式窗口（evo 风格）
-vicon_ws_traj --format tum --plot --plot-interactive --plot-backend qtagg gt.tum est.tum
+epa_traj --format tum --plot --plot-interactive --plot-backend qtagg gt.tum est.tum
 
 # 对齐与同步
-vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
+epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
 
 # 导出格式
-vicon_ws_traj --format auto --save-as tum --out-dir outputs/traj_exports traj_a traj_b
+epa_traj --format auto --save-as tum --out-dir outputs/traj_exports traj_a traj_b
 ```
 
 ### 3) APE / RPE 工具
 
 ```bash
 # APE
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --pose_relation trans_part \
   --align \
   --t_max_diff 0.02 \
   --plot --plot_mode xz
 
 # RPE
-vicon_ws_rpe tum gt.tum est.tum \
+epa_rpe tum gt.tum est.tum \
   --pose_relation trans_part \
   --delta 1 --delta_unit f \
   --all_pairs \
@@ -172,49 +176,49 @@ vicon_ws_rpe tum gt.tum est.tum \
 # 也可显式指定：--plot-interactive --plot-backend qtagg
 ```
 
-### 4) 结果对比 `vicon_ws_res`
+### 4) 结果对比 `epa_res`
 
 ```bash
-vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+epa_res outputs/results/run_a.zip outputs/results/run_b.zip \
   --metric all --stage step3 --plot --out-dir outputs/res_compare
 
 # 交互式窗口
-vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+epa_res outputs/results/run_a.zip outputs/results/run_b.zip \
   --metric all --stage step3 --plot --plot-interactive --plot-backend qtagg
 
 # 也支持 evo 原生结果包（info.json + stats.json + error_array.npz）
-vicon_ws_res /home/yifu/evo/test/data/res_files/orb_ape.zip \
+epa_res /home/yifu/evo/test/data/res_files/orb_ape.zip \
              /home/yifu/evo/test/data/res_files/sptam_ape.zip \
              --metric ape --ape-relation trans_part --plot
 ```
 
-### 5) 图序列化与重绘 `vicon_ws_fig`
+### 5) 图序列化与重绘 `epa_fig`
 
 ```bash
 # 先在 ape/rpe 中序列化绘图规格
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --pose_relation trans_part \
   --serialize_plot outputs/ape_plot.json
 
 # 后续可独立重绘（不重算指标）
-vicon_ws_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
+epa_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
 ```
 
-### 6) 全局配置 `vicon_ws_config`
+### 6) 全局配置 `epa_config`
 
 ```bash
 # 根级默认（所有工具都可继承）
-vicon_ws_config set plot false rpe_delta 3
+epa_config set plot false rpe_delta 3
 
 # 工具级默认（更细粒度，推荐）
-vicon_ws_config set --tool vicon_ws_ape plot_mode xy t_max_diff 0.05
-vicon_ws_config set --tool vicon_ws_traj plot_mode xyz sync_max_diff 0.01
+epa_config set --tool epa_ape plot_mode xy t_max_diff 0.05
+epa_config set --tool epa_traj plot_mode xyz sync_max_diff 0.01
 
 # 查看某个工具生效配置（global + tool 合并后）
-vicon_ws_config show --tool vicon_ws_ape
+epa_config show --tool epa_ape
 
-vicon_ws_config show
-vicon_ws_config unset plot
+epa_config show
+epa_config unset plot
 ```
 
 ## 配置系统
@@ -225,12 +229,12 @@ vicon_ws_config unset plot
 
 1. `--config` 文件
 2. CLI 参数
-3. `vicon_ws_config` 全局配置
+3. `epa_config` 全局配置
 
 生成模板：
 
 ```bash
-vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
+epa_config generate --tool epa_ape --out ape_config.json
 ```
 
 也支持分层配置（类似 evo settings）：
@@ -240,11 +244,11 @@ vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
   "_global": {
     "plot": true
   },
-  "vicon_ws_ape": {
+  "epa_ape": {
     "plot_mode": "xy",
     "t_max_diff": 0.05
   },
-  "vicon_ws_traj": {
+  "epa_traj": {
     "plot_mode": "xyz",
     "sync_max_diff": 0.01
   }
@@ -265,7 +269,7 @@ vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
 bag 读取时可指定 topic：
 
 ```bash
-vicon_ws \
+epa \
   --gt-csv /path/to/run.bag --gt-format bag --gt-topic /vicon/pose \
   --est-path /path/to/run.bag --est-format bag --est-topic /odom
 ```
@@ -278,7 +282,7 @@ TF 语法也支持：
 
 ## Rerun 说明
 
-`vicon_ws` / `traj` / `ape` / `rpe` 都支持 `--rerun`。
+`epa` / `traj` / `ape` / `rpe` 都支持 `--rerun`。
 
 常用参数：
 
@@ -293,28 +297,28 @@ TF 语法也支持：
 ## IPython 入口
 
 ```bash
-# 进入预加载 vicon_ws 模块的 IPython
-vicon_ws_ipython
+# 进入预加载 epa 模块的 IPython
+epa_ipython
 
 # 先查看预加载符号
-vicon_ws_ipython --list
+epa_ipython --list
 ```
 
 ## Benchmark（AlignAnything）
 
-运行独立 benchmark harness（`vicon_ws` 与 `evo` 独立运行，offset 不共享）：
+运行独立 benchmark harness（`epa` 与 `evo` 独立运行，offset 不共享）：
 
 ```bash
-vicon_ws_benchmark \
-  --alignanything-root /home/yifu/vicon_ws/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/vicon_ws \
+epa_benchmark \
+  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --repo-root /home/yifu/epa \
   --evo-repo /home/yifu/evo
 ```
 
 从 harness 的 `summary.csv` 生成图：
 
 ```bash
-vicon_ws_plot_summary \
+epa_plot_summary \
   --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
 ```
 
@@ -342,19 +346,19 @@ vicon_ws_plot_summary \
 ## 代码结构
 
 ```text
-vicon_ws/
+epa/
 ├── pipeline.py                    # 兼容入口（thin shim）
 ├── pyproject.toml
-├── src/vicon_ws/
-│   ├── cli.py                     # vicon_ws 主 CLI
+├── src/epa/
+│   ├── cli.py                     # epa 主 CLI
 │   ├── runner.py                  # engine 分发
 │   ├── bridge_legacy.py           # legacy 桥接
 │   ├── config.py                  # PipelineOptions
 │   ├── config_cli.py              # --config / 全局配置注入
-│   ├── config_tool.py             # vicon_ws_config
-│   ├── traj_tool.py               # vicon_ws_traj
-│   ├── ape_tool.py                # vicon_ws_ape
-│   ├── rpe_tool.py                # vicon_ws_rpe
+│   ├── config_tool.py             # epa_config
+│   ├── traj_tool.py               # epa_traj
+│   ├── ape_tool.py                # epa_ape
+│   ├── rpe_tool.py                # epa_rpe
 │   ├── metric_cli_common.py       # APE/RPE 共享 CLI 逻辑
 │   ├── core/
 │   │   ├── pipeline_modular.py    # modular 三步主流程
@@ -370,7 +374,7 @@ vicon_ws/
 │       ├── alignanything_harness.py
 │       ├── plot_summary.py
 │       ├── metrics_res.py
-│       └── res.py                 # vicon_ws_res
+│       └── res.py                 # epa_res
 ├── docs/
 │   ├── architecture.md
 │   └── evaluation_inputs.md

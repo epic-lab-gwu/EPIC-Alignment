@@ -5,7 +5,7 @@ import sys
 import types
 import numpy as np
 
-from vicon_ws import traj_tool
+from epa import traj_tool
 
 
 def _write_tum(path: Path, x_offset: float = 0.0, t_offset: float = 0.0) -> None:
@@ -405,5 +405,5 @@ def test_traj_tool_rerun_invokes_logger(tmp_path: Path, monkeypatch) -> None:
         ]
     )
     assert traj_tool.run(args) == 0
-    assert called["kwargs"]["app_id"] == "vicon_ws_traj"
+    assert called["kwargs"]["app_id"] == "epa_traj"
     assert called["kwargs"]["recording_id"] == "session-1"

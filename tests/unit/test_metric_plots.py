@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from vicon_ws.viz.metric_plots import generate_metric_plots
+from epa.viz.metric_plots import generate_metric_plots
 
 
 def _stats(values):

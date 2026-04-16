@@ -4,5 +4,5 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 
-exec python3 -m vicon_ws.benchmark.alignanything_harness "$@"
+exec python3 -m epa.benchmark.alignanything_harness "$@"
 

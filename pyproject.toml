@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "vicon-ws"
+name = "epic-alignment"
 version = "0.1.0"
 description = "Trajectory alignment and evaluation toolkit for Vicon-grounded workflows"
 readme = "README.md"
@@ -29,18 +29,18 @@ dev = [
 ipython = ["ipython>=8.0"]
 
 [project.scripts]
-vicon_ws = "vicon_ws.cli:main"
-vicon-ws = "vicon_ws.cli:main"
-vicon_ws_config = "vicon_ws.config_tool:main"
-vicon_ws_ape = "vicon_ws.ape_tool:main"
-vicon_ws_rpe = "vicon_ws.rpe_tool:main"
-vicon_ws_traj = "vicon_ws.traj_tool:main"
-vicon_ws_fig = "vicon_ws.fig_tool:main"
-vicon_ws_res = "vicon_ws.benchmark.res:main"
-vicon_ws_benchmark = "vicon_ws.benchmark.alignanything_harness:main"
-vicon_ws_plot_summary = "vicon_ws.benchmark.plot_summary:main"
-vicon_ws_metric_res = "vicon_ws.benchmark.metrics_res:main"
-vicon_ws_ipython = "vicon_ws.ipython_tool:main"
+epa = "epa.cli:main"
+epic-alignment = "epa.cli:main"
+epa_config = "epa.config_tool:main"
+epa_ape = "epa.ape_tool:main"
+epa_rpe = "epa.rpe_tool:main"
+epa_traj = "epa.traj_tool:main"
+epa_fig = "epa.fig_tool:main"
+epa_res = "epa.benchmark.res:main"
+epa_benchmark = "epa.benchmark.alignanything_harness:main"
+epa_plot_summary = "epa.benchmark.plot_summary:main"
+epa_metric_res = "epa.benchmark.metrics_res:main"
+epa_ipython = "epa.ipython_tool:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

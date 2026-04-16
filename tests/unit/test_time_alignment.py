@@ -1,6 +1,6 @@
 import numpy as np
 
-from vicon_ws.core.time_alignment import (
+from epa.core.time_alignment import (
     compute_psr,
     interpolate_quat_linear,
     interpolate_quat_slerp,

@@ -1,24 +1,24 @@
 # CLI Reference
 
-This page summarizes the main `vicon_ws` command-line tools, what they do, and the options you will use most often.
+This page summarizes the main `epa` command-line tools, what they do, and the options you will use most often.
 
 ## Command Overview
 
 Core pipeline:
 
-- `vicon_ws`: run the full 3-step alignment and evaluation pipeline
+- `epa`: run the full 3-step alignment and evaluation pipeline
 
 Trajectory and metric tools:
 
-- `vicon_ws_traj`: inspect, synchronize, align, transform, plot, and export trajectories
-- `vicon_ws_ape`: compute absolute pose error metrics
-- `vicon_ws_rpe`: compute relative pose error metrics
-- `vicon_ws_res`: compare result bundles, run directories, or metrics files
+- `epa_traj`: inspect, synchronize, align, transform, plot, and export trajectories
+- `epa_ape`: compute absolute pose error metrics
+- `epa_rpe`: compute relative pose error metrics
+- `epa_res`: compare result bundles, run directories, or metrics files
 
 Utilities:
 
-- `vicon_ws_config`: manage reusable global and tool-level defaults
-- `vicon_ws_fig`: re-render plots from serialized plot bundles
+- `epa_config`: manage reusable global and tool-level defaults
+- `epa_fig`: re-render plots from serialized plot bundles
 
 Benchmark tools are documented separately in [Benchmark](benchmark.md).
 
@@ -48,7 +48,7 @@ pip install -e .[ros]
 For ROS logs, you usually need to provide a topic:
 
 ```bash
-vicon_ws \
+epa \
   --gt-csv /path/to/run.bag \
   --gt-format bag \
   --gt-topic /vicon/pose \
@@ -57,10 +57,10 @@ vicon_ws \
   --est-topic /odom
 ```
 
-For `vicon_ws_traj`, you can also encode the topic inside each trajectory spec:
+For `epa_traj`, you can also encode the topic inside each trajectory spec:
 
 ```bash
-vicon_ws_traj --format bag /path/to/run.bag::/vicon/pose /path/to/run.bag::/odom --plot
+epa_traj --format bag /path/to/run.bag::/vicon/pose /path/to/run.bag::/odom --plot
 ```
 
 ### Time Association
@@ -82,17 +82,17 @@ Guidelines:
 ### Help Commands
 
 ```bash
-vicon_ws --help
-vicon_ws_traj --help
-vicon_ws_ape --help
-vicon_ws_rpe --help
-vicon_ws_res --help
-vicon_ws_config --help
+epa --help
+epa_traj --help
+epa_ape --help
+epa_rpe --help
+epa_res --help
+epa_config --help
 ```
 
-## `vicon_ws`
+## `epa`
 
-`vicon_ws` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots and summaries into a new run directory.
+`epa` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots and summaries into a new run directory.
 
 Common options:
 
@@ -111,7 +111,7 @@ Common options:
 Minimal example:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -123,7 +123,7 @@ vicon_ws \
 With result bundle export:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -131,9 +131,15 @@ vicon_ws \
   --save-results outputs/results/run_a.zip
 ```
 
-## `vicon_ws_traj`
+<video class="doc-video" controls muted loop playsinline preload="metadata">
+  <source src="../images/rerun.mp4" type="video/mp4">
+</video>
 
-`vicon_ws_traj` is the general trajectory utility. Use it to inspect, synchronize, align, plot, or export trajectories.
+*Optional Rerun inspection flow for the main `epa` pipeline.*
+
+## `epa_traj`
+
+`epa_traj` is the general trajectory utility. Use it to inspect, synchronize, align, plot, or export trajectories.
 
 Common options:
 
@@ -153,28 +159,28 @@ Common options:
 Plot two TUM trajectories:
 
 ```bash
-vicon_ws_traj --format tum --plot --plot-mode xz gt.tum est.tum
+epa_traj --format tum --plot --plot-mode xz gt.tum est.tum
 ```
 
 Synchronize and align to the first trajectory:
 
 ```bash
-vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
+epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
 ```
 
 Export trajectories as TUM:
 
 ```bash
-vicon_ws_traj \
+epa_traj \
   --format auto \
   --save-as tum \
   --out-dir outputs/traj_exports \
   gt.csv outputs/traj_estimate_v1_01.txt
 ```
 
-## `vicon_ws_ape`
+## `epa_ape`
 
-`vicon_ws_ape` computes absolute pose error between a reference trajectory and an estimated trajectory.
+`epa_ape` computes absolute pose error between a reference trajectory and an estimated trajectory.
 
 Common options:
 
@@ -191,7 +197,7 @@ Common options:
 Example:
 
 ```bash
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --pose_relation trans_part \
   --align \
   --t_max_diff 0.02 \
@@ -203,19 +209,19 @@ vicon_ws_ape tum gt.tum est.tum \
   <img src="../images/cli_ape_map.png" alt="APE map view">
 </div>
 
-*Example `vicon_ws_ape` outputs: raw error curve and map-colored trajectory.*
+*Example `epa_ape` outputs: raw error curve and map-colored trajectory.*
 
 Save a reusable plot bundle:
 
 ```bash
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --pose_relation trans_part \
   --serialize_plot outputs/ape_plot.json
 ```
 
-## `vicon_ws_rpe`
+## `epa_rpe`
 
-`vicon_ws_rpe` computes relative pose error. The key extra concept is `delta`, which defines the spacing between pose pairs.
+`epa_rpe` computes relative pose error. The key extra concept is `delta`, which defines the spacing between pose pairs.
 
 Common options:
 
@@ -231,7 +237,7 @@ Common options:
 Example:
 
 ```bash
-vicon_ws_rpe tum gt.tum est.tum \
+epa_rpe tum gt.tum est.tum \
   --pose_relation trans_part \
   --delta 1 \
   --delta_unit f \
@@ -245,21 +251,21 @@ vicon_ws_rpe tum gt.tum est.tum \
   <img src="../images/cli_rpe_map.png" alt="RPE map view">
 </div>
 
-*Example `vicon_ws_rpe` outputs: raw relative error curve and map-colored trajectory.*
+*Example `epa_rpe` outputs: raw relative error curve and map-colored trajectory.*
 
 Path-based RPE example:
 
 ```bash
-vicon_ws_rpe tum gt.tum est.tum \
+epa_rpe tum gt.tum est.tum \
   --pose_relation trans_part \
   --delta 1.0 \
   --delta_unit m \
   --all_pairs
 ```
 
-## `vicon_ws_res`
+## `epa_res`
 
-`vicon_ws_res` compares previous evaluation outputs. Each input can be:
+`epa_res` compares previous evaluation outputs. Each input can be:
 
 - a `.zip` result bundle
 - a `metrics.json` file
@@ -278,7 +284,7 @@ Common options:
 Example:
 
 ```bash
-vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+epa_res outputs/results/run_a.zip outputs/results/run_b.zip \
   --metric all \
   --stage step3 \
   --plot \
@@ -292,16 +298,16 @@ vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
   <img src="../images/cli_res_aggregated_violin.png" alt="Aggregated violin comparison">
 </div>
 
-*Example `vicon_ws_res` outputs for multi-run comparison.*
+*Example `epa_res` outputs for multi-run comparison.*
 
-## `vicon_ws_config`
+## `epa_config`
 
-`vicon_ws_config` manages reusable defaults so you do not need to repeat the same flags.
+`epa_config` manages reusable defaults so you do not need to repeat the same flags.
 
 It supports:
 
 - root-level defaults shared across tools
-- tool-specific defaults such as `vicon_ws_ape` or `vicon_ws_traj`
+- tool-specific defaults such as `epa_ape` or `epa_traj`
 - generated template configs for supported tools
 
 Common commands:
@@ -309,37 +315,37 @@ Common commands:
 Show current settings:
 
 ```bash
-vicon_ws_config show
+epa_config show
 ```
 
 Show effective config for one tool:
 
 ```bash
-vicon_ws_config show --tool vicon_ws_ape
+epa_config show --tool epa_ape
 ```
 
 Set shared defaults:
 
 ```bash
-vicon_ws_config set plot false rpe_delta 3
+epa_config set plot false rpe_delta 3
 ```
 
 Set tool-specific defaults:
 
 ```bash
-vicon_ws_config set --tool vicon_ws_ape plot_mode xy t_max_diff 0.05
-vicon_ws_config set --tool vicon_ws_traj plot_mode xyz sync_max_diff 0.01
+epa_config set --tool epa_ape plot_mode xy t_max_diff 0.05
+epa_config set --tool epa_traj plot_mode xyz sync_max_diff 0.01
 ```
 
 Generate a template config:
 
 ```bash
-vicon_ws_config generate --tool vicon_ws_ape --out ape_config.json
+epa_config generate --tool epa_ape --out ape_config.json
 ```
 
-## `vicon_ws_fig`
+## `epa_fig`
 
-`vicon_ws_fig` re-renders serialized plot bundles produced by tools such as `vicon_ws_ape` and `vicon_ws_rpe`.
+`epa_fig` re-renders serialized plot bundles produced by tools such as `epa_ape` and `epa_rpe`.
 
 Common options:
 
@@ -351,7 +357,7 @@ Common options:
 Example:
 
 ```bash
-vicon_ws_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
+epa_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
 ```
 
 ## Common Recipes
@@ -359,7 +365,7 @@ vicon_ws_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
 Run one pair end to end:
 
 ```bash
-vicon_ws \
+epa \
   --engine modular \
   --gt-csv gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
@@ -370,13 +376,13 @@ vicon_ws \
 Inspect alignment before metric evaluation:
 
 ```bash
-vicon_ws_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
+epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
 ```
 
 Compute APE with explicit sync tolerance:
 
 ```bash
-vicon_ws_ape tum gt.tum est.tum \
+epa_ape tum gt.tum est.tum \
   --pose_relation trans_part \
   --t_max_diff 0.02 \
   --t_offset 0.0 \
@@ -386,7 +392,7 @@ vicon_ws_ape tum gt.tum est.tum \
 Compare two previous runs:
 
 ```bash
-vicon_ws_res outputs/results/run_a.zip outputs/results/run_b.zip \
+epa_res outputs/results/run_a.zip outputs/results/run_b.zip \
   --metric ape \
   --stage step3 \
   --stat rmse \
@@ -401,4 +407,4 @@ Priority order:
 
 1. values loaded from `--config`
 2. values passed on the command line
-3. defaults stored through `vicon_ws_config`
+3. defaults stored through `epa_config`

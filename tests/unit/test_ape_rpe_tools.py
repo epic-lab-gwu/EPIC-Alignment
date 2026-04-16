@@ -4,7 +4,7 @@ import sys
 import types
 import numpy as np
 
-from vicon_ws import ape_tool, rpe_tool
+from epa import ape_tool, rpe_tool
 
 
 def _write_tum(path: Path, x_offset: float = 0.0, t_offset: float = 0.0) -> None:
@@ -385,7 +385,7 @@ def test_ape_tool_rerun_invokes_logger(tmp_path: Path, monkeypatch) -> None:
         ]
     )
     assert ape_tool.run(args) == 0
-    assert called["kwargs"]["app_id"] == "vicon_ws_ape"
+    assert called["kwargs"]["app_id"] == "epa_ape"
     assert called["kwargs"]["recording_id"] == "ape-session"
 
 
@@ -426,5 +426,5 @@ def test_rpe_tool_rerun_invokes_logger(tmp_path: Path, monkeypatch) -> None:
         ]
     )
     assert rpe_tool.run(args) == 0
-    assert called["kwargs"]["app_id"] == "vicon_ws_rpe"
+    assert called["kwargs"]["app_id"] == "epa_rpe"
     assert called["kwargs"]["recording_id"] == "rpe-session"

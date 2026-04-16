@@ -1,7 +1,7 @@
-site_name: vicon_ws Docs
+site_name: Epic Alignment Docs
 site_description: Trajectory alignment and evaluation toolkit documentation
-repo_url: https://github.com/epic-lab-gwu/vicon_ws
-repo_name: epic-lab-gwu/vicon_ws
+repo_url: https://github.com/epic-lab-gwu/epic-alignment
+repo_name: epic-lab-gwu/epic-alignment
 
 theme:
   name: readthedocs

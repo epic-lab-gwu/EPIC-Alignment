@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from vicon_ws import ape_tool, fig_tool, rpe_tool
-from vicon_ws.viz.plot_bundle import load_plot_bundle
+from epa import ape_tool, fig_tool, rpe_tool
+from epa.viz.plot_bundle import load_plot_bundle
 
 
 def _write_tum(path: Path, x_offset: float = 0.0, t_offset: float = 0.0) -> None:
