@@ -263,7 +263,14 @@ def run_pipeline_modular(args, script_dir: Path):
     t_v_mid, om_v = get_angular_velocity_norm(t_vicon, quat_vicon)
     t_r_mid, om_r = get_angular_velocity_norm(t_robot, quat_robot)
 
-    dt_resample = args.dt_resample
+    dt_resample = float(getattr(args, "dt_resample", 0.001))
+    if dt_resample <= 0.0:
+        raise ValueError("--dt-resample must be > 0.")
+    offset_search_window_s = float(getattr(args, "offset_search_window_s", 0.0))
+    offset_min_match_ratio = float(getattr(args, "offset_min_match_ratio", 0.3))
+    if not (0.0 <= offset_min_match_ratio <= 1.0):
+        raise ValueError("--offset-min-match-ratio must be in [0, 1].")
+
     t_min = max(t_v_mid[0], t_r_mid[0])
     t_max = min(t_v_mid[-1], t_r_mid[-1])
     if t_max - t_min < 100 * dt_resample:
@@ -274,11 +281,72 @@ def run_pipeline_modular(args, script_dir: Path):
     sig_r = interp1d(t_r_mid, om_r, kind="linear")(t_uniform)
     sig_v -= np.mean(sig_v)
     sig_r -= np.mean(sig_r)
+    if (not np.all(np.isfinite(sig_v))) or (not np.all(np.isfinite(sig_r))):
+        raise ValueError(
+            "Step-1 signals contain non-finite values. Check timestamps for duplicates/non-monotonic samples."
+        )
 
     corr = correlate(sig_r, sig_v, mode="full")
+    if not np.all(np.isfinite(corr)):
+        raise ValueError(
+            "Cross-correlation contains non-finite values (possible invalid timestamp deltas or signal values)."
+        )
     lags = np.arange(-len(sig_v) + 1, len(sig_r))
-    peak_idx = np.argmax(corr)
-    calculated_offset = lags[peak_idx] * dt_resample
+    offsets_s = lags.astype(float) * dt_resample
+
+    search_mask = np.ones_like(offsets_s, dtype=bool)
+    if offset_search_window_s > 0.0:
+        search_mask = np.abs(offsets_s) <= float(offset_search_window_s)
+        if not np.any(search_mask):
+            raise ValueError("Offset search window has no valid lag candidates. Increase --offset-search-window-s.")
+
+    search_indices = np.flatnonzero(search_mask)
+    peak_idx = int(search_indices[int(np.argmax(corr[search_indices]))])
+    calculated_offset = float(offsets_s[peak_idx])
+
+    evo_match_max_diff_s = float(getattr(args, "t_max_diff", 0.02))
+
+    def _count_matches_for_offset(offset_s: float) -> tuple[int, float]:
+        ids_ref, _ = matching_time_indices(
+            t_vicon,
+            t_robot,
+            max_diff=evo_match_max_diff_s,
+            offset_2=-float(offset_s),
+        )
+        ref_n = max(1, len(t_vicon))
+        ratio = float(len(ids_ref)) / float(ref_n)
+        return len(ids_ref), min(1.0, ratio)
+
+    match_count, match_ratio = _count_matches_for_offset(calculated_offset)
+    fallback_used = 0.0
+    if match_ratio < offset_min_match_ratio:
+        zero_window_s = 1.0
+        zero_mask = np.abs(offsets_s) <= zero_window_s
+        if offset_search_window_s > 0.0:
+            zero_mask &= search_mask
+
+        if np.any(zero_mask):
+            zero_indices = np.flatnonzero(zero_mask)
+            zero_peak_idx = int(zero_indices[int(np.argmax(corr[zero_indices]))])
+            fallback_offset = float(offsets_s[zero_peak_idx])
+        else:
+            zero_peak_idx = int(np.argmin(np.abs(offsets_s)))
+            fallback_offset = float(offsets_s[zero_peak_idx])
+
+        fallback_count, fallback_ratio = _count_matches_for_offset(fallback_offset)
+        if fallback_ratio >= offset_min_match_ratio:
+            calculated_offset = fallback_offset
+            peak_idx = zero_peak_idx
+            match_count, match_ratio = fallback_count, fallback_ratio
+            fallback_used = 1.0
+        else:
+            raise ValueError(
+                "Unreliable step-1 offset estimate: "
+                f"best_match_ratio={match_ratio:.3f}, fallback_match_ratio={fallback_ratio:.3f}, "
+                f"required>={offset_min_match_ratio:.3f}. "
+                "Check timestamp quality (duplicates/non-monotonic) or adjust offset search settings."
+            )
+
     print(f"Calculated Time Offset: {calculated_offset:.4f} s")
 
     sig_r_shifted = interp1d(
@@ -288,7 +356,7 @@ def run_pipeline_modular(args, script_dir: Path):
         fill_value="extrapolate",
     )(t_uniform)
 
-    corr_norm_peak = np.max(corr) / (np.linalg.norm(sig_v) * np.linalg.norm(sig_r) + 1e-12)
+    corr_norm_peak = corr[peak_idx] / (np.linalg.norm(sig_v) * np.linalg.norm(sig_r) + 1e-12)
     psr = compute_psr(corr, peak_idx, guard_bins=max(1, int(0.02 / dt_resample)))
     time_metrics = {
         "offset_est_s": calculated_offset,
@@ -297,19 +365,22 @@ def run_pipeline_modular(args, script_dir: Path):
         "xcorr_psr": psr,
         "omega_rmse_before": rmse(sig_r - sig_v),
         "omega_rmse_after": rmse(sig_r_shifted - sig_v),
+        "offset_search_window_s": offset_search_window_s,
+        "offset_min_match_ratio": offset_min_match_ratio,
+        "offset_fallback_used": fallback_used,
     }
     # Evo-compatible interpretation:
     # - evo applies t_offset to est timestamps before matching.
     # - our internal shift is t_robot_sync = t_robot - offset_est_s.
     #   Therefore, evo-equivalent t_offset is -offset_est_s.
     evo_t_offset_used_s = -calculated_offset
-    evo_match_max_diff_s = float(getattr(args, "t_max_diff", 0.02))
     match_ids_ref, match_ids_est = matching_time_indices(
         t_vicon, t_robot, max_diff=evo_match_max_diff_s, offset_2=evo_t_offset_used_s
     )
     time_metrics["evo_t_offset_used_s"] = evo_t_offset_used_s
     time_metrics["evo_match_max_diff_s"] = evo_match_max_diff_s
     time_metrics["evo_matches_equivalent"] = float(len(match_ids_ref))
+    time_metrics["evo_matches_ratio_equivalent"] = float(match_ratio)
     if args.synthetic:
         time_metrics["offset_err_ms"] = abs(calculated_offset - ARTIFICIAL_OFFSET) * 1e3
 

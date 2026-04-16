@@ -6,13 +6,32 @@ from .math_utils import normalize_quat_array
 
 
 def get_angular_velocity_norm(t, quats):
-    rot = R.from_quat(quats)
+    t = np.asarray(t, dtype=float).reshape(-1)
+    q = np.asarray(quats, dtype=float)
+    if t.size < 2 or q.shape[0] < 2:
+        raise ValueError("Need at least 2 timestamped poses to compute angular velocity.")
+
+    rot = R.from_quat(q)
     rel_rot = rot[:-1].inv() * rot[1:]
     angles = rel_rot.magnitude()
     dt = np.diff(t)
-    omega = angles / dt
-    t_mid = t[:-1] + dt / 2.0
-    return t_mid, omega
+
+    # Filter non-increasing timestamps (duplicate or reversed samples).
+    valid_dt = dt > 1e-9
+    if not np.any(valid_dt):
+        raise ValueError(
+            "Timestamp sequence has no positive deltas; cannot compute angular velocity for time alignment."
+        )
+
+    omega = angles[valid_dt] / dt[valid_dt]
+    t_mid = t[:-1][valid_dt] + dt[valid_dt] / 2.0
+
+    finite = np.isfinite(omega) & np.isfinite(t_mid)
+    if int(np.sum(finite)) < 2:
+        raise ValueError(
+            "Angular-velocity signal is invalid after filtering non-finite values; check timestamps/quaternions."
+        )
+    return t_mid[finite], omega[finite]
 
 
 def compute_psr(corr, peak_idx, guard_bins):

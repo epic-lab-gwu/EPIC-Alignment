@@ -51,6 +51,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resampling step for step-1 correlation (seconds)",
     )
     parser.add_argument(
+        "--offset-search-window-s",
+        type=float,
+        default=0.0,
+        help=(
+            "Step-1 correlation offset search window in seconds (uses +/- window). "
+            "Default 0 means full lag range (legacy behavior)."
+        ),
+    )
+    parser.add_argument(
+        "--offset-min-match-ratio",
+        type=float,
+        default=0.3,
+        help=(
+            "Minimum timestamp match ratio required for the selected offset. "
+            "If not met, fallback near-zero offset is tried; otherwise the run stops."
+        ),
+    )
+    parser.add_argument(
         "--synthetic",
         action="store_true",
         help="Use synthetic offset/injected transforms",
