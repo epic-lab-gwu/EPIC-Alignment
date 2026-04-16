@@ -11,7 +11,7 @@
 >>>>>>> rename project to epa and migrate workspace naming
 2026/4/14
 
-解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/epic-alignment/)
+解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/epa/)
 
 ---
 2026/4/13
