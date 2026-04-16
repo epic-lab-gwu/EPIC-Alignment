@@ -130,12 +130,57 @@ def _resolve_gt_for_case(gt_root: Path, rel_pose: Path, sequence: str) -> Path |
     return None
 
 
+def _format_alignanything_root_error(
+    alignanything_root: Path,
+    *,
+    missing_entries: list[str],
+) -> str:
+    env_data_root = os.getenv("EPA_DATA_ROOT", "").strip() or "(unset)"
+    env_align_root = os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip() or "(unset)"
+    suggested_data_root = _default_data_root()
+    suggested_align_root = Path(_default_alignanything_root()).expanduser()
+
+    detail_lines = [f"- Missing required path: {alignanything_root / entry}" for entry in missing_entries]
+    if not alignanything_root.exists():
+        detail_lines.insert(0, f"- Base path does not exist: {alignanything_root}")
+
+    cmd_example = (
+        "epa_benchmark "
+        f"--alignanything-root {suggested_align_root} "
+        "--repo-root /path/to/epa"
+    )
+
+    lines = [
+        f"Invalid --alignanything-root: {alignanything_root}",
+        "Expected an AlignAnything root containing both benchmark/ and GT/.",
+        *detail_lines,
+        "",
+        "Current environment:",
+        f"- EPA_DATA_ROOT={env_data_root}",
+        f"- EPA_ALIGNANYTHING_ROOT={env_align_root}",
+        "",
+        "Example fix:",
+        f"  export EPA_DATA_ROOT={suggested_data_root}",
+        f"  export EPA_ALIGNANYTHING_ROOT={suggested_align_root}",
+        f"  {cmd_example}",
+    ]
+    return "\n".join(lines)
+
+
 def discover_cases(alignanything_root: Path) -> tuple[list[BenchmarkCase], list[dict[str, str]]]:
     bench_root = alignanything_root / "benchmark"
     gt_root = alignanything_root / "GT"
-    if not bench_root.exists() or not gt_root.exists():
+    missing_entries: list[str] = []
+    if not bench_root.exists():
+        missing_entries.append("benchmark")
+    if not gt_root.exists():
+        missing_entries.append("GT")
+    if missing_entries:
         raise FileNotFoundError(
-            f"Invalid AlignAnything root: {alignanything_root} (need benchmark/ and GT/)"
+            _format_alignanything_root_error(
+                alignanything_root=alignanything_root,
+                missing_entries=missing_entries,
+            )
         )
 
     cases: list[BenchmarkCase] = []
@@ -591,14 +636,33 @@ def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+
+def _default_data_root() -> Path:
+    return Path(os.getenv("EPA_DATA_ROOT", "~/epa_data")).expanduser()
+
+
+def _default_alignanything_root() -> str:
+    override = os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip()
+    if override:
+        return override
+    return str(_default_data_root() / "AlignAnything" / "AlignAnything")
+
+
+def _resolve_cli_path(path_str: str, repo_root: Path) -> Path:
+    p = Path(path_str).expanduser()
+    if p.is_absolute():
+        return p.resolve()
+    return (repo_root / p).resolve()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Independent benchmark harness for AlignAnything: epa vs evo."
     )
     parser.add_argument(
         "--alignanything-root",
-        default="AlignAnything/AlignAnything",
-        help="Path to AlignAnything root containing benchmark/ and GT/.",
+        default=_default_alignanything_root(),
+        help=("Path to AlignAnything root containing benchmark/ and GT/. " "Default: $EPA_ALIGNANYTHING_ROOT or $EPA_DATA_ROOT/AlignAnything/AlignAnything."),
     )
     parser.add_argument(
         "--output-root",
@@ -612,7 +676,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--python-bin",
-        default="/home/yifu/miniconda3/envs/epa310/bin/python",
+        default="/home/yifu/miniconda3/envs/epa/bin/python",
         help="Python executable used to run epa (should be py3.10+).",
     )
     parser.add_argument(
@@ -701,11 +765,11 @@ def _filter_cases(
 
 def run(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
-    align_root = (repo_root / args.alignanything_root).resolve()
-    output_root = (repo_root / args.output_root).resolve()
-    python_bin = Path(args.python_bin).resolve()
-    epa_src = (repo_root / args.epa_src).resolve()
-    evo_repo = Path(args.evo_repo).resolve()
+    align_root = _resolve_cli_path(args.alignanything_root, repo_root)
+    output_root = _resolve_cli_path(args.output_root, repo_root)
+    python_bin = _resolve_cli_path(args.python_bin, repo_root)
+    epa_src = _resolve_cli_path(args.epa_src, repo_root)
+    evo_repo = _resolve_cli_path(args.evo_repo, repo_root)
 
     cases, unresolved = discover_cases(align_root)
     cases = _filter_cases(cases, args.case_pattern, args.methods, args.limit)

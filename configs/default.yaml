@@ -1,5 +1,5 @@
 # epa modular wrapper defaults
-gt_csv: gt.csv
+gt_csv: data/gt.csv
 gt_format: csv
 gt_topic: ""
 est_path: outputs/traj_estimate_v1_01.txt

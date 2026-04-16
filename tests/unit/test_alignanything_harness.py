@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from epa.benchmark.alignanything_harness import (
     _write_summary_md,
@@ -87,3 +88,16 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     assert "raw_rmse_m (v/e, ↓)" in text
     assert "improve_pct (v/e, ↑)" in text
     assert "epa_xcorr_peak (↑)" in text
+
+
+def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:
+    missing_root = tmp_path / "missing_alignanything"
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        discover_cases(missing_root)
+
+    msg = str(exc_info.value)
+    assert "Invalid --alignanything-root" in msg
+    assert "EPA_DATA_ROOT" in msg
+    assert "EPA_ALIGNANYTHING_ROOT" in msg
+    assert "epa_benchmark --alignanything-root" in msg

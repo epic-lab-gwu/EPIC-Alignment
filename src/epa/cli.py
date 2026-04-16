@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Path to JSON config file. If set, config values override CLI flags.",
     )
-    parser.add_argument("--gt-csv", default="gt.csv", help="Path to GT trajectory file/bag")
+    parser.add_argument("--gt-csv", default="data/gt.csv", help="Path to GT trajectory file/bag")
     parser.add_argument(
         "--gt-format",
         choices=["auto", "csv", "euroc", "tum", "kitti", "bag", "bag2", "mcap"],

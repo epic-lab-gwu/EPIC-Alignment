@@ -34,6 +34,14 @@ This avoids giving one system the timing result produced by the other.
 
 ## Required Inputs
 
+推荐将数据集放在仓库外（例如 `/home/yifu/epa_data`），并通过环境变量管理：
+
+```bash
+export EPA_DATA_ROOT=/home/yifu/epa_data
+```
+
+`epa_benchmark` 默认会使用 `$EPA_ALIGNANYTHING_ROOT`，若未设置则回退到 `$EPA_DATA_ROOT/AlignAnything/AlignAnything`。
+
 Before running the harness, make sure you have:
 
 - the AlignAnything data root with `benchmark/` and `GT/`
@@ -55,7 +63,7 @@ Typical command:
 
 ```bash
 epa_benchmark \
-  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo
@@ -83,7 +91,7 @@ List matching cases only:
 
 ```bash
 epa_benchmark \
-  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo \
@@ -95,7 +103,7 @@ Run only a subset of methods:
 
 ```bash
 epa_benchmark \
-  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo \

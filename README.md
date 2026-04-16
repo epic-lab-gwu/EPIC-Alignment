@@ -1,14 +1,10 @@
-<<<<<<< HEAD
-# vicon_ws
+# Epic Alignment (epa)
 
 2026/4/15
 
 完善了文档, 内容更完整, 加了点配色, 代码块, 数学公式块
 
 ---
-=======
-# Epic Alignment (epa)
->>>>>>> rename project to epa and migrate workspace naming
 2026/4/14
 
 解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/epa/)
@@ -111,7 +107,7 @@ python pipeline.py --help
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
+  --gt-csv data/gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
   --est-format tum \
   --t-max-diff 0.02 \
@@ -123,7 +119,7 @@ epa \
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
+  --gt-csv data/gt.csv \
   --est-path outputs/traj_estimate_v1_01.txt \
   --est-format tum \
   --t-max-diff 0.02 \
@@ -306,11 +302,17 @@ epa_ipython --list
 
 ## Benchmark（AlignAnything）
 
+建议把数据集放在仓库外，例如：`/home/yifu/epa_data`。
+
+```bash
+export EPA_DATA_ROOT=/home/yifu/epa_data
+```
+
 运行独立 benchmark harness（`epa` 与 `evo` 独立运行，offset 不共享）：
 
 ```bash
 epa_benchmark \
-  --alignanything-root /home/yifu/epa/AlignAnything/AlignAnything \
+  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --evo-repo /home/yifu/evo
 ```

@@ -3,6 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
+export EPA_DATA_ROOT="${EPA_DATA_ROOT:-$HOME/epa_data}"
 
 exec python3 -m epa.benchmark.alignanything_harness "$@"
-
