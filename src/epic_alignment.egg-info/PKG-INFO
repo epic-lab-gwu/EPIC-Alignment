@@ -1,6 +1,27 @@
+Metadata-Version: 2.4
+Name: epic-alignment
+Version: 0.1.0
+Summary: Trajectory alignment and evaluation toolkit for Vicon-grounded workflows
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: numpy>=1.21
+Requires-Dist: scipy>=1.8
+Requires-Dist: matplotlib>=3.5
+Provides-Extra: rerun
+Requires-Dist: rerun-sdk>=0.20; extra == "rerun"
+Provides-Extra: ros
+Requires-Dist: rosbags>=0.11.0; extra == "ros"
+Provides-Extra: geo
+Requires-Dist: contextily>=1.5; extra == "geo"
+Requires-Dist: pyyaml>=6.0; extra == "geo"
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+Requires-Dist: ruff>=0.6; extra == "dev"
+Provides-Extra: ipython
+Requires-Dist: ipython>=8.0; extra == "ipython"
+
 # Epic Alignment (epa)
-2026/4/21
-找到了一些不能正常对齐的case, 正在解决
 
 2026/4/15
 

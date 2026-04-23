@@ -27,6 +27,21 @@ def test_matching_time_indices_respects_offset() -> None:
     assert ids_est == [0, 1, 2]
 
 
+def test_matching_time_indices_enforces_one_to_one_usage() -> None:
+    stamps_ref = np.array([0.000, 0.004, 0.008, 0.012])
+    stamps_est = np.array([0.006])
+
+    ids_ref, ids_est = matching_time_indices(
+        stamps_ref,
+        stamps_est,
+        max_diff=0.01,
+        offset_2=0.0,
+    )
+
+    assert len(ids_ref) == 1
+    assert ids_est == [0]
+
+
 def test_compute_psr_returns_nan_for_short_signal() -> None:
     corr = np.array([1.0, 3.0, 1.0])
     psr = compute_psr(corr, peak_idx=1, guard_bins=1)

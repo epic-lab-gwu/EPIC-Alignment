@@ -50,4 +50,3 @@ def solve_world_alignment(P, Q):
         Vt[2, :] *= -1
         Rw = Vt.T @ U.T
     return Rw, cQ - Rw @ cP
-

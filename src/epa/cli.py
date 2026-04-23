@@ -7,13 +7,13 @@ from .runner import run
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="epa CLI wrapper (legacy/modular engines)."
+        description="epa CLI wrapper (modular engine)."
     )
     parser.add_argument(
         "--engine",
-        choices=["modular", "legacy"],
+        choices=["modular"],
         default="modular",
-        help="Execution engine. modular=src core modules, legacy=pipeline.py",
+        help="Execution engine (modular only).",
     )
     parser.add_argument(
         "--config",
@@ -56,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.0,
         help=(
             "Step-1 correlation offset search window in seconds (uses +/- window). "
-            "Default 0 means full lag range (legacy behavior)."
+            "Default 0 means full lag range."
         ),
     )
     parser.add_argument(
@@ -67,6 +67,78 @@ def build_parser() -> argparse.ArgumentParser:
             "Minimum timestamp match ratio required for the selected offset. "
             "If not met, fallback near-zero offset is tried; otherwise the run stops."
         ),
+    )
+    parser.add_argument(
+        "--quality-segment-duration-s",
+        type=float,
+        default=10.0,
+        help="Window duration (seconds) for segment-wise alignment quality checks.",
+    )
+    parser.add_argument(
+        "--quality-segment-overlap-ratio",
+        type=float,
+        default=0.5,
+        help="Overlap ratio for quality segments in [0, 1).",
+    )
+    parser.add_argument(
+        "--quality-min-segment-samples",
+        type=int,
+        default=80,
+        help="Minimum samples per segment for quality metrics.",
+    )
+    parser.add_argument(
+        "--quality-good-rmse-m",
+        type=float,
+        default=0.5,
+        help="Step3 RMSE threshold for good_align.",
+    )
+    parser.add_argument(
+        "--quality-partial-rmse-m",
+        type=float,
+        default=8.0,
+        help="Step3 RMSE threshold for partial_align fallback.",
+    )
+    parser.add_argument(
+        "--quality-good-segment-cv",
+        type=float,
+        default=0.4,
+        help="Segment RMSE coefficient-of-variation threshold for good_align.",
+    )
+    parser.add_argument(
+        "--quality-good-heading-p90-deg",
+        type=float,
+        default=60.0,
+        help="Heading-angle p90 (deg) threshold for good_align.",
+    )
+    parser.add_argument(
+        "--quality-partial-min-improve-pct",
+        type=float,
+        default=20.0,
+        help="Minimum raw->step3 RMSE improvement (%%) for partial_align fallback.",
+    )
+    parser.add_argument(
+        "--rigid-check-max-path-ratio",
+        type=float,
+        default=3.0,
+        help="Max symmetric path-length ratio allowed for rigidly_alignable.",
+    )
+    parser.add_argument(
+        "--rigid-check-max-bbox-ratio",
+        type=float,
+        default=3.0,
+        help="Max symmetric bounding-box diagonal ratio allowed for rigidly_alignable.",
+    )
+    parser.add_argument(
+        "--rigid-check-max-global-local-ratio",
+        type=float,
+        default=6.0,
+        help="Max median global/local segment RMSE ratio allowed for rigidly_alignable.",
+    )
+    parser.add_argument(
+        "--rigid-check-max-sim3-gain-ratio",
+        type=float,
+        default=0.3,
+        help="Max relative RMSE gain of Sim3 over SE3 allowed for rigidly_alignable.",
     )
     parser.add_argument(
         "--synthetic",
@@ -242,7 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Print legacy pipeline command without executing.",
+        help="Print modular command preview without executing.",
     )
     return parser
 

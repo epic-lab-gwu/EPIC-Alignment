@@ -84,23 +84,27 @@ For each dataset case, use the main pipeline with `--rerun` to visualize:
 - raw trajectory after step-1 time sync
 - aligned trajectory after step-3 world alignment
 
-Example:
+Quick command (recommended):
+
+```bash
+epa_rerun \
+  --run-dir outputs/alignanything_harness \
+  --case euroc_mav_MH_01_easy_rovio
+```
+
+The command resolves the latest `run_*` automatically when `--run-dir` points to the parent harness directory.
+
+Direct `epa` command (manual paths):
 
 ```bash
 epa \
-  --engine modular \
   --gt-csv /path/to/gt.tum \
   --gt-format tum \
   --est-path /path/to/est.tum \
   --est-format tum \
-  --rerun \
-  --rerun-visual-separation-m 0.05
+  --plot \
+  --rerun
 ```
-
-Tips:
-
-- If trajectories overlap too much, increase `--rerun-visual-separation-m` (for example `0.05` to `0.20`).
-- This separation is visualization-only and does not affect alignment or metrics.
 
 ## Useful Filters
 
@@ -234,8 +238,6 @@ Typical figures:
 ![Aligned RMSE by dataset](images/benchmark_aligned_rmse_by_dataset_box.png)
 
 *Example benchmark comparison grouped by dataset.*
-
-The tool also generates `plots.md` as a small index page.
 
 Useful option:
 

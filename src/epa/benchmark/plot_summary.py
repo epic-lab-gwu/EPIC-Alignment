@@ -334,18 +334,7 @@ def run(args: argparse.Namespace) -> int:
     if maybe is not None:
         produced.append(maybe)
 
-    md_lines = ["# Summary Plots", "", f"source: `{summary_csv}`", ""]
-    for image in produced:
-        rel = image.name
-        title = rel.replace(".png", "").replace("_", " ")
-        md_lines.append(f"## {title}")
-        md_lines.append("")
-        md_lines.append(f"![{title}]({rel})")
-        md_lines.append("")
-    (out_dir / "plots.md").write_text("\n".join(md_lines), encoding="utf-8")
-
     print(f"Generated {len(produced)} plot(s) in: {out_dir}")
-    print(f"Index: {out_dir / 'plots.md'}")
     return 0
 
 

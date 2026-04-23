@@ -11,7 +11,7 @@ This page walks through a first run using files provided by `epa`.
 Clone the repository and enter the project directory:
 
 ```bash
-git clone https://github.com/epic-lab-gwu/epic-alignment.git epa
+git clone https://github.com/epic-lab-gwu/epa.git epa
 cd epa
 ```
 
@@ -40,7 +40,20 @@ Use:
 
 ## First End-to-End Run
 
-Run the main pipeline with the bundled example files:
+Template for your own dataset (replace paths and formats):
+
+```bash
+epa \
+  --gt-csv /path/to/your/gt.tum \
+  --est-path /path/to/your/est.tum \
+  --t-max-diff 0.02 \
+  --plot \
+  --rerun
+```
+
+`--gt-format` and `--est-format` are optional. `epa` defaults to `auto`; only set them when auto-detection is incorrect.
+
+Example:
 
 ```bash
 epa \
@@ -72,9 +85,10 @@ Typical outputs:
 
 - `metrics.json`
 - `metrics_summary.csv`
-- `metrics_zh.md`
+- `report_zh.md`
+- `report_en.md`
 - `plots/*.png`
-- stage figures such as time alignment and 3D trajectory plots
+- stage figures such as time alignment and 3D trajectory plots (also in `plots/`)
 
 If `--plot` is enabled, `epa` also writes metric plots into `outputs/run_.../plots/`.
 

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import json
 from datetime import datetime
@@ -83,7 +85,8 @@ def write_result_bundle(output_dir, metrics_payload, out_zip):
         "entries": [
             "metrics.json",
             "metrics_summary.csv",
-            "metrics_zh.md",
+            "report_zh.md",
+            "report_en.md",
             "manifest.json",
         ],
     }
@@ -95,11 +98,14 @@ def write_result_bundle(output_dir, metrics_payload, out_zip):
         zf.writestr("manifest.json", manifest_json)
         zf.writestr("metrics.json", metrics_json)
         metrics_summary = output_dir / "metrics_summary.csv"
-        metrics_zh = output_dir / "metrics_zh.md"
+        report_zh = output_dir / "report_zh.md"
+        report_en = output_dir / "report_en.md"
         if metrics_summary.exists():
             zf.write(metrics_summary, arcname="metrics_summary.csv")
-        if metrics_zh.exists():
-            zf.write(metrics_zh, arcname="metrics_zh.md")
+        if report_zh.exists():
+            zf.write(report_zh, arcname="report_zh.md")
+        if report_en.exists():
+            zf.write(report_en, arcname="report_en.md")
     return out_zip
 
 
@@ -130,6 +136,37 @@ METRIC_ZH_EXPLAIN = {
     "ate_p95_step3_m": "step3 绝对轨迹误差 95 分位（米）。",
     "ate_rmse_improve_raw_to_step3_pct": "从 raw 到 step3 的 RMSE 改善百分比。",
     "ate_rmse_improve_step2_to_step3_pct": "从 step2 到 step3 的 RMSE 改善百分比。",
+    "step3_rmse_selected_m": "Step3 世界系对齐后的拟合 RMSE（米）。",
+    "alert_level_code": "异常提示等级编码：0=ok，1=warning，2=critical。",
+    "alert_count": "触发的异常提示条目数量。",
+    "quality_label_code": "对齐质量标签编码：2=good_align，1=partial_align，0=poor_align。",
+    "rigid_alignability_code": "刚体可对齐性标签编码：1=rigidly_alignable，0=not_rigidly_alignable。",
+    "step3_rmse_m": "用于质量门控的 Step3 全局 RMSE（米）。",
+    "raw_to_step3_improve_pct": "用于质量门控的 raw 到 step3 RMSE 改善百分比。",
+    "segment_count": "质量评估中使用的分段数量。",
+    "segment_rmse_mean_m": "分段 RMSE 均值（米）。",
+    "segment_rmse_std_m": "分段 RMSE 标准差（米）。",
+    "segment_rmse_cv": "分段 RMSE 变异系数（std/mean），越小越稳定。",
+    "heading_median_deg": "局部运动方向夹角中位数（度），越小越一致。",
+    "heading_p90_deg": "局部运动方向夹角 90 分位（度），越小越一致。",
+    "path_length_ratio_sym": "Step2 轨迹与 GT 轨迹总路程的对称比值（>=1，越接近 1 越好）。",
+    "bbox_diag_ratio_sym": "Step2 轨迹与 GT 轨迹包围盒对角线的对称比值（>=1，越接近 1 越好）。",
+    "segment_local_se3_rmse_median_m": "按时间分段、每段独立 SE3 最优对齐后的 RMSE 中位数（米）。",
+    "segment_global_se3_rmse_median_m": "按时间分段、使用全局 SE3 对齐后的 RMSE 中位数（米）。",
+    "segment_global_local_rmse_ratio": "分段全局/局部 RMSE 比值中位数，越接近 1 表示越符合单一刚体假设。",
+    "sim3_rmse_m": "同一配对点集下 Sim3（含尺度）对齐 RMSE（米），仅用于诊断。",
+    "sim3_scale": "Sim3 估计尺度因子，越接近 1 越符合纯刚体假设。",
+    "sim3_gain_ratio": "Sim3 相对 SE3 的 RMSE 改善比例，过大说明可能存在尺度问题。",
+    "rigid_check_fail_count": "刚体可对齐性规则触发失败项数量。",
+    "piecewise_segment_count": "用于分段诊断的有效时间段数量。",
+    "piecewise_global_rmse_median_m": "分段上使用单一全局 SE3 时的 RMSE 中位数（米）。",
+    "piecewise_local_rmse_median_m": "分段上每段独立 SE3 最优拟合的 RMSE 中位数（米）。",
+    "piecewise_global_local_ratio_median": "分段全局/局部 RMSE 比值中位数，越接近 1 越说明全局刚体假设成立。",
+    "piecewise_gap_median_m": "分段全局RMSE-局部RMSE 的中位差值（米）。",
+    "piecewise_gap_p90_m": "分段全局RMSE-局部RMSE 的 90 分位差值（米）。",
+    "piecewise_gap_max_m": "分段全局RMSE-局部RMSE 的最大差值（米）。",
+    "piecewise_peak_recovery_pct": "从最差分段到后续最佳分段的误差恢复百分比（仅诊断）。",
+    "piecewise_early_late_delta_m": "后四分之一时段与前四分之一时段全局分段RMSE均值差（米）。",
     "extrinsic_rotation_error_deg": "外参旋转误差（度），仅 synthetic 有真值时有效。",
     "extrinsic_translation_error_m": "外参平移误差（米），仅 synthetic 有真值时有效。",
     "world_rotation_error_deg": "世界对齐旋转误差（度），仅 synthetic 有真值时有效。",
@@ -169,6 +206,25 @@ def _analyze_metric_value(section, metric, value, block):
             f"按 evo 语义采用 t_offset={value:.4f}s，"
             f"与本流程 offset_est_s={est:.4f}s 互为相反数。"
         )
+
+    if metric == "quality_label_code":
+        if value >= 1.5:
+            return "质量标签为 good_align（整体与局部一致性均较好）。"
+        if value >= 0.5:
+            return "质量标签为 partial_align（整体可对齐但局部仍有残差）。"
+        return "质量标签为 poor_align（当前结果不可靠，建议复查数据或参数）。"
+
+    if metric == "alert_level_code":
+        if value >= 1.5:
+            return "异常提示等级为 critical，建议优先排查数据与时间对齐。"
+        if value >= 0.5:
+            return "异常提示等级为 warning，建议结合图像与指标复核。"
+        return "异常提示等级为 ok，当前结果整体可用。"
+
+    if metric == "rigid_alignability_code":
+        if value >= 0.5:
+            return "判定为 rigidly_alignable（可由单一刚体变换解释）。"
+        return "判定为 not_rigidly_alignable（单一刚体假设可能不成立）。"
 
     if metric == "evo_matches_equivalent":
         max_diff = _as_float(block, "evo_match_max_diff_s")
@@ -270,6 +326,23 @@ def _analyze_metric_value(section, metric, value, block):
             return f"Raw P95={value:.4f} m。"
         return f"该值为 {value:.6f}，越小越好。"
 
+    if metric in {"segment_rmse_cv", "heading_p90_deg", "heading_median_deg"}:
+        if metric == "segment_rmse_cv":
+            if value <= 0.35:
+                return f"分段 RMSE CV={value:.3f}，局部误差分布较稳定。"
+            if value <= 0.8:
+                return f"分段 RMSE CV={value:.3f}，存在一定局部波动。"
+            return f"分段 RMSE CV={value:.3f}，局部误差波动较大。"
+        if metric == "heading_p90_deg":
+            if value <= 35:
+                return f"方向夹角 p90={value:.2f}°，局部方向一致性较好。"
+            if value <= 70:
+                return f"方向夹角 p90={value:.2f}°，局部方向存在偏差。"
+            return f"方向夹角 p90={value:.2f}°，局部方向偏差明显。"
+        if value <= 15:
+            return f"方向夹角中位数={value:.2f}°，整体方向较一致。"
+        return f"方向夹角中位数={value:.2f}°，存在可见方向偏差。"
+
     if metric == "ate_rmse_improve_raw_to_step3_pct":
         raw = _as_float(block, "ate_rmse_raw_m")
         step3 = _as_float(block, "ate_rmse_step3_m")
@@ -302,16 +375,24 @@ def _analyze_metric_value(section, metric, value, block):
     return f"当前值为 {value:.6f}，建议结合同组指标综合判断。"
 
 
-def write_metrics_zh_report(output_dir, metrics_payload):
-    output_dir = Path(output_dir)
-    report_path = output_dir / "metrics_zh.md"
+def _fmt_report_value(value: float) -> str:
+    if np.isnan(value):
+        return "nan"
+    return f"{value:.6f}"
 
-    lines = []
-    lines.append("# 指标解读（中文）")
-    lines.append("")
-    lines.append("本文件自动生成：对每个英文指标给出中文释义，并结合当前数值做简要分析。")
-    lines.append("")
 
+def _collect_plot_images(output_dir: Path) -> list[Path]:
+    plots_dir = output_dir / "plots"
+    if not plots_dir.exists():
+        return []
+    images = []
+    for p in sorted(plots_dir.iterdir(), key=lambda x: x.name):
+        if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+            images.append(p)
+    return images
+
+
+def _append_report_metrics_zh(lines: list[str], metrics_payload: dict) -> None:
     for section, block in metrics_payload.items():
         if not isinstance(block, dict):
             continue
@@ -324,7 +405,7 @@ def write_metrics_zh_report(output_dir, metrics_payload):
             if not isinstance(value, (int, float, np.integer, np.floating)):
                 continue
             value_float = float(value)
-            value_text = "nan" if np.isnan(value_float) else f"{value_float:.6f}"
+            value_text = _fmt_report_value(value_float)
             zh_explain = METRIC_ZH_EXPLAIN.get(metric, "该指标暂无预置中文解释。")
             analysis = _analyze_metric_value(section, metric, value_float, block)
             lines.append(f"- `{metric}`")
@@ -333,7 +414,114 @@ def write_metrics_zh_report(output_dir, metrics_payload):
             lines.append(f"  - 数值分析：{analysis}")
         lines.append("")
 
-    report_path.write_text("\n".join(lines), encoding="utf-8")
+
+def _append_report_metrics_en(lines: list[str], metrics_payload: dict) -> None:
+    for section, block in metrics_payload.items():
+        if not isinstance(block, dict):
+            continue
+        has_scalar = any(isinstance(v, (int, float, np.integer, np.floating)) for v in block.values())
+        if not has_scalar:
+            continue
+        lines.append(f"## {section}")
+        lines.append("")
+        for metric, value in block.items():
+            if not isinstance(value, (int, float, np.integer, np.floating)):
+                continue
+            value_float = float(value)
+            value_text = _fmt_report_value(value_float)
+            lines.append(f"- `{metric}`: `{value_text}`")
+        lines.append("")
+
+
+def write_run_reports(output_dir, metrics_payload):
+    output_dir = Path(output_dir)
+    metadata = metrics_payload.get("metadata", {}) if isinstance(metrics_payload, dict) else {}
+    images = _collect_plot_images(output_dir)
+
+    zh_lines = [
+        "# EPA 运行报告（中文）",
+        "",
+        "本文件自动生成，汇总本次运行的关键指标与全部图片输出。",
+        "",
+        f"- 时间：`{metadata.get('timestamp', '')}`",
+        f"- GT：`{metadata.get('gt_path', '')}`",
+        f"- EST：`{metadata.get('est_path', '')}`",
+        "",
+    ]
+    alert_level = str(metadata.get("user_alert_level", "") or "").strip()
+    alert_msg = str(metadata.get("user_alert_message", metadata.get("user_alert_message_zh", "")) or "").strip()
+    alert_reasons = str(metadata.get("user_alert_reasons", metadata.get("user_alert_reasons_zh", "")) or "").strip()
+    if alert_level or alert_msg or alert_reasons:
+        zh_lines.extend(
+            [
+                "## 异常提示",
+                "",
+                f"- 等级：`{alert_level or 'ok'}`",
+                f"- 提示：{alert_msg or '无。'}",
+            ]
+        )
+        if alert_reasons:
+            zh_lines.append(f"- 原因：{alert_reasons}")
+        zh_lines.append("")
+    _append_report_metrics_zh(zh_lines, metrics_payload if isinstance(metrics_payload, dict) else {})
+    zh_lines.append("## 图片总览")
+    zh_lines.append("")
+    if not images:
+        zh_lines.append("- 无图片输出。")
+    else:
+        for img in images:
+            rel = f"plots/{img.name}"
+            zh_lines.append(f"### {img.name}")
+            zh_lines.append("")
+            zh_lines.append(f"![{img.name}]({rel})")
+            zh_lines.append("")
+
+    en_lines = [
+        "# EPA Run Report (English)",
+        "",
+        "Auto-generated report with key metrics and all generated figures.",
+        "",
+        f"- Time: `{metadata.get('timestamp', '')}`",
+        f"- GT: `{metadata.get('gt_path', '')}`",
+        f"- EST: `{metadata.get('est_path', '')}`",
+        "",
+    ]
+    if alert_level or alert_msg or alert_reasons:
+        en_lines.extend(
+            [
+                "## Alert",
+                "",
+                f"- Level: `{alert_level or 'ok'}`",
+            ]
+        )
+        if alert_msg:
+            en_lines.append(f"- Message: {alert_msg}")
+        if alert_reasons:
+            en_lines.append(f"- Reasons: {alert_reasons}")
+        en_lines.append("")
+    _append_report_metrics_en(en_lines, metrics_payload if isinstance(metrics_payload, dict) else {})
+    en_lines.append("## Figure Gallery")
+    en_lines.append("")
+    if not images:
+        en_lines.append("- No figures were generated.")
+    else:
+        for img in images:
+            rel = f"plots/{img.name}"
+            en_lines.append(f"### {img.name}")
+            en_lines.append("")
+            en_lines.append(f"![{img.name}]({rel})")
+            en_lines.append("")
+
+    report_zh_path = output_dir / "report_zh.md"
+    report_en_path = output_dir / "report_en.md"
+    report_zh_path.write_text("\n".join(zh_lines), encoding="utf-8")
+    report_en_path.write_text("\n".join(en_lines), encoding="utf-8")
+    return report_zh_path, report_en_path
+
+
+def write_metrics_zh_report(output_dir, metrics_payload):
+    # Backward-compatible wrapper; report_zh.md replaces metrics_zh.md.
+    write_run_reports(output_dir, metrics_payload)
 
 
 def find_col(columns, candidates):
@@ -390,7 +578,7 @@ def load_vicon_csv(path):
     if any(c is None for c in needed):
         raise ValueError(f"GT CSV missing required columns: {path}")
 
-    t = normalize_time_to_seconds(data[t_col])
+    t = normalize_time_to_seconds(data[t_col], zero_start=False)
     pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
     quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
     return t, pos, quat
@@ -411,7 +599,7 @@ def load_estimation_csv(path):
     if any(c is None for c in needed):
         raise ValueError(f"Estimation CSV missing required columns: {path}")
 
-    t = normalize_time_to_seconds(data[t_col])
+    t = normalize_time_to_seconds(data[t_col], zero_start=False)
     pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
     quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
     return t, pos, quat
@@ -424,7 +612,7 @@ def load_estimation_tum(path):
     if arr.shape[1] < 8:
         raise ValueError("Trajectory file must have at least 8 columns: t tx ty tz qx qy qz qw")
 
-    t = normalize_time_to_seconds(arr[:, 0])
+    t = normalize_time_to_seconds(arr[:, 0], zero_start=False)
     pos = arr[:, 1:4]
     quat = normalize_quat_array(arr[:, 4:8])
     return t, pos, quat
@@ -626,7 +814,7 @@ def load_bag_trajectory(path, topic, bag_format="auto"):
             )
         raise ValueError(f"No trajectory messages found for topic: {bag_topic}")
 
-    t = normalize_time_to_seconds(np.asarray(stamps, dtype=float))
+    t = normalize_time_to_seconds(np.asarray(stamps, dtype=float), zero_start=False)
     pos = np.asarray(xyz, dtype=float)
     q = normalize_quat_array(np.asarray(quat, dtype=float))
     return t, pos, q

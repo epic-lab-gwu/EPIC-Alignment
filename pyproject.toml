@@ -41,6 +41,8 @@ epa_benchmark = "epa.benchmark.alignanything_harness:main"
 epa_plot_summary = "epa.benchmark.plot_summary:main"
 epa_latex_summary = "epa.benchmark.latex_summary:main"
 epa_metric_res = "epa.benchmark.metrics_res:main"
+epa_case_rerun = "epa.benchmark.case_rerun:main"
+epa_rerun = "epa.benchmark.case_rerun:main"
 epa_ipython = "epa.ipython_tool:main"
 
 [tool.setuptools]
@@ -55,7 +57,7 @@ testpaths = ["tests/unit"]
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true
-files = ["src", "tests/unit", "pipeline.py"]
+files = ["src", "tests/unit"]
 
 [tool.ruff]
 target-version = "py310"

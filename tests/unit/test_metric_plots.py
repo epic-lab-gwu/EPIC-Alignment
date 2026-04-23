@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from epa.viz.metric_plots import generate_metric_plots
+from epa.viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots
 
 
 def _stats(values):
@@ -60,5 +60,34 @@ def test_generate_metric_plots(tmp_path: Path) -> None:
         x_dimension="seconds",
     )
 
-    assert len(produced) >= 11
-    assert (tmp_path / "plots.md").exists()
+    assert len(produced) >= 10
+    assert all(p.suffix == ".png" for p in produced)
+
+
+def test_generate_ape_stage_raw_plot(tmp_path: Path) -> None:
+    payload = {
+        "pose_metrics": {
+            "ape": {
+                "raw": _stage_block([1.0, 2.0, 3.0]),
+                "step2": _stage_block([0.9, 1.8, 2.7]),
+                "step3": _stage_block([0.5, 1.0, 1.5]),
+            },
+            "rpe": {
+                "raw": _stage_block([0.4, 0.5, 0.6]),
+                "step2": _stage_block([0.3, 0.4, 0.5]),
+                "step3": _stage_block([0.2, 0.25, 0.3]),
+            },
+        }
+    }
+
+    out = generate_ape_stage_raw_plot(
+        metrics_payload=payload,
+        out_dir=tmp_path,
+        ape_relation="translation_part",
+        stage="step3",
+        x_dimension="seconds",
+        file_name="ape_translation_part_se3_raw.png",
+    )
+    assert out is not None
+    assert out.exists()
+    assert out.name == "ape_translation_part_se3_raw.png"

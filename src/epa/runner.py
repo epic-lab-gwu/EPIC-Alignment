@@ -1,7 +1,6 @@
 from argparse import Namespace
 from pathlib import Path
 
-from .bridge_legacy import run_legacy_pipeline
 from .config import PipelineOptions, project_root_from_file
 from .core.pipeline_modular import run_pipeline_modular
 
@@ -38,17 +37,13 @@ def run(ns: Namespace) -> int:
         save_results=getattr(ns, "save_results", "") or "",
     )
     repo_root = project_root_from_file(Path(__file__))
-    engine = getattr(ns, "engine", "legacy")
-    if engine == "modular":
-        if bool(ns.dry_run):
-            print("Dry run command:")
-            print(
-                "python -m epa.cli --engine modular "
-                f"--gt-csv {opts.gt_csv} --est-format {opts.est_format} ..."
-            )
-            return 0
-        run_pipeline_modular(ns, script_dir=repo_root)
+    if bool(getattr(ns, "dry_run", False)):
+        print("Dry run command:")
+        print(
+            "python -m epa.cli "
+            f"--gt-csv {opts.gt_csv} --est-format {opts.est_format} ..."
+        )
         return 0
-    return run_legacy_pipeline(
-        legacy_argv=opts.to_legacy_argv(), repo_root=repo_root, dry_run=bool(ns.dry_run)
-    )
+
+    run_pipeline_modular(ns, script_dir=repo_root)
+    return 0

@@ -41,7 +41,7 @@ def test_load_vicon_csv_with_euroc_columns(tmp_path: Path) -> None:
 
     t, pos, quat = load_vicon_csv(csv_path)
 
-    np.testing.assert_allclose(t, np.array([0.0, 1.0]))
+    np.testing.assert_allclose(t, np.array([1.0, 2.0]))
     np.testing.assert_allclose(pos[:, 0], np.array([0.0, 1.0]))
     np.testing.assert_allclose(quat[:, 3], np.array([1.0, 1.0]))
 
@@ -126,7 +126,8 @@ def test_write_result_bundle_creates_zip_with_manifest_and_metrics(tmp_path: Pat
     out_dir = tmp_path / "run"
     out_dir.mkdir()
     (out_dir / "metrics_summary.csv").write_text("section,metric,value\n", encoding="utf-8")
-    (out_dir / "metrics_zh.md").write_text("# metrics\n", encoding="utf-8")
+    (out_dir / "report_zh.md").write_text("# report zh\n", encoding="utf-8")
+    (out_dir / "report_en.md").write_text("# report en\n", encoding="utf-8")
     payload = {"pose_metrics": {"ape": {"step3": {"translation_part": {"rmse": 0.1}}}}}
     bundle = write_result_bundle(out_dir, payload, tmp_path / "result.zip")
     assert bundle.exists()
@@ -138,4 +139,5 @@ def test_write_result_bundle_creates_zip_with_manifest_and_metrics(tmp_path: Pat
         assert "manifest.json" in names
         assert "metrics.json" in names
         assert "metrics_summary.csv" in names
-        assert "metrics_zh.md" in names
+        assert "report_zh.md" in names
+        assert "report_en.md" in names

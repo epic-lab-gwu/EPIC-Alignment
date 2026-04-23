@@ -102,6 +102,31 @@ def _pick_x_axis(arrays: dict[str, np.ndarray], x_dimension: str, n: int) -> tup
     return np.arange(n, dtype=float), "index"
 
 
+def _pose_relation_title_label(pose_relation: str) -> str:
+    mapping = {
+        "translation_part": "translation part",
+        "rotation_part": "rotation part",
+        "rotation_angle_deg": "rotation angle (deg)",
+        "rotation_angle_rad": "rotation angle (rad)",
+        "point_distance": "point distance",
+        "full_transformation": "full transformation",
+    }
+    return mapping.get(str(pose_relation), str(pose_relation).replace("_", " "))
+
+
+def _align_mode_title_label(align_mode: str) -> str:
+    mode = str(align_mode).lower()
+    if mode == "se3":
+        return "with SE(3) Umeyama alignment"
+    if mode == "sim3":
+        return "with Sim(3) Umeyama alignment"
+    if mode == "scale":
+        return "with scale correction"
+    if mode == "origin":
+        return "with origin alignment"
+    return "without alignment"
+
+
 def _compute_color_bounds(
     values: np.ndarray,
     cmin: float | None,
@@ -129,15 +154,54 @@ def _plot_raw_errors(
     y_label: str,
     title: str,
     out_path: Path,
+    line_label: str = "APE",
+    stats: dict[str, float] | None = None,
 ) -> matplotlib.figure.Figure | None:
     fig = plt.figure(figsize=(10.8, 4.8))
-    plt.plot(x_vals, errors, linewidth=1.4)
-    plt.title(title)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    plt.grid(True, linestyle=":", alpha=0.5)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=180, bbox_inches="tight")
+    ax = fig.add_subplot(111)
+    ax.plot(x_vals, errors, linewidth=1.4, color="gray", label=line_label)
+    if isinstance(stats, dict):
+        mean_v = float(stats.get("mean", np.nan))
+        std_v = float(stats.get("std", np.nan))
+        rmse_v = float(stats.get("rmse", np.nan))
+        median_v = float(stats.get("median", np.nan))
+        finite_x = np.asarray(x_vals, dtype=float)
+        finite_x = finite_x[np.isfinite(finite_x)]
+        if finite_x.size > 0 and np.isfinite(mean_v) and np.isfinite(std_v) and std_v >= 0.0:
+            x0 = float(np.min(finite_x))
+            x1 = float(np.max(finite_x))
+            ax.fill_between(
+                [x0, x1],
+                [mean_v - std_v, mean_v - std_v],
+                [mean_v + std_v, mean_v + std_v],
+                color="#7f6db0",
+                alpha=0.35,
+                label="std",
+            )
+        if np.isfinite(rmse_v):
+            ax.axhline(rmse_v, color="#3b6db1", linewidth=1.5, label="rmse")
+        if np.isfinite(median_v):
+            ax.axhline(median_v, color="#4ca45a", linewidth=1.5, label="median")
+        if np.isfinite(mean_v):
+            ax.axhline(mean_v, color="#c44747", linewidth=1.5, label="mean")
+    ax.set_title(title)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.grid(True, linestyle=":", alpha=0.5)
+    handles, labels = ax.get_legend_handles_labels()
+    ordered_handles = []
+    ordered_labels = []
+    for name in (line_label, "rmse", "median", "mean", "std"):
+        if name in labels:
+            idx = labels.index(name)
+            ordered_handles.append(handles[idx])
+            ordered_labels.append(labels[idx])
+    if ordered_handles:
+        ax.legend(ordered_handles, ordered_labels, loc="best")
+    else:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180, bbox_inches="tight")
     return fig
 
 
@@ -624,7 +688,17 @@ def run(args: argparse.Namespace) -> int:
             str(getattr(args, "plot_x_dimension", "seconds")),
             errs.size,
         )
-        ylabel = f"error ({unit})" if unit else "error"
+        raw_ylabel = f"APE ({unit})" if unit else "APE"
+        relation_title = _pose_relation_title_label(pose_relation)
+        relation_with_unit = f"{relation_title} ({unit})" if unit else relation_title
+        raw_title = f"APE w.r.t. {relation_with_unit}\n({_align_mode_title_label(align_mode)})"
+        raw_stats = {
+            "rmse": float(stat.get("rmse", np.nan)),
+            "median": float(stat.get("median", np.nan)),
+            "mean": float(stat.get("mean", np.nan)),
+            "std": float(stat.get("std", np.nan)),
+        }
+        map_title = f"APE map ({pose_relation})"
         map_ref = (
             project_to_plane(
                 np.asarray(data.full_ref_pos, dtype=float),
@@ -638,15 +712,17 @@ def run(args: argparse.Namespace) -> int:
         )
         raw_spec = make_raw_line_spec(
             name="raw",
-            title=f"APE raw ({pose_relation})",
+            title=raw_title,
             x=x_vals,
             y=errs,
             x_label=x_label,
-            y_label=ylabel,
+            y_label=raw_ylabel,
+            line_label=f"APE ({unit})" if unit else "APE",
+            stats=raw_stats,
         )
         map_spec = make_trajectory_error_map_spec(
             name="map",
-            title=f"APE map ({pose_relation})",
+            title=map_title,
             plot_mode=str(getattr(args, "plot_mode", "xyz")),
             ref_positions=map_ref,
             est_positions=est_eval_pos,
@@ -675,6 +751,12 @@ def run(args: argparse.Namespace) -> int:
             y_label=str(raw_spec["y_label"]),
             title=str(raw_spec["title"]),
             out_path=raw_plot,
+            line_label=str(raw_spec.get("line_label", "APE")),
+            stats=(
+                raw_spec.get("stats", None)
+                if isinstance(raw_spec.get("stats", None), dict)
+                else None
+            ),
         )
         if raw_fig is not None:
             open_figures.append(raw_fig)

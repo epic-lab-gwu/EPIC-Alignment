@@ -78,18 +78,39 @@ def interpolate_quat_linear(t_src, q_src, t_query):
 
 def matching_time_indices(stamps_1, stamps_2, max_diff=0.01, offset_2=0.0):
     """
-    Evo-compatible timestamp association:
-    for each stamp in stamps_1, find nearest in (stamps_2 + offset_2),
-    and accept if absolute difference <= max_diff.
+    One-to-one, monotonic timestamp association:
+    for each stamp in stamps_1 (reference), match at most one nearest
+    stamp in (stamps_2 + offset_2), and each stamps_2 sample can be used once.
     """
     s1 = np.asarray(stamps_1, dtype=float).reshape(-1)
     s2 = np.asarray(stamps_2, dtype=float).reshape(-1) + float(offset_2)
+    max_diff = float(max_diff)
+
     idx_1 = []
     idx_2 = []
+    if s1.size == 0 or s2.size == 0:
+        return idx_1, idx_2
+
+    j = 0
     for i, t in enumerate(s1):
-        diffs = np.abs(s2 - t)
-        j = int(np.argmin(diffs))
-        if diffs[j] <= float(max_diff):
-            idx_1.append(i)
-            idx_2.append(j)
+        while j < s2.size and s2[j] < (t - max_diff):
+            j += 1
+        if j >= s2.size:
+            break
+
+        best_j = -1
+        best_diff = np.inf
+        for cand in (j, j + 1):
+            if cand >= s2.size:
+                continue
+            diff = abs(s2[cand] - t)
+            if diff <= max_diff and diff < best_diff:
+                best_j = int(cand)
+                best_diff = float(diff)
+
+        if best_j >= 0:
+            idx_1.append(int(i))
+            idx_2.append(best_j)
+            j = best_j + 1
+
     return idx_1, idx_2

@@ -68,8 +68,10 @@ def make_raw_line_spec(
     y: np.ndarray,
     x_label: str,
     y_label: str,
+    line_label: str | None = None,
+    stats: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    return {
+    spec = {
         "type": "raw_line",
         "name": str(name),
         "title": str(title),
@@ -78,6 +80,18 @@ def make_raw_line_spec(
         "x": _to_array(x).tolist(),
         "y": _to_array(y).tolist(),
     }
+    if line_label is not None and str(line_label).strip():
+        spec["line_label"] = str(line_label)
+    if isinstance(stats, dict):
+        out_stats = {}
+        for key in ("rmse", "median", "mean", "std"):
+            if key in stats:
+                value = float(stats[key])
+                if np.isfinite(value):
+                    out_stats[key] = value
+        if out_stats:
+            spec["stats"] = out_stats
+    return spec
 
 
 def make_trajectory_error_map_spec(
@@ -169,15 +183,57 @@ def _render_raw_line(spec: dict[str, Any], out_path: Path, dpi: int) -> None:
     n = min(x.size, y.size)
     if n <= 0:
         raise ValueError("raw_line figure has no data.")
-    plt.figure(figsize=(10.8, 4.8))
-    plt.plot(x[:n], y[:n], linewidth=1.4)
-    plt.title(str(spec.get("title", "Raw values")))
-    plt.xlabel(str(spec.get("x_label", "x")))
-    plt.ylabel(str(spec.get("y_label", "y")))
-    plt.grid(True, linestyle=":", alpha=0.5)
-    plt.tight_layout()
-    plt.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
-    plt.close()
+    fig = plt.figure(figsize=(10.8, 4.8))
+    ax = fig.add_subplot(111)
+    line_label = str(spec.get("line_label", "error"))
+    ax.plot(x[:n], y[:n], linewidth=1.4, color="gray", label=line_label)
+
+    stats = spec.get("stats", {})
+    if isinstance(stats, dict):
+        mean_v = float(stats.get("mean", np.nan))
+        std_v = float(stats.get("std", np.nan))
+        rmse_v = float(stats.get("rmse", np.nan))
+        median_v = float(stats.get("median", np.nan))
+
+        finite_x = np.asarray(x[:n], dtype=float)
+        finite_x = finite_x[np.isfinite(finite_x)]
+        if finite_x.size > 0 and np.isfinite(mean_v) and np.isfinite(std_v) and std_v >= 0.0:
+            x0 = float(np.min(finite_x))
+            x1 = float(np.max(finite_x))
+            ax.fill_between(
+                [x0, x1],
+                [mean_v - std_v, mean_v - std_v],
+                [mean_v + std_v, mean_v + std_v],
+                color="#7f6db0",
+                alpha=0.35,
+                label="std",
+            )
+        if np.isfinite(rmse_v):
+            ax.axhline(rmse_v, color="#3b6db1", linewidth=1.5, label="rmse")
+        if np.isfinite(median_v):
+            ax.axhline(median_v, color="#4ca45a", linewidth=1.5, label="median")
+        if np.isfinite(mean_v):
+            ax.axhline(mean_v, color="#c44747", linewidth=1.5, label="mean")
+
+    ax.set_title(str(spec.get("title", "Raw values")))
+    ax.set_xlabel(str(spec.get("x_label", "x")))
+    ax.set_ylabel(str(spec.get("y_label", "y")))
+    ax.grid(True, linestyle=":", alpha=0.5)
+    handles, labels = ax.get_legend_handles_labels()
+    ordered_handles = []
+    ordered_labels = []
+    for name in (line_label, "rmse", "median", "mean", "std"):
+        if name in labels:
+            idx = labels.index(name)
+            ordered_handles.append(handles[idx])
+            ordered_labels.append(labels[idx])
+    if ordered_handles:
+        ax.legend(ordered_handles, ordered_labels, loc="best")
+    else:
+        ax.legend(loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
+    plt.close(fig)
 
 
 def _render_trajectory_error_map(spec: dict[str, Any], out_path: Path, dpi: int) -> None:

@@ -15,7 +15,7 @@ import numpy as np
 from epa.core.evaluation import RELATION_UNITS
 
 _STATS_KEYS = ["rmse", "mean", "median", "std", "min", "max"]
-_STAGES = ("raw", "step2", "step3")
+_DEFAULT_STAGES = ("raw", "step2", "step3")
 
 
 def _safe_label(name: str) -> str:
@@ -42,6 +42,28 @@ def _extract_relation(
     return stats, errors, x_axis_arrays
 
 
+def _discover_stages(payload: dict) -> list[str]:
+    pose_metrics = payload.get("pose_metrics", {}) if isinstance(payload, dict) else {}
+    ape_block = pose_metrics.get("ape", {}) if isinstance(pose_metrics, dict) else {}
+    rpe_block = pose_metrics.get("rpe", {}) if isinstance(pose_metrics, dict) else {}
+    seen = set()
+    ordered = []
+    for stage in _DEFAULT_STAGES:
+        if (isinstance(ape_block, dict) and stage in ape_block) or (isinstance(rpe_block, dict) and stage in rpe_block):
+            ordered.append(stage)
+            seen.add(stage)
+    for blk in (ape_block, rpe_block):
+        if not isinstance(blk, dict):
+            continue
+        for stage in blk.keys():
+            if stage.startswith("_"):
+                continue
+            if stage not in seen:
+                ordered.append(stage)
+                seen.add(stage)
+    return ordered if ordered else list(_DEFAULT_STAGES[:3])
+
+
 def _pick_x(x_axis: dict[str, np.ndarray], errors: np.ndarray, x_dimension: str) -> tuple[np.ndarray, str]:
     if x_dimension == "seconds" and "seconds_from_start" in x_axis:
         x = x_axis["seconds_from_start"]
@@ -59,6 +81,97 @@ def _pick_x(x_axis: dict[str, np.ndarray], errors: np.ndarray, x_dimension: str)
     if n == 0:
         return np.array([], dtype=float), label
     return x[:n], label
+
+
+def _pose_relation_title_label(relation: str) -> str:
+    mapping = {
+        "translation_part": "translation part",
+        "rotation_part": "rotation part",
+        "rotation_angle_deg": "rotation angle (deg)",
+        "rotation_angle_rad": "rotation angle (rad)",
+        "point_distance": "point distance",
+        "full_transformation": "full transformation",
+    }
+    return mapping.get(str(relation), str(relation).replace("_", " "))
+
+
+def _stage_caption(stage: str) -> str:
+    stage_name = str(stage).lower()
+    if stage_name == "step3":
+        return "EPA Step-3 world alignment (SE(3) SVD)"
+    if stage_name == "step2":
+        return "after extrinsic calibration"
+    return "without alignment"
+
+
+def _plot_raw_with_stats(
+    *,
+    x_vals: np.ndarray,
+    errors: np.ndarray,
+    stats: dict[str, float],
+    title: str,
+    ylabel: str,
+    xlabel: str,
+    line_label: str,
+    out_path: Path,
+    keep_open: bool = False,
+) -> None:
+    n = min(x_vals.size, errors.size)
+    if n == 0:
+        return
+
+    x = np.asarray(x_vals[:n], dtype=float)
+    y = np.asarray(errors[:n], dtype=float)
+    fig = plt.figure(figsize=(11, 6.0))
+    ax = fig.add_subplot(111)
+    ax.plot(x, y, linewidth=1.4, color="gray", label=line_label)
+
+    mean_v = float(stats.get("mean", np.nan))
+    std_v = float(stats.get("std", np.nan))
+    rmse_v = float(stats.get("rmse", np.nan))
+    median_v = float(stats.get("median", np.nan))
+
+    finite_x = x[np.isfinite(x)]
+    if finite_x.size > 0 and np.isfinite(mean_v) and np.isfinite(std_v) and std_v >= 0.0:
+        x0 = float(np.min(finite_x))
+        x1 = float(np.max(finite_x))
+        ax.fill_between(
+            [x0, x1],
+            [mean_v - std_v, mean_v - std_v],
+            [mean_v + std_v, mean_v + std_v],
+            color="#7f6db0",
+            alpha=0.35,
+            label="std",
+        )
+    if np.isfinite(rmse_v):
+        ax.axhline(rmse_v, color="#3b6db1", linewidth=1.5, label="rmse")
+    if np.isfinite(median_v):
+        ax.axhline(median_v, color="#4ca45a", linewidth=1.5, label="median")
+    if np.isfinite(mean_v):
+        ax.axhline(mean_v, color="#c44747", linewidth=1.5, label="mean")
+
+    ax.set_title(title)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.grid(True, linestyle=":", alpha=0.5)
+
+    handles, labels = ax.get_legend_handles_labels()
+    ordered_handles = []
+    ordered_labels = []
+    for name in (line_label, "rmse", "median", "mean", "std"):
+        if name in labels:
+            idx = labels.index(name)
+            ordered_handles.append(handles[idx])
+            ordered_labels.append(labels[idx])
+    if ordered_handles:
+        ax.legend(ordered_handles, ordered_labels, loc="best")
+    else:
+        ax.legend(loc="best")
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=180, bbox_inches="tight")
+    if not keep_open:
+        plt.close(fig)
 
 
 def _plot_raw(
@@ -211,6 +324,7 @@ def generate_metric_plots(
     out_dir.mkdir(parents=True, exist_ok=True)
     produced: list[Path] = []
 
+    stages = _discover_stages(metrics_payload)
     for metric_kind, relation in (("ape", ape_relation), ("rpe", rpe_relation)):
         slug = _safe_label(relation)
         unit = RELATION_UNITS.get(relation, "")
@@ -219,7 +333,7 @@ def generate_metric_plots(
         stage_stats = []
         stage_errors = []
         x_label = "index"
-        for stage in _STAGES:
+        for stage in stages:
             stats, errors, x_axis = _extract_relation(metrics_payload, metric_kind, stage, relation)
             x_vals, x_label = _pick_x(x_axis, errors, x_dimension=x_dimension)
             traces.append((stage, x_vals, errors))
@@ -278,23 +392,51 @@ def generate_metric_plots(
         if violin_path.exists():
             produced.append(violin_path)
 
-    md_path = out_dir / "plots.md"
-    lines = [
-        "# Metric Plots",
-        "",
-        f"- APE relation: `{ape_relation}`",
-        f"- RPE relation: `{rpe_relation}`",
-        f"- x dimension: `{x_dimension}`",
-        "",
-    ]
-    for p in produced:
-        lines.append(f"## {p.name}")
-        lines.append("")
-        lines.append(f"![{p.name}]({p.name})")
-        lines.append("")
-    md_path.write_text("\n".join(lines), encoding="utf-8")
-    produced.append(md_path)
     return produced
+
+
+def generate_ape_stage_raw_plot(
+    metrics_payload: dict,
+    out_dir: Path,
+    ape_relation: str = "translation_part",
+    stage: str = "step3",
+    x_dimension: str = "seconds",
+    keep_open: bool = False,
+    file_name: str = "",
+) -> Path | None:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stats, errors, x_axis = _extract_relation(metrics_payload, "ape", stage, ape_relation)
+    if errors.size == 0:
+        return None
+    x_vals, x_label = _pick_x(x_axis, errors, x_dimension=x_dimension)
+    if x_vals.size == 0:
+        return None
+
+    unit = RELATION_UNITS.get(ape_relation, "")
+    ylabel = f"APE ({unit})" if unit else "APE"
+    relation_title = _pose_relation_title_label(ape_relation)
+    relation_with_unit = f"{relation_title} ({unit})" if unit else relation_title
+    title = f"APE w.r.t. {relation_with_unit}\n({_stage_caption(stage)})"
+    line_label = f"APE ({unit})" if unit else "APE"
+
+    if str(file_name).strip():
+        out_path = out_dir / str(file_name).strip()
+    else:
+        out_path = out_dir / f"ape_{_safe_label(ape_relation)}_{_safe_label(stage)}_raw.png"
+
+    _plot_raw_with_stats(
+        x_vals=x_vals,
+        errors=errors,
+        stats=stats if isinstance(stats, dict) else {},
+        title=title,
+        ylabel=ylabel,
+        xlabel=x_label,
+        line_label=line_label,
+        out_path=out_path,
+        keep_open=keep_open,
+    )
+    return out_path if out_path.exists() else None
 
 
 def aggregate_metric_results(

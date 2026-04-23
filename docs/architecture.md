@@ -8,7 +8,6 @@ The architecture is built around a few goals:
 
 - keep the main pipeline modular and testable
 - separate trajectory I/O, alignment logic, evaluation logic, and visualization
-- preserve compatibility with the historical `pipeline.py` entry point
 - support both one-off runs and reusable CLI tools
 
 ## High-Level Execution Flow
@@ -143,7 +142,7 @@ Core modules:
 CLI and tool modules:
 
 - `src/epa/cli.py`: main `epa` CLI parser
-- `src/epa/runner.py`: dispatch between modular and legacy execution
+- `src/epa/runner.py`: execute modular pipeline and dry-run preview
 - `src/epa/traj_tool.py`: trajectory inspection and export tool
 - `src/epa/ape_tool.py`: APE tool
 - `src/epa/rpe_tool.py`: RPE tool
@@ -177,25 +176,7 @@ Primary user-facing commands:
 - `epa_config`
 - `epa_fig`
 
-Compatibility entry point:
-
-- `python pipeline.py`
-
-The compatibility path is still available, but the core algorithm implementation now lives in `src/epa/core`.
-
-## Modular vs Legacy Execution
-
-`epa` currently supports two execution modes:
-
-- `--engine modular`
-- `--engine legacy`
-
-Behavior:
-
-- `modular` runs the actively maintained implementation in `src/epa/core/pipeline_modular.py`
-- `legacy` routes through `src/epa/bridge_legacy.py` and then invokes `pipeline.py`
-
-`pipeline.py` is now primarily a compatibility shim and import bridge for older command paths.
+`epa` runs the actively maintained modular implementation in `src/epa/core/pipeline_modular.py`.
 
 ## Data Loading Layer
 
@@ -243,7 +224,8 @@ Typical outputs:
 
 - `metrics.json`
 - `metrics_summary.csv`
-- `metrics_zh.md`
+- `report_zh.md`
+- `report_en.md`
 - `plots/*.png`
 - stage visualization figures
 - optional result bundle `.zip`

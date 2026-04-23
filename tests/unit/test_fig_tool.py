@@ -43,6 +43,10 @@ def test_ape_serialize_plot_and_rerender(tmp_path: Path) -> None:
     assert bundle.exists()
     saved = load_plot_bundle(bundle)
     assert len(saved["figures"]) == 2
+    raw = next(fig for fig in saved["figures"] if fig.get("name") == "raw")
+    assert raw.get("line_label") == "APE (m)"
+    assert isinstance(raw.get("stats"), dict)
+    assert {"rmse", "mean", "median", "std"}.issubset(set(raw["stats"].keys()))
 
     rerender_dir = tmp_path / "rerender_ape"
     fig_args = fig_tool.build_parser().parse_args([str(bundle), "--out_dir", str(rerender_dir)])
@@ -88,4 +92,3 @@ def test_rpe_serialize_plot_and_rerender(tmp_path: Path) -> None:
     assert fig_tool.run(fig_args) == 0
     assert (tmp_path / "rerender_raw.png").exists()
     assert (tmp_path / "rerender_map.png").exists()
-

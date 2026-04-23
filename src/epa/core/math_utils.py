@@ -35,7 +35,7 @@ def normalize_quat_array(quat):
     return quat / np.clip(norm, 1e-12, None)
 
 
-def normalize_time_to_seconds(t):
+def normalize_time_to_seconds(t, *, zero_start=True):
     t = np.asarray(t, dtype=float)
     if t.ndim != 1 or t.size < 2:
         raise ValueError("Timestamp sequence must be a 1D array with at least two points.")
@@ -55,7 +55,9 @@ def normalize_time_to_seconds(t):
     else:
         scale = 1.0
 
-    t_sec = (t - t[0]) / scale
+    t_sec = t / scale
+    if bool(zero_start):
+        t_sec = t_sec - t_sec[0]
     return t_sec
 
 
@@ -80,4 +82,3 @@ def relative_se3(a, b):
     out[:3, :3] = R_rel
     out[:3, 3] = t_rel
     return out
-
