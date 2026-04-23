@@ -636,21 +636,30 @@ def _build_user_alert(
     psr = float(time_metrics.get("xcorr_psr", np.nan))
     match_ratio = float(time_metrics.get("evo_matches_ratio_equivalent", np.nan))
     omega_gain = float(time_metrics.get("omega_rmse_improve_pct", np.nan))
+    offset_est = float(time_metrics.get("offset_est_s", np.nan))
     step3_rmse = float(traj_metrics.get("ate_rmse_step3_m", np.nan))
     improve_pct = float(traj_metrics.get("ate_rmse_improve_raw_to_step3_pct", np.nan))
+    strong_final_alignment = (
+        np.isfinite(step3_rmse)
+        and np.isfinite(improve_pct)
+        and step3_rmse <= 0.3
+        and improve_pct >= 80.0
+    )
 
     if (np.isfinite(peak) and peak < 0.75) or (np.isfinite(psr) and psr < 6.0):
         issues.append("time_alignment_low_confidence")
     if np.isfinite(match_ratio) and match_ratio < 0.5:
         issues.append("time_overlap_low")
-    if np.isfinite(omega_gain) and omega_gain < 5.0:
+    if np.isfinite(omega_gain) and omega_gain < 5.0 and np.isfinite(offset_est) and abs(offset_est) > 0.02:
         issues.append("time_alignment_weak_gain")
     if quality_label == "partial_align":
-        issues.append("alignment_partial")
+        if not strong_final_alignment:
+            issues.append("alignment_partial")
     elif quality_label == "poor_align":
         issues.append("alignment_poor")
     if rigid_label != "rigidly_alignable":
-        issues.append("single_rigid_transform_may_not_fit")
+        if not strong_final_alignment:
+            issues.append("rigid_diagnostic_flag")
     rigid_reason_tokens = {tok.strip() for tok in str(rigid_reasons).split(",") if tok.strip()}
     if "scale_mismatch_severe" in rigid_reason_tokens:
         issues.append("scale_mismatch_severe")
@@ -659,11 +668,13 @@ def _build_user_alert(
     if np.isfinite(improve_pct) and improve_pct < 10.0:
         issues.append("step3_improvement_small")
 
+    if strong_final_alignment:
+        issues = [x for x in issues if x in {"scale_mismatch_severe", "step3_rmse_high"}]
+
     critical = any(
         item in issues
         for item in (
             "alignment_poor",
-            "single_rigid_transform_may_not_fit",
             "scale_mismatch_severe",
             "step3_rmse_high",
         )
@@ -686,14 +697,12 @@ def _build_user_alert(
         "time_alignment_weak_gain": "Limited improvement from time alignment",
         "alignment_partial": "Residual local misalignment remains",
         "alignment_poor": "Overall alignment quality is poor",
-        "single_rigid_transform_may_not_fit": "A single rigid transform may not explain the data",
+        "rigid_diagnostic_flag": "Rigid-diagnostic checks flagged potential model mismatch",
         "scale_mismatch_severe": "Severe scale mismatch between trajectory and ground truth",
         "step3_rmse_high": "High absolute Step-3 error",
         "step3_improvement_small": "Limited Step-3 improvement over raw",
     }
     reasons_en = [reason_map[item] for item in issues if item in reason_map]
-    if rigid_reasons:
-        reasons_en.append(f"Rigid diagnostics triggered: {rigid_reasons}")
 
     if level == "ok":
         message_en = "The result is stable overall; Step-3 output is reliable."
@@ -1583,24 +1592,6 @@ def run_pipeline_modular(args, script_dir: Path):
     rigid_alignability_label = str(rigid_alignability.pop("_rigid_alignability_label", "unknown"))
     rigid_alignability_reasons = str(rigid_alignability.pop("_rigid_alignability_reasons", ""))
 
-    print("\n--- RIGID ALIGNABILITY ---")
-    print(f"rigid_alignability_label: {rigid_alignability_label}")
-    if rigid_alignability_reasons:
-        print(f"rigid_alignability_reasons: {rigid_alignability_reasons}")
-    print_metric_block(
-        "RIGID ALIGNABILITY METRICS",
-        rigid_alignability,
-        unit_map={
-            "segment_local_se3_rmse_median_m": "m",
-            "segment_global_se3_rmse_median_m": "m",
-            "sim3_rmse_m": "m",
-            "sim3_gain_ratio": "ratio",
-            "path_length_ratio_sym": "ratio",
-            "bbox_diag_ratio_sym": "ratio",
-            "segment_global_local_rmse_ratio": "ratio",
-        },
-    )
-
     user_alert = _build_user_alert(
         time_metrics=time_metrics,
         traj_metrics=traj_metrics,
@@ -1618,11 +1609,6 @@ def run_pipeline_modular(args, script_dir: Path):
         print(f"alert_message: {alert_message}")
     if alert_reasons:
         print(f"alert_reasons: {alert_reasons}")
-    print_metric_block(
-        "USER ALERT METRICS",
-        user_alert,
-        unit_map={},
-    )
 
     piecewise_diag, piecewise_detail = _compute_piecewise_diagnostics(
         t_ref=t_gt,
@@ -1632,22 +1618,6 @@ def run_pipeline_modular(args, script_dir: Path):
         segment_duration_s=quality_segment_duration_s,
         overlap_ratio=quality_segment_overlap_ratio,
         min_samples=quality_min_segment_samples,
-    )
-
-    print("\n--- PIECEWISE DIAGNOSTICS (ANALYSIS ONLY) ---")
-    print_metric_block(
-        "PIECEWISE DIAGNOSTICS METRICS",
-        piecewise_diag,
-        unit_map={
-            "piecewise_global_rmse_median_m": "m",
-            "piecewise_local_rmse_median_m": "m",
-            "piecewise_gap_median_m": "m",
-            "piecewise_gap_p90_m": "m",
-            "piecewise_gap_max_m": "m",
-            "piecewise_peak_recovery_pct": "%",
-            "piecewise_early_late_delta_m": "m",
-            "piecewise_global_local_ratio_median": "ratio",
-        },
     )
 
     seg_t = np.asarray(piecewise_detail["segment_mid_s"], dtype=float)

@@ -754,7 +754,7 @@ def load_bag_trajectory(path, topic, bag_format="auto"):
         from rosbags.rosbag2 import Reader as Rosbag2Reader
         from rosbags.typesys import Stores, get_typestore
     except Exception as exc:
-        raise ImportError("Bag input requires rosbags. Install with: pip install 'epic-alignment[ros]'") from exc
+        raise ImportError("Bag input requires rosbags. Install with: pip install 'epica[ros]'") from exc
 
     bag_kind = _infer_bag_kind(path) if bag_format == "auto" else bag_format
     if bag_kind not in {"bag", "bag2", "mcap"}:

@@ -1,7 +1,7 @@
 from argparse import Namespace
 from pathlib import Path
 
-from .config import PipelineOptions, project_root_from_file
+from .config import PipelineOptions
 from .core.pipeline_modular import run_pipeline_modular
 
 
@@ -36,7 +36,7 @@ def run(ns: Namespace) -> int:
         plot_rpe_relation=getattr(ns, "plot_rpe_relation", "translation_part"),
         save_results=getattr(ns, "save_results", "") or "",
     )
-    repo_root = project_root_from_file(Path(__file__))
+    invocation_root = Path.cwd().resolve()
     if bool(getattr(ns, "dry_run", False)):
         print("Dry run command:")
         print(
@@ -45,5 +45,5 @@ def run(ns: Namespace) -> int:
         )
         return 0
 
-    run_pipeline_modular(ns, script_dir=repo_root)
+    run_pipeline_modular(ns, script_dir=invocation_root)
     return 0

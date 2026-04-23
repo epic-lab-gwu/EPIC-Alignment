@@ -1,419 +1,118 @@
-# Epic Alignment (epa)
-2026/4/21
-找到了一些不能正常对齐的case, 正在解决
+# EPIC-Alignment (epica)
 
-2026/4/15
+`epica` is a trajectory alignment and evaluation toolkit.
 
-完善了文档, 内容更完整, 加了点配色, 代码块, 数学公式块
+It provides:
 
----
-2026/4/14
+- 3-step alignment pipeline (time offset, extrinsic, world alignment)
+- a set of CLI tools (`traj`, `ape`, `rpe`, `res`, `config`)
+- OpenVINS compatibility entrypoints
+- optional plotting and rerun-based visualization
 
-解决了昨天大部分todo, 代码已推送, 文档已部署至[Documentation website](https://epic-lab-gwu.github.io/epa/)
+## Installation
 
----
-2026/4/13
-
-参考evo, 给epa
-1. 补齐了工具链的接口
-2. 做了可安装化: pyproject.toml + entry points
-3. 加了各种指标的可视化和绘图
-4. 配置好了rerun, 增加了一些细节(增加轨迹说明标签, 只对step3轨迹做渐变色映射)
-5. 增加了一些todo:
-
-- [x] 起个名字, 方便代码统一
-- [x] 弄得差不多了, 可以做个wiki网站, 然后完善一下readme
-
----
-2026/4/12
-1. 扩展了输入格式, 但有一些格式还没实测能否work, 比如rosbag
-2. 优化了部分代码结构, 今天晚点上传
-3. evo的time offset换成非epa的offset, 重新跑了师兄给的case, 结果更新至summary.md
-4. 总共跑出来的有138个case, 有一些case fail了, 后面再看看原因; 有一些case没有匹配到对应的ground truth和estimation, 没跑
-
----
-2026/4/10
-
-## TODO:
-
-- [x] 重写了项目结构, 使其易于扩展和复用;
-- [x] 把evo的metrics加了进来, 再看看有什么可以新增的metrics;
-- [x] 用现在的epa和evo分别跑了alignanything, 结果在epa/summary_final.md;
-- [x] evo支持更多的格式输入, vicon后面可以加上 # 4/12
-- [x] 可考虑模仿evo, 补齐成一个完整的工具链cli # 4/13
-- [x] 指标可视化支持 rerun（APE/RPE/traj/3-step） # 4/13
-- [x] rerun 配置补齐（工具入口支持 `--rerun` 与 `--rerun-rec-id`） # 4/13
-- [x] 现在evo的结果用了epa的offset, 后面可以改成人工sweep最优 # 4/12
-
----
-`epa` 是一个轨迹对齐与评估工具集，包含：
-
-- 三步对齐主流程（时间对齐 -> 外参求解 -> 世界系对齐）
-- evo 风格的轨迹工具链（`traj / ape / rpe / res / config`）
-- 可选的 Rerun 可视化
-- AlignAnything 独立 benchmark harness
-
-核心算法代码在 `src/epa/core`。
-
-## 安装
+Create and activate a virtual environment first (recommended):
 
 ```bash
-pip install -e .
+conda create -n epa python=3.10 -y
+conda activate epa
 ```
 
-可选依赖：
+Then install:
 
 ```bash
-# Rerun 可视化
-pip install -e .[rerun]
-
-# bag / bag2 / mcap
-pip install -e .[ros]
-
-# 地图底图（contextily）
-pip install -e .[geo]
-
-# 开发与测试
-pip install -e .[dev]
-
-# IPython 交互入口（可选）
-pip install -e .[ipython]
+pip install epica
 ```
 
-## 命令入口
-
-安装后可直接使用：
-
-- `epa`
-- `epa_traj`
-- `epa_ape`
-- `epa_rpe`
-- `epa_fig`
-- `epa_res`
-- `epa_config`
-- `epa_benchmark`
-- `epa_case_rerun`
-- `epa_rerun`
-- `epa_plot_summary`
-- `epa_latex_summary`
-- `epa_metric_res`
-- `epa_ipython`
-
-## 快速开始
-
-### 1) 三步主流程（modular engine）
+Optional extras:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv data/gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
-  --est-format tum \
-  --t-max-diff 0.02 \
-  --plot
+pip install "epica[rerun]"  # rerun visualization
+pip install "epica[ros]"    # bag / bag2 / mcap support
+pip install "epica[geo]"    # map-related tools
 ```
 
-启用 Rerun：
+## Quick Start
+
+For General Workspace:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv data/gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
-  --est-format tum \
-  --t-max-diff 0.02 \
-  --plot \
-  --rerun
+epa --gt-csv <gt_file> --gt-format <gt_format> --est-path <est_file> --est-format <est_format> --plot
 ```
 
-### 2) 轨迹工具 `epa_traj`
+OpenVINS examples:
+
+Single case:
 
 ```bash
-# 轨迹对比绘图
-epa_traj --format tum --plot --plot-mode xz gt.tum est.tum
-
-# evo 风格子命令也兼容
-epa_traj tum gt.tum est.tum --plot
-
-# bag 的 evo 风格 topics 位置参数也兼容
-epa_traj bag /path/run.bag /vicon/pose /odom --plot
-
-# 交互式窗口（evo 风格）
-epa_traj --format tum --plot --plot-interactive --plot-backend qtagg gt.tum est.tum
-
-# 对齐与同步
-epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot
-
-# 导出格式
-epa_traj --format auto --save-as tum --out-dir outputs/traj_exports traj_a traj_b
+epa_openvins /path/to/case_dir se3 --keep-output
 ```
 
-### 3) APE / RPE 工具
+Multiple cases:
 
 ```bash
-# APE
-epa_ape tum gt.tum est.tum \
-  --pose_relation trans_part \
-  --align \
-  --t_max_diff 0.02 \
-  --plot --plot_mode xz
-
-# RPE
-epa_rpe tum gt.tum est.tum \
-  --pose_relation trans_part \
-  --delta 1 --delta_unit f \
-  --all_pairs \
-  --align \
-  --plot --plot_mode xz
-
-# 若需要交互式窗口，可附加：
-# --plot 默认在 TTY 终端会尝试弹交互窗口（evo 风格）；
-# 也可显式指定：--plot-interactive --plot-backend qtagg
+epa_openvins /path/to/case_a /path/to/case_b --align-mode se3
 ```
 
-### 4) 结果对比 `epa_res`
+Run from OpenVINS repo root:
 
 ```bash
-epa_res outputs/results/run_a.zip outputs/results/run_b.zip \
-  --metric all --stage step3 --plot --out-dir outputs/res_compare
-
-# 交互式窗口
-epa_res outputs/results/run_a.zip outputs/results/run_b.zip \
-  --metric all --stage step3 --plot --plot-interactive --plot-backend qtagg
-
-# 也支持 evo 原生结果包（info.json + stats.json + error_array.npz）
-epa_res /home/yifu/evo/test/data/res_files/orb_ape.zip \
-             /home/yifu/evo/test/data/res_files/sptam_ape.zip \
-             --metric ape --ape-relation trans_part --plot
+epa_openvins ./ov_eval/example none --keep-output
 ```
 
-### 5) 图序列化与重绘 `epa_fig`
+Each case directory should contain:
 
-```bash
-# 先在 ape/rpe 中序列化绘图规格
-epa_ape tum gt.tum est.tum \
-  --pose_relation trans_part \
-  --serialize_plot outputs/ape_plot.json
+- `stamped_groundtruth.txt`
+- `stamped_traj_estimate.txt`
 
-# 后续可独立重绘（不重算指标）
-epa_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
-```
+## Outputs
 
-### 6) 全局配置 `epa_config`
+Each run generates a run folder with:
 
-```bash
-# 根级默认（所有工具都可继承）
-epa_config set plot false rpe_delta 3
-
-# 工具级默认（更细粒度，推荐）
-epa_config set --tool epa_ape plot_mode xy t_max_diff 0.05
-epa_config set --tool epa_traj plot_mode xyz sync_max_diff 0.01
-
-# 查看某个工具生效配置（global + tool 合并后）
-epa_config show --tool epa_ape
-
-epa_config show
-epa_config unset plot
-```
-
-## 配置系统
-
-所有核心工具支持 `--config <file.json>`。
-
-优先级（高 -> 低）：
-
-1. `--config` 文件
-2. CLI 参数
-3. `epa_config` 全局配置
-
-生成模板：
-
-```bash
-epa_config generate --tool epa_ape --out ape_config.json
-```
-
-也支持分层配置（类似 evo settings）：
-
-```json
-{
-  "_global": {
-    "plot": true
-  },
-  "epa_ape": {
-    "plot_mode": "xy",
-    "t_max_diff": 0.05
-  },
-  "epa_traj": {
-    "plot_mode": "xyz",
-    "sync_max_diff": 0.01
-  }
-}
-```
-
-## 支持输入格式
-
-主流程与工具链支持：
-
-- `auto`
-- `csv` / `euroc`
-- `tum`
-- `kitti`
-- `bag`（ROS1）
-- `bag2` / `mcap`（ROS2）
-
-bag 读取时可指定 topic：
-
-```bash
-epa \
-  --gt-csv /path/to/run.bag --gt-format bag --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag --est-format bag --est-topic /odom
-```
-
-TF 语法也支持：
-
-```bash
---est-topic /tf:map.base_link
-```
-
-## Rerun 说明
-
-`epa` / `traj` / `ape` / `rpe` 都支持 `--rerun`。
-
-常用参数：
-
-- `--rerun`
-- `--rerun-rec-id <id>`
-- `--rerun-no-spawn`
-- `--rerun-stride N`
-- `--rerun-motion-stride N`
-
-说明：行为与 evo 一致，默认仅 viewer logging，不自动写 `.rrd`。
-
-## IPython 入口
-
-```bash
-# 进入预加载 epa 模块的 IPython
-epa_ipython
-
-# 先查看预加载符号
-epa_ipython --list
-```
-
-## Benchmark（AlignAnything）
-
-建议把数据集放在仓库外，例如：`/home/yifu/epa_data`。
-
-```bash
-export EPA_DATA_ROOT=/home/yifu/epa_data
-```
-
-运行独立 benchmark harness（`epa` 与 `evo` 独立运行，offset 不共享）：
-
-```bash
-epa_benchmark \
-  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/epa \
-  --evo-repo /home/yifu/evo
-```
-
-从 harness 的 `summary.csv` 生成图：
-
-```bash
-epa_plot_summary \
-  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
-```
-
-从 harness 的 `summary.csv` 生成可直接放论文的 LaTeX 表格：
-
-```bash
-epa_latex_summary \
-  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
-```
-
-输出目录默认是 `<summary_dir>/paper_tables/`，包含：
-
-- `main_table.tex`：正文短表（超长时自动抽样压缩）
-- `dataset_table.tex`：按数据集聚合表
-- `appendix_full_table.tex`：完整长表（适合附录）
-
-在论文里使用（两种方式）：
-
-1. 方式 A：拖入 Overleaf
-
-- 把 `paper_tables/*.tex` 拖到 Overleaf 项目根目录（或子目录）
-- 在论文主文件导言区加：`\usepackage{booktabs}` 和 `\usepackage{longtable}`
-- 在正文中插入（若你放在子目录，例如 `tables/`，则用 `\input{tables/main_table.tex}` 这种相对路径）：
-
-```tex
-% 主文短表
-\input{main_table.tex}
-
-% 数据集聚合表
-\input{dataset_table.tex}
-
-% 附录长表
-\input{appendix_full_table.tex}
-```
-
-2. 方式 B：复制粘贴
-
-- 直接打开对应 `.tex` 文件，复制表格代码并粘贴到论文正文/附录位置
-- 同样需要在导言区加入：`\usepackage{booktabs}` 和 `\usepackage{longtable}`
-- `main_table.tex` 与 `dataset_table.tex` 是 `table` 环境，`appendix_full_table.tex` 是 `longtable` 环境
-
-## 输出目录
-
-典型输出：
-
-- 主流程：`outputs/run_YYYYmmdd_HHMMSS/`
-- traj：`outputs/traj_tool/run_YYYYmmdd_HHMMSS/`
-- ape：`outputs/ape/run_YYYYmmdd_HHMMSS/`
-- rpe：`outputs/rpe/run_YYYYmmdd_HHMMSS/`
-- res：`outputs/res/run_YYYYmmdd_HHMMSS/`
-- harness：`outputs/alignanything_harness/run_YYYYmmdd_HHMMSS/`
-
-主流程目录常见文件：
-
+- `plots/`
 - `metrics.json`
 - `metrics_summary.csv`
-- `report_zh.md`
 - `report_en.md`
-- `plots/*.png`
+- `report_zh.md`
 
-## 代码结构
+## Benchmark LaTeX Tables
 
-```text
-epa/
-├── pyproject.toml
-├── src/epa/
-│   ├── cli.py                     # epa 主 CLI
-│   ├── runner.py                  # engine 分发
-│   ├── config.py                  # PipelineOptions
-│   ├── config_cli.py              # --config / 全局配置注入
-│   ├── config_tool.py             # epa_config
-│   ├── traj_tool.py               # epa_traj
-│   ├── ape_tool.py                # epa_ape
-│   ├── rpe_tool.py                # epa_rpe
-│   ├── metric_cli_common.py       # APE/RPE 共享 CLI 逻辑
-│   ├── core/
-│   │   ├── pipeline_modular.py    # modular 三步主流程
-│   │   ├── time_alignment.py
-│   │   ├── calibration.py
-│   │   ├── evaluation.py
-│   │   ├── math_utils.py
-│   │   └── io_utils.py
-│   ├── viz/
-│   │   ├── rerun_viz.py           # Rerun logging
-│   │   └── metric_plots.py        # 指标绘图/聚合图
-│   └── benchmark/
-│       ├── alignanything_harness.py
-│       ├── plot_summary.py
-│       ├── metrics_res.py
-│       └── res.py                 # epa_res
-├── docs/
-│   ├── architecture.md
-│   └── evaluation_inputs.md
-└── tests/
-    ├── unit/
-    └── smoke/
+For benchmark summary CSV files, generate paper tables with:
+
+```bash
+epa_latex_summary --summary-csv /path/to/summary.csv
 ```
+
+This creates:
+
+- `main_table.tex`
+- `dataset_table.tex`
+- `appendix_full_table.tex`
+
+
+## Full CLI Toolchain
+
+- `epa` / `epica` / `epic-alignment`: Run the main 3-step EPA pipeline for alignment and metric export; usage: `epa --gt-csv gt.tum --gt-format tum --est-path est.tum --est-format tum --plot`.
+- `epa_config`: Manage global or per-tool default config values; usage: `epa_config set --tool epa_ape plot_mode xy`.
+- `epa_ape`: Compute APE in EVO-style format with optional alignment and plots; usage: `epa_ape tum gt.tum est.tum --align --plot`.
+- `epa_rpe`: Compute RPE in EVO-style format with configurable delta settings; usage: `epa_rpe tum gt.tum est.tum --delta 1 --delta_unit f --plot`.
+- `epa_traj`: Compare, align, sync, and visualize trajectories in EVO-style workflow; usage: `epa_traj tum gt.tum est.tum --sync --align --plot`.
+- `epa_fig`: Re-render saved plotting specs without recomputing metrics; usage: `epa_fig outputs/ape_plot.json --save_plot outputs/ape.png`.
+- `epa_res`: Compare multiple result bundles or EVO zip results; usage: `epa_res run_a.zip run_b.zip --metric all --plot`.
+- `epa_benchmark`: Run batch benchmark harness for EPA/EVO-style comparison over many cases; usage: `epa_benchmark --cases-csv cases.csv --out-dir outputs/bench`.
+- `epa_plot_summary`: Generate benchmark summary figures from harness outputs; usage: `epa_plot_summary --summary-csv outputs/bench/run_xxx/summary.csv`.
+- `epa_latex_summary`: Generate paper-ready LaTeX tables from benchmark `summary.csv`; usage: `epa_latex_summary --summary-csv outputs/bench/run_xxx/summary.csv`.
+- `epa_metric_res`: Aggregate or compare one or more `metrics.json` files directly; usage: `epa_metric_res --inputs run1/metrics.json run2/metrics.json`.
+- `epa_case_rerun` / `epa_rerun`: Replay one case with rerun-based visual diagnostics; usage: `epa_case_rerun --case-json outputs/bench/run_xxx/cases_json/case_001.json`.
+- `epa_ipython`: Launch EPA tools in IPython-friendly entry mode; usage: `epa_ipython`.
+- `epa_ov_eval`: OpenVINS `ov_eval` compatibility umbrella entrypoint; usage: `epa_ov_eval --help`.
+- `epa_ov_format_converter`: Convert trajectory formats in `ov_eval`-compatible style; usage: `epa_ov_format_converter --help`.
+- `epa_ov_plot_trajectories`: Plot trajectories in `ov_eval`-compatible style; usage: `epa_ov_plot_trajectories --help`.
+- `epa_ov_error_singlerun`: Run single-run error evaluation in `ov_eval`-compatible style; usage: `epa_ov_error_singlerun --help`.
+- `epa_ov_error_dataset`: Run dataset-level error summary in `ov_eval`-compatible style; usage: `epa_ov_error_dataset --help`.
+- `epa_ov_error_comparison`: Run algorithm comparison summary in `ov_eval`-compatible style; usage: `epa_ov_error_comparison --help`.
+- `epa_openvins`: Run EPA on one or multiple OpenVINS case folders with minimal integration flow; usage: `epa_openvins /path/to/case_dir se3 --keep-output`.
+
+## Project Links
+
+- Source and full project docs: https://github.com/epic-lab-gwu/epa
