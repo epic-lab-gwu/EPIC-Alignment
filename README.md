@@ -115,4 +115,4 @@ This creates:
 
 ## Project Links
 
-- Source and full project docs: https://github.com/epic-lab-gwu/epa
+- Source and full project docs: https://epic-lab-gwu.github.io/epa/
