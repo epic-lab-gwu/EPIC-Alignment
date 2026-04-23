@@ -115,4 +115,4 @@ This creates:
 
 ## Project Links
 
-- Source and full project docs: https://epic-lab-gwu.github.io/epa/
+- Source and full project docs: [Docs](https://epic-lab-gwu.github.io/EPIC-Alignment/)
