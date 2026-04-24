@@ -1236,7 +1236,6 @@ def run_pipeline_modular(args, script_dir: Path):
         )
 
     match_diag = _count_matches_for_offset(calculated_offset)
-    match_count = int(match_diag["match_count"])
     match_ratio_global = float(match_diag["ratio_global"])
     match_ratio_overlap = float(match_diag["ratio_overlap"])
     match_ratio_gate = float(match_diag["ratio_gate"])
@@ -1258,14 +1257,12 @@ def run_pipeline_modular(args, script_dir: Path):
             fallback_offset = float(offsets_s[zero_peak_idx])
 
         fallback_diag = _count_matches_for_offset(fallback_offset)
-        fallback_count = int(fallback_diag["match_count"])
         fallback_ratio_global = float(fallback_diag["ratio_global"])
         fallback_ratio_overlap = float(fallback_diag["ratio_overlap"])
         fallback_ratio_gate = float(fallback_diag["ratio_gate"])
         if fallback_ratio_gate >= offset_min_match_ratio:
             calculated_offset = fallback_offset
             peak_idx = zero_peak_idx
-            match_count = fallback_count
             match_ratio_global = fallback_ratio_global
             match_ratio_overlap = fallback_ratio_overlap
             match_ratio_gate = fallback_ratio_gate

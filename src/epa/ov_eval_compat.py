@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 from pathlib import Path
 

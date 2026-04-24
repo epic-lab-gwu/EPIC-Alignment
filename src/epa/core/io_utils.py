@@ -392,6 +392,25 @@ def _collect_plot_images(output_dir: Path) -> list[Path]:
     return images
 
 
+def _infer_case_name(metadata: dict) -> str:
+    gt_path = Path(str(metadata.get("gt_path", "") or "")).expanduser()
+    est_path = Path(str(metadata.get("est_path", "") or "")).expanduser()
+
+    gt_name = gt_path.name
+    est_name = est_path.name
+
+    if gt_name.endswith("__gt.tum"):
+        return gt_name[: -len("__gt.tum")]
+    if est_name.endswith("__est.tum"):
+        return est_name[: -len("__est.tum")]
+
+    if gt_name:
+        return gt_path.stem
+    if est_name:
+        return est_path.stem
+    return "unknown_case"
+
+
 def _append_report_metrics_zh(lines: list[str], metrics_payload: dict) -> None:
     for section, block in metrics_payload.items():
         if not isinstance(block, dict):
@@ -437,9 +456,10 @@ def write_run_reports(output_dir, metrics_payload):
     output_dir = Path(output_dir)
     metadata = metrics_payload.get("metadata", {}) if isinstance(metrics_payload, dict) else {}
     images = _collect_plot_images(output_dir)
+    case_name = _infer_case_name(metadata if isinstance(metadata, dict) else {})
 
     zh_lines = [
-        "# EPA 运行报告（中文）",
+        f"# EPA 运行报告（中文）: {case_name}",
         "",
         "本文件自动生成，汇总本次运行的关键指标与全部图片输出。",
         "",
@@ -477,7 +497,7 @@ def write_run_reports(output_dir, metrics_payload):
             zh_lines.append("")
 
     en_lines = [
-        "# EPA Run Report (English)",
+        f"# EPA Run Report (English): {case_name}",
         "",
         "Auto-generated report with key metrics and all generated figures.",
         "",

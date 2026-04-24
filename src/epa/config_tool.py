@@ -75,7 +75,7 @@ def _generate_template(tool_name: str) -> dict:
         return getattr(mod, fn_name)
 
     builders = {
-        "epa": "pipeline:build_parser",
+        "epa": "epa.cli:build_parser",
         "epa_traj": "epa.traj_tool:build_parser",
         "epa_res": "epa.benchmark.res:build_parser",
         "epa_metric_res": "epa.benchmark.metrics_res:build_parser",
@@ -285,15 +285,8 @@ def run(args: argparse.Namespace) -> int:
             return 0
         if not bool(getattr(args, "y", False)):
             raise ValueError("Full reset requires -y acknowledgement.")
-        if defaults:
-            _save_settings(cfg_path, defaults)
-            print(f"Saved defaults: {cfg_path}")
-        else:
-            if cfg_path.exists():
-                cfg_path.unlink()
-                print(f"Removed: {cfg_path}")
-            else:
-                print(f"No settings file: {cfg_path}")
+        _save_settings(cfg_path, defaults)
+        print(f"Saved defaults: {cfg_path}")
         return 0
 
     if args.cmd == "generate":
