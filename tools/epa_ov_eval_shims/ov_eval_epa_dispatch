@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+prog="$(basename "$0")"
+python_bin="${EPA_PYTHON:-python}"
+
+case "$prog" in
+  format_converter|error_singlerun|error_dataset|error_comparison|plot_trajectories)
+    exec "$python_bin" -m epa.ov_eval_compat "$prog" "$@"
+    ;;
+  epa_ov_eval_shim)
+    if [[ $# -lt 1 ]]; then
+      echo "Usage: epa_ov_eval_shim <command> [args...]" >&2
+      echo "Commands: format_converter error_singlerun error_dataset error_comparison plot_trajectories" >&2
+      exit 2
+    fi
+    cmd="$1"
+    shift
+    exec "$python_bin" -m epa.ov_eval_compat "$cmd" "$@"
+    ;;
+  *)
+    echo "Unsupported shim name: $prog" >&2
+    exit 2
+    ;;
+esac
