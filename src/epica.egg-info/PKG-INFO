@@ -21,8 +21,7 @@ Requires-Dist: ruff>=0.6; extra == "dev"
 Provides-Extra: ipython
 Requires-Dist: ipython>=8.0; extra == "ipython"
 
-# EPIC-Alignment (EPICA)
-
+# EPICA: Epic Trajectory Alignment and Evaluation Toolkit
 `EPICA` is a trajectory alignment and evaluation toolkit.
 
 It provides:
