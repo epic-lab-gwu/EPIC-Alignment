@@ -20,7 +20,7 @@ This page does not document estimator source code. It tracks the evaluation-side
 
 The estimator itself is maintained outside `epa`, but one of its exported trajectory results is stored here:
 
-- `outputs/traj_estimate_v1_01.txt`
+- `example_data/example_estimation.txt`
 
 Typical workflow:
 
@@ -34,8 +34,8 @@ For example:
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum \
   --t-max-diff 0.02 \
   --plot
@@ -51,7 +51,7 @@ In this setup:
 
 | file | format | source estimator | dataset hint | notes |
 |---|---|---|---|---|
-| `outputs/traj_estimate_v1_01.txt` | `tum` | `sqrtVINS` (external workspace) | EuRoC `V1_01_easy` | Used by repository examples and quick-start style runs |
+| `example_data/example_estimation.txt` | `tum` | `sqrtVINS` (external workspace) | EuRoC `V1_01_easy` | Used by repository examples and quick-start style runs |
 
 ## Usage in This Repository
 

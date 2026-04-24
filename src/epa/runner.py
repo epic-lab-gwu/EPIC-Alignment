@@ -7,7 +7,7 @@ from .core.pipeline_modular import run_pipeline_modular
 
 def run(ns: Namespace) -> int:
     opts = PipelineOptions(
-        gt_csv=getattr(ns, "gt_csv", "data/gt.csv"),
+        gt_csv=getattr(ns, "gt_csv", "example_data/example_groundtruth.csv"),
         gt_format=getattr(ns, "gt_format", "csv"),
         gt_topic=getattr(ns, "gt_topic", "") or "",
         est_path=getattr(ns, "est_path", "") or "",

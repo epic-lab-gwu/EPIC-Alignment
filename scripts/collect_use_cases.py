@@ -295,7 +295,7 @@ def _collect_alignanything_rows(align_root: Path) -> tuple[list[dict], list[dict
                 "gt_path": str(case.gt_path),
                 "est_path": str(case.est_path),
                 "run_hint": (
-                    "epa_benchmark --alignanything-root "
+                    "epa_bench --cases-root "
                     f"{align_root} --case-pattern ^{case.case_id}$ --limit 1"
                 ),
                 "notes": "auto-discovered by epa benchmark harness",
@@ -429,7 +429,9 @@ def _write_idea_markdown(path: Path, ideas: list[dict]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect local and potential EPA use cases into epa_data.")
     parser.add_argument(
+        "--cases-root",
         "--alignanything-root",
+        dest="alignanything_root",
         default="/home/yifu/epa_data/AlignAnything/AlignAnything",
         help="Path containing benchmark/ and GT/.",
     )
@@ -516,7 +518,7 @@ def main() -> int:
         "## Files",
         "",
         "- `local_use_cases.csv`: 本机可直接使用或快速改造的 use cases",
-        "- `alignanything_unresolved.csv`: AlignAnything 中尚未匹配 GT 的条目",
+        "- `alignanything_unresolved.csv`: cases root 中尚未匹配 GT 的条目",
         "- `potential_use_cases.md`: 跨领域候选场景池",
         "- `summary.json`: 统计摘要",
         "",

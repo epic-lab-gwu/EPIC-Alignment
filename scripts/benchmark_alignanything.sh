@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if command -v epa_bench >/dev/null 2>&1; then
+  exec epa_bench "$@"
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="${ROOT_DIR}/src:${PYTHONPATH:-}"
 export EPA_DATA_ROOT="${EPA_DATA_ROOT:-$HOME/epa_data}"

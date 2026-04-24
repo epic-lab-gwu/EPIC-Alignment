@@ -132,46 +132,50 @@ def _resolve_gt_for_case(gt_root: Path, rel_pose: Path, sequence: str) -> Path |
     return None
 
 
-def _format_alignanything_root_error(
-    alignanything_root: Path,
+def _format_cases_root_error(
+    cases_root: Path,
     *,
     missing_entries: list[str],
 ) -> str:
     env_data_root = os.getenv("EPA_DATA_ROOT", "").strip() or "(unset)"
-    env_align_root = os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip() or "(unset)"
+    env_cases_root = (
+        os.getenv("EPA_CASES_ROOT", "").strip()
+        or os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip()
+        or "(unset)"
+    )
     suggested_data_root = _default_data_root()
-    suggested_align_root = Path(_default_alignanything_root()).expanduser()
+    suggested_cases_root = Path(_default_cases_root()).expanduser()
 
-    detail_lines = [f"- Missing required path: {alignanything_root / entry}" for entry in missing_entries]
-    if not alignanything_root.exists():
-        detail_lines.insert(0, f"- Base path does not exist: {alignanything_root}")
+    detail_lines = [f"- Missing required path: {cases_root / entry}" for entry in missing_entries]
+    if not cases_root.exists():
+        detail_lines.insert(0, f"- Base path does not exist: {cases_root}")
 
     cmd_example = (
-        "epa_benchmark "
-        f"--alignanything-root {suggested_align_root} "
+        "epa_bench "
+        f"--cases-root {suggested_cases_root} "
         "--repo-root /path/to/epa"
     )
 
     lines = [
-        f"Invalid --alignanything-root: {alignanything_root}",
-        "Expected an AlignAnything root containing both benchmark/ and GT/.",
+        f"Invalid --cases-root: {cases_root}",
+        "Expected a cases root containing both benchmark/ and GT/.",
         *detail_lines,
         "",
         "Current environment:",
         f"- EPA_DATA_ROOT={env_data_root}",
-        f"- EPA_ALIGNANYTHING_ROOT={env_align_root}",
+        f"- EPA_CASES_ROOT={env_cases_root}",
         "",
         "Example fix:",
         f"  export EPA_DATA_ROOT={suggested_data_root}",
-        f"  export EPA_ALIGNANYTHING_ROOT={suggested_align_root}",
+        f"  export EPA_CASES_ROOT={suggested_cases_root}",
         f"  {cmd_example}",
     ]
     return "\n".join(lines)
 
 
-def discover_cases(alignanything_root: Path) -> tuple[list[BenchmarkCase], list[dict[str, str]]]:
-    bench_root = alignanything_root / "benchmark"
-    gt_root = alignanything_root / "GT"
+def discover_cases(cases_root: Path) -> tuple[list[BenchmarkCase], list[dict[str, str]]]:
+    bench_root = cases_root / "benchmark"
+    gt_root = cases_root / "GT"
     missing_entries: list[str] = []
     if not bench_root.exists():
         missing_entries.append("benchmark")
@@ -179,8 +183,8 @@ def discover_cases(alignanything_root: Path) -> tuple[list[BenchmarkCase], list[
         missing_entries.append("GT")
     if missing_entries:
         raise FileNotFoundError(
-            _format_alignanything_root_error(
-                alignanything_root=alignanything_root,
+            _format_cases_root_error(
+                cases_root=cases_root,
                 missing_entries=missing_entries,
             )
         )
@@ -566,7 +570,7 @@ def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
     total = len(rows)
     both_ok = sum(1 for row in rows if row.get("status") == "ok")
     lines = [
-        "# AlignAnything Independent Benchmark",
+        "# EPA Independent Benchmark",
         "",
         f"- total cases: {total}",
         f"- both_ok: {both_ok}",
@@ -643,8 +647,8 @@ def _default_data_root() -> Path:
     return Path(os.getenv("EPA_DATA_ROOT", "~/epa_data")).expanduser()
 
 
-def _default_alignanything_root() -> str:
-    override = os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip()
+def _default_cases_root() -> str:
+    override = os.getenv("EPA_CASES_ROOT", "").strip() or os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip()
     if override:
         return override
     return str(_default_data_root() / "AlignAnything" / "AlignAnything")
@@ -657,19 +661,37 @@ def _resolve_cli_path(path_str: str, repo_root: Path) -> Path:
     return (repo_root / p).resolve()
 
 
+def _safe_root_label(path: Path) -> str:
+    name = path.expanduser().resolve().name.strip()
+    if not name:
+        return "cases"
+    label = re.sub(r"[^a-zA-Z0-9._-]+", "_", name).strip("._-").lower()
+    return label or "cases"
+
+
+def _default_output_root(repo_root: Path, cases_root: Path) -> Path:
+    return repo_root / "outputs" / f"{_safe_root_label(cases_root)}_bench"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Independent benchmark harness for AlignAnything: epa vs evo."
+        description="Independent benchmark harness for EPA vs evo over a cases root."
     )
     parser.add_argument(
+        "--cases-root",
         "--alignanything-root",
-        default=_default_alignanything_root(),
-        help=("Path to AlignAnything root containing benchmark/ and GT/. " "Default: $EPA_ALIGNANYTHING_ROOT or $EPA_DATA_ROOT/AlignAnything/AlignAnything."),
+        dest="cases_root",
+        default=_default_cases_root(),
+        help=(
+            "Path to the cases root containing benchmark/ and GT/. "
+            "Default: $EPA_CASES_ROOT or $EPA_ALIGNANYTHING_ROOT or "
+            "$EPA_DATA_ROOT/AlignAnything/AlignAnything."
+        ),
     )
     parser.add_argument(
         "--output-root",
-        default="outputs/alignanything_harness",
-        help="Where harness outputs are written.",
+        default="",
+        help="Where benchmark outputs are written. Default: outputs/<cases_root_name>_bench",
     )
     parser.add_argument(
         "--repo-root",
@@ -773,8 +795,12 @@ def _filter_cases(
 
 def run(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
-    align_root = _resolve_cli_path(args.alignanything_root, repo_root)
-    output_root = _resolve_cli_path(args.output_root, repo_root)
+    align_root = _resolve_cli_path(args.cases_root, repo_root)
+    output_root = (
+        _resolve_cli_path(args.output_root, repo_root)
+        if str(args.output_root).strip()
+        else _default_output_root(repo_root, align_root)
+    )
     python_bin = _resolve_cli_path(args.python_bin, repo_root)
     epa_src = _resolve_cli_path(args.epa_src, repo_root)
     evo_repo = _resolve_cli_path(args.evo_repo, repo_root)

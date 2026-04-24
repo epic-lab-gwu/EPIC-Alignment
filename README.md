@@ -40,6 +40,33 @@ For General Workspace:
 epa --gt-csv <gt_file> --gt-format <gt_format> --est-path <est_file> --est-format <est_format> --plot
 ```
 
+Example:
+
+```bash
+epa \
+  --gt-csv ./example_data/example_groundtruth.csv --gt-format csv \
+  --est-path ./example_data/example_estimation.txt --est-format tum \
+  --plot
+```
+
+Single-case full workflow:
+
+```bash
+epa_all --gt <gt_file> --est <est_file> --format tum
+```
+
+Multi-case benchmark:
+
+```bash
+epa_bench --cases-root /path/to/cases_root
+```
+
+Multi-case full workflow:
+
+```bash
+epa_benchall --cases-root /path/to/cases_root
+```
+
 OpenVINS examples:
 
 Single case:
@@ -67,52 +94,63 @@ Each case directory should contain:
 
 ## Outputs
 
-Each run generates a run folder with:
+Single `epa` run:
 
+- creates one `outputs/run_YYYYMMDD_HHMMSS/` folder
+- typical files inside:
 - `plots/`
 - `metrics.json`
 - `metrics_summary.csv`
 - `report_en.md`
 - `report_zh.md`
 
-## Benchmark LaTeX Tables
+Single-case full workflow with `epa_all`:
 
-For benchmark summary CSV files, generate paper tables with:
+- creates one `outputs/epa_all/run_YYYYMMDD_HHMMSS/` folder
+- typical subfolders inside:
+- `main_workspace/`
+- `ape/`
+- `rpe/`
+- `traj/`
+- `openvins/` if `--case-dir` is provided
 
-```bash
-epa_latex_summary --summary-csv /path/to/summary.csv
-```
+Multi-case benchmark with `epa_bench`:
 
-This creates:
+- creates `outputs/<cases_root_name>_bench/run_YYYYMMDD_HHMMSS/`
+- typical files and folders inside:
+- `summary.csv`
+- `summary.md`
+- `paper_tables/`
+- `cases/`
+- `logs/`
+- `prepared_tum/`
+- `unresolved_cases.csv` if some GT mappings cannot be resolved
 
-- `main_table.tex`
-- `dataset_table.tex`
-- `appendix_full_table.tex`
+## Common CLI Toolchain
 
+- `epa` / `epica`: run the main 3-step EPA pipeline for one GT/EST pair
+- `epa_all`: run the single-case full workflow in one command
+- `epa_bench`: run the multi-case benchmark harness over a cases root
+- `epa_benchall`: run the multi-case full workflow, including summary plots and LaTeX tables
+- `epa_ape`: compute APE for one trajectory pair
+- `epa_rpe`: compute RPE for one trajectory pair
+- `epa_traj`: inspect, align, sync, and visualize trajectories
+- `epa_openvins`: run EPA on one or multiple OpenVINS case folders
 
-## Full CLI Toolchain
+## Documentation Link
 
-- `epa` / `epica` / `epic-alignment`: Run the main 3-step EPA pipeline for alignment and metric export; usage: `epa --gt-csv gt.tum --gt-format tum --est-path est.tum --est-format tum --plot`.
-- `epa_config`: Manage global or per-tool default config values; usage: `epa_config set --tool epa_ape plot_mode xy`.
-- `epa_ape`: Compute APE in EVO-style format with optional alignment and plots; usage: `epa_ape tum gt.tum est.tum --align --plot`.
-- `epa_rpe`: Compute RPE in EVO-style format with configurable delta settings; usage: `epa_rpe tum gt.tum est.tum --delta 1 --delta_unit f --plot`.
-- `epa_traj`: Compare, align, sync, and visualize trajectories in EVO-style workflow; usage: `epa_traj tum gt.tum est.tum --sync --align --plot`.
-- `epa_fig`: Re-render saved plotting specs without recomputing metrics; usage: `epa_fig outputs/ape_plot.json --save_plot outputs/ape.png`.
-- `epa_res`: Compare multiple result bundles or EVO zip results; usage: `epa_res run_a.zip run_b.zip --metric all --plot`.
-- `epa_benchmark`: Run batch benchmark harness for EPA/EVO-style comparison over many cases; usage: `epa_benchmark --cases-csv cases.csv --out-dir outputs/bench`.
-- `epa_plot_summary`: Generate benchmark summary figures from harness outputs; usage: `epa_plot_summary --summary-csv outputs/bench/run_xxx/summary.csv`.
-- `epa_latex_summary`: Generate paper-ready LaTeX tables from benchmark `summary.csv`; usage: `epa_latex_summary --summary-csv outputs/bench/run_xxx/summary.csv`.
-- `epa_metric_res`: Aggregate or compare one or more `metrics.json` files directly; usage: `epa_metric_res --inputs run1/metrics.json run2/metrics.json`.
-- `epa_case_rerun` / `epa_rerun`: Replay one case with rerun-based visual diagnostics; usage: `epa_case_rerun --case-json outputs/bench/run_xxx/cases_json/case_001.json`.
-- `epa_ipython`: Launch EPA tools in IPython-friendly entry mode; usage: `epa_ipython`.
-- `epa_ov_eval`: OpenVINS `ov_eval` compatibility umbrella entrypoint; usage: `epa_ov_eval --help`.
-- `epa_ov_format_converter`: Convert trajectory formats in `ov_eval`-compatible style; usage: `epa_ov_format_converter --help`.
-- `epa_ov_plot_trajectories`: Plot trajectories in `ov_eval`-compatible style; usage: `epa_ov_plot_trajectories --help`.
-- `epa_ov_error_singlerun`: Run single-run error evaluation in `ov_eval`-compatible style; usage: `epa_ov_error_singlerun --help`.
-- `epa_ov_error_dataset`: Run dataset-level error summary in `ov_eval`-compatible style; usage: `epa_ov_error_dataset --help`.
-- `epa_ov_error_comparison`: Run algorithm comparison summary in `ov_eval`-compatible style; usage: `epa_ov_error_comparison --help`.
-- `epa_openvins`: Run EPA on one or multiple OpenVINS case folders with minimal integration flow; usage: `epa_openvins /path/to/case_dir se3 --keep-output`.
+For more commands and detailed usage, see the docs:
 
-## Project Links
+- [EPIC-Alignment Docs](https://epic-lab-gwu.github.io/EPIC-Alignment/)
 
-- Source and full project docs: [Docs](https://epic-lab-gwu.github.io/EPIC-Alignment/)
+## Maintenance and Contact
+
+This project is still actively maintained.
+
+If you run into any issues, please open an issue at:
+
+- [EPIC-Alignment Issues](https://github.com/epic-lab-gwu/EPIC-Alignment/issues)
+
+Or contact:
+
+- [josepht@gwu.edu](mailto:josepht@gwu.edu)

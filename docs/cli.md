@@ -113,8 +113,8 @@ Minimal example:
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum \
   --t-max-diff 0.02 \
   --plot
@@ -125,8 +125,8 @@ With result bundle export:
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum \
   --save-results outputs/results/run_a.zip
 ```
@@ -175,7 +175,7 @@ epa_traj \
   --format auto \
   --save-as tum \
   --out-dir outputs/traj_exports \
-  gt.csv outputs/traj_estimate_v1_01.txt
+  example_groundtruth.csv example_data/example_estimation.txt
 ```
 
 ## `epa_ape`
@@ -367,8 +367,8 @@ Run one pair end to end:
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum \
   --plot
 ```

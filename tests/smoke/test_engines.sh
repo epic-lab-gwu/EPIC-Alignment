@@ -7,6 +7,6 @@ export MPLCONFIGDIR="$(mktemp -d /tmp/epa_mpl_XXXXXX)"
 trap 'rm -rf "${MPLCONFIGDIR}"' EXIT
 
 python3 -m epa.cli --engine modular --help >/dev/null
-python3 -m epa.cli --engine modular --dry-run --synthetic --gt-csv "${ROOT_DIR}/data/gt.csv" >/dev/null
+python3 -m epa.cli --engine modular --dry-run --synthetic --gt-csv "${ROOT_DIR}/example_data/example_groundtruth.csv" >/dev/null
 
 echo "smoke ok: modular engine"

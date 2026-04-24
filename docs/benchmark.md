@@ -6,11 +6,11 @@ This page covers the batch evaluation tools built around `epa`, including case d
 
 `epa` includes a benchmark harness for large-scale case evaluation. The main goal is to run the same evaluation workflow over many prepared cases and collect consistent summaries.
 
-In the current repository, the primary benchmark workflow is the AlignAnything harness. That harness includes an independent `epa` vs `evo` comparison, but the page is mainly about large-scale evaluation workflow and summary outputs.
+In the current repository, the primary benchmark workflow uses a generic cases root that contains `benchmark/` and `GT/`. One common example is an `AlignAnything` data folder, but the workflow is not limited to that dataset name.
 
-## AlignAnything Harness
+## Multi-Case Harness
 
-`epa_benchmark` runs an independent benchmark over cases discovered from an AlignAnything-style directory layout.
+`epa_bench` runs an independent benchmark over cases discovered from a cases-root directory layout.
 
 It:
 
@@ -40,18 +40,18 @@ This avoids giving one system the timing result produced by the other.
 export EPA_DATA_ROOT=/home/yifu/epa_data
 ```
 
-`epa_benchmark` 默认会使用 `$EPA_ALIGNANYTHING_ROOT`，若未设置则回退到 `$EPA_DATA_ROOT/AlignAnything/AlignAnything`。
+`epa_bench` 默认会使用 `$EPA_CASES_ROOT`，若未设置则回退到 `$EPA_ALIGNANYTHING_ROOT`，再回退到 `$EPA_DATA_ROOT/AlignAnything/AlignAnything`。
 
 Before running the harness, make sure you have:
 
-- the AlignAnything data root with `benchmark/` and `GT/`
+- a cases root with `benchmark/` and `GT/`
 - the `epa` repository root
 - a Python 3.10+ executable that can run `epa`
 - the comparison repository path if you want cross-tool benchmarking
 
 The harness exposes these main path options:
 
-- `--alignanything-root`
+- `--cases-root`
 - `--repo-root`
 - `--python-bin`
 - `--epa-src`
@@ -62,8 +62,8 @@ The harness exposes these main path options:
 Typical command:
 
 ```bash
-epa_benchmark \
-  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
+epa_bench \
+  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo
@@ -75,6 +75,24 @@ This command:
 2. prepare temporary TUM trajectories for each case
 3. run `epa` and the comparison pipeline independently
 4. aggregate the per-case outputs into a summary table
+
+## Full Multi-Case Workflow
+
+Use `epa_benchall` if you want the full batch workflow in one command:
+
+- run the benchmark harness
+- generate summary plots
+- generate LaTeX tables
+
+Typical command:
+
+```bash
+epa_benchall \
+  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
+  --repo-root /home/yifu/epa \
+  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
+  --evo-repo /home/yifu/evo
+```
 
 ## Per-Case Visualization (Raw / GT / Aligned)
 
@@ -88,7 +106,7 @@ Quick command (recommended):
 
 ```bash
 epa_rerun \
-  --run-dir outputs/alignanything_harness \
+  --run-dir outputs/<cases_root_name>_bench \
   --case euroc_mav_MH_01_easy_rovio
 ```
 
@@ -120,8 +138,8 @@ Examples:
 List matching cases only:
 
 ```bash
-epa_benchmark \
-  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
+epa_bench \
+  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo \
@@ -132,8 +150,8 @@ epa_benchmark \
 Run only a subset of methods:
 
 ```bash
-epa_benchmark \
-  --alignanything-root /home/yifu/epa_data/AlignAnything/AlignAnything \
+epa_bench \
+  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
   --repo-root /home/yifu/epa \
   --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
   --evo-repo /home/yifu/evo \
@@ -168,7 +186,7 @@ Each harness run creates a fresh run directory under the benchmark output root.
 Typical layout:
 
 ```text
-outputs/alignanything_harness/run_YYYYmmdd_HHMMSS/
+outputs/<cases_root_name>_bench/run_YYYYmmdd_HHMMSS/
 ```
 
 Common contents:
@@ -212,7 +230,7 @@ Example:
 
 ```bash
 epa_plot_summary \
-  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
+  --summary-csv outputs/<cases_root_name>_bench/run_xxx/summary.csv
 ```
 
 By default, plots are written to:
@@ -249,7 +267,7 @@ Use `epa_latex_summary` to generate paper-ready LaTeX tables from a harness `sum
 
 ```bash
 epa_latex_summary \
-  --summary-csv outputs/alignanything_harness/run_xxx/summary.csv
+  --summary-csv outputs/<cases_root_name>_bench/run_xxx/summary.csv
 ```
 
 By default, tables are written to `<summary_dir>/paper_tables/` with:
@@ -258,7 +276,7 @@ By default, tables are written to `<summary_dir>/paper_tables/` with:
 - `dataset_table.tex`: dataset-level aggregate table
 - `appendix_full_table.tex`: full longtable for appendix
 
-`epa_benchmark` also generates this `paper_tables/` directory automatically at the end of each run.
+`epa_bench` also generates this `paper_tables/` directory automatically at the end of each run.
 
 ### Use in Overleaf (2 ways)
 
@@ -313,7 +331,7 @@ Useful options:
 
 Recommended workflow:
 
-1. Run `epa_benchmark`
+1. Run `epa_bench`
 2. Inspect `summary.csv` and `summary.md`
 3. Generate charts with `epa_plot_summary`
 4. Drill into failed cases using `cases/*.json` and `logs/`
@@ -324,7 +342,7 @@ Recommended workflow:
 If a harness run is incomplete or noisy, check these first:
 
 - the Python executable passed with `--python-bin`
-- the `AlignAnything` root path
+- the cases root path
 - the comparison repository path
 - unresolved cases listed in `unresolved_cases.csv`
 - per-case stderr logs under `logs/`

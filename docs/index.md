@@ -48,6 +48,7 @@ pip install -e .[ros]
 Core pipeline:
 
 - `epa`: run the full 3-step alignment and evaluation pipeline
+- `epa_all`: run the single-case full workflow in one command
 
 Trajectory and metric tools:
 
@@ -63,7 +64,8 @@ Utilities:
 
 Benchmark tools:
 
-- `epa_benchmark`: run batch benchmarks across many cases
+- `epa_bench`: run batch benchmarks across many cases
+- `epa_benchall`: run the full multi-case workflow including summary plots and LaTeX tables
 - `epa_plot_summary`: generate summary plots from benchmark CSV outputs
 - `epa_metric_res`: aggregate and compare metric result files
 

@@ -58,8 +58,8 @@ Example:
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum \
   --t-max-diff 0.02 \
   --plot
@@ -67,8 +67,8 @@ epa \
 
 This command:
 
-1. Loads the reference trajectory from `gt.csv`
-2. Loads the estimated trajectory from `outputs/traj_estimate_v1_01.txt`
+1. Loads the reference trajectory from `example_groundtruth.csv`
+2. Loads the estimated trajectory from `example_data/example_estimation.txt`
 3. Runs time alignment, extrinsic calibration, and world-frame alignment
 4. Computes evaluation metrics
 5. Exports figures and summaries
@@ -136,7 +136,7 @@ Common variants:
 
 - Synchronize before plotting: `epa_traj --format tum --sync --ref 1 gt.tum est.tum --plot`
 - Align to the reference: `epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot`
-- Export converted trajectories: `epa_traj --format auto --save-as tum --out-dir outputs/traj_exports gt.csv outputs/traj_estimate_v1_01.txt`
+- Export converted trajectories: `epa_traj --format auto --save-as tum --out-dir outputs/traj_exports example_groundtruth.csv example_data/example_estimation.txt`
 
 ## ROS Bag Inputs
 
@@ -172,8 +172,8 @@ If Rerun support is installed, add `--rerun` to the main pipeline or metric tool
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum \
   --plot \
   --rerun

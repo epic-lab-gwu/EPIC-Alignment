@@ -97,7 +97,7 @@ def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:
         discover_cases(missing_root)
 
     msg = str(exc_info.value)
-    assert "Invalid --alignanything-root" in msg
+    assert "Invalid --cases-root" in msg
     assert "EPA_DATA_ROOT" in msg
-    assert "EPA_ALIGNANYTHING_ROOT" in msg
-    assert "epa_benchmark --alignanything-root" in msg
+    assert "EPA_CASES_ROOT" in msg
+    assert "epa_bench --cases-root" in msg

@@ -82,8 +82,8 @@ Cause:
 Check:
 
 ```bash
-ls gt.csv
-ls outputs/traj_estimate_v1_01.txt
+ls example_groundtruth.csv
+ls example_data/example_estimation.txt
 ```
 
 Fix:
@@ -102,8 +102,8 @@ Fix:
 ```bash
 epa \
   --engine modular \
-  --gt-csv gt.csv \
-  --est-path outputs/traj_estimate_v1_01.txt \
+  --gt-csv example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
   --est-format tum
 ```
 
@@ -241,7 +241,7 @@ Examples:
 
 ```bash
 epa_traj --format tum gt.tum est.tum --plot
-epa --gt-format csv --est-format tum --gt-csv gt.csv --est-path est.tum
+epa --gt-format csv --est-format tum --gt-csv example_groundtruth.csv --est-path est.tum
 ```
 
 ## `--align and --align_origin cannot be used together`

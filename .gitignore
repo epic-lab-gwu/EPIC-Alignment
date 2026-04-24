@@ -7,9 +7,8 @@ AGENTS.md
 # local run artifacts
 outputs/
 site/
-
-# external estimator workspaces (keep outside repo or untracked)
-sqrtVINS-main/
+dist/
+configs/
 
 # externalized datasets (keep outside repo)
 AlignAnything/
