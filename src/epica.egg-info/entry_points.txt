@@ -1,7 +1,9 @@
 [console_scripts]
 epa = epa.cli:main
+epa_all = epa.case_toolchain:main
 epa_ape = epa.ape_tool:main
-epa_benchmark = epa.benchmark.alignanything_harness:main
+epa_bench = epa.benchmark.alignanything_harness:main
+epa_benchall = epa.bench_toolchain:main
 epa_case_rerun = epa.benchmark.case_rerun:main
 epa_config = epa.config_tool:main
 epa_fig = epa.fig_tool:main
@@ -20,5 +22,4 @@ epa_rerun = epa.benchmark.case_rerun:main
 epa_res = epa.benchmark.res:main
 epa_rpe = epa.rpe_tool:main
 epa_traj = epa.traj_tool:main
-epic-alignment = epa.cli:main
 epica = epa.cli:main
