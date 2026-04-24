@@ -34,13 +34,13 @@ This avoids giving one system the timing result produced by the other.
 
 ## Required Inputs
 
-推荐将数据集放在仓库外（例如 `/home/yifu/epa_data`），并通过环境变量管理：
+It is recommended to keep datasets outside the repository (for example, `/home/yifu/epa_data`) and manage paths through environment variables:
 
 ```bash
 export EPA_DATA_ROOT=/home/yifu/epa_data
 ```
 
-`epa_bench` 默认会使用 `$EPA_CASES_ROOT`，若未设置则回退到 `$EPA_ALIGNANYTHING_ROOT`，再回退到 `$EPA_DATA_ROOT/AlignAnything/AlignAnything`。
+`epa_bench` defaults to `$EPA_CASES_ROOT`; if it is unset, it falls back to `$EPA_ALIGNANYTHING_ROOT`, and then to `$EPA_DATA_ROOT/AlignAnything/AlignAnything`.
 
 Before running the harness, make sure you have:
 
