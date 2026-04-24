@@ -468,6 +468,26 @@ def write_run_reports(output_dir, metrics_payload):
         f"- EST：`{metadata.get('est_path', '')}`",
         "",
     ]
+    if bool(metadata.get("step1_failed", False)):
+        zh_lines.extend(
+            [
+                "## Step 1 失败",
+                "",
+                "- 状态：`step1_failed`",
+                f"- 原因：{metadata.get('step1_failure_reason', 'unknown')}",
+                "",
+            ]
+        )
+    elif bool(metadata.get("step1_forced_candidate", False)):
+        zh_lines.extend(
+            [
+                "## Step 1 回退",
+                "",
+                "- 状态：`step1_forced_candidate`",
+                f"- 原因：{metadata.get('step1_force_reason', 'unknown')}",
+                "",
+            ]
+        )
     alert_level = str(metadata.get("user_alert_level", "") or "").strip()
     alert_msg = str(metadata.get("user_alert_message", metadata.get("user_alert_message_zh", "")) or "").strip()
     alert_reasons = str(metadata.get("user_alert_reasons", metadata.get("user_alert_reasons_zh", "")) or "").strip()
@@ -506,6 +526,26 @@ def write_run_reports(output_dir, metrics_payload):
         f"- EST: `{metadata.get('est_path', '')}`",
         "",
     ]
+    if bool(metadata.get("step1_failed", False)):
+        en_lines.extend(
+            [
+                "## Step 1 Failure",
+                "",
+                "- Status: `step1_failed`",
+                f"- Reason: {metadata.get('step1_failure_reason', 'unknown')}",
+                "",
+            ]
+        )
+    elif bool(metadata.get("step1_forced_candidate", False)):
+        en_lines.extend(
+            [
+                "## Step 1 Fallback",
+                "",
+                "- Status: `step1_forced_candidate`",
+                f"- Reason: {metadata.get('step1_force_reason', 'unknown')}",
+                "",
+            ]
+        )
     if alert_level or alert_msg or alert_reasons:
         en_lines.extend(
             [

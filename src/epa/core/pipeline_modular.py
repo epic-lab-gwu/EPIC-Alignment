@@ -147,6 +147,110 @@ def _plot_alignment_map(
     _set_axes_equal_3d(ax)
 
 
+def _finalize_step1_failure(
+    *,
+    run_dir: Path,
+    plots_dir: Path,
+    gt_path: Path,
+    est_path: Path,
+    gt_format: str,
+    est_format: str,
+    gt_topic: str,
+    est_topic: str,
+    args,
+    time_metrics: dict,
+    lag_times: np.ndarray,
+    corr: np.ndarray,
+    selected_offset_s: float,
+    pos_gt: np.ndarray,
+    pos_est: np.ndarray,
+    t_gt: np.ndarray,
+    t_est: np.ndarray,
+    failure_reason: str,
+) -> None:
+    fig_corr, ax_corr = plt.subplots(figsize=(12, 4))
+    ax_corr.set_title("Step 1: Cross-Correlation vs Lag")
+    ax_corr.plot(lag_times, corr, color="purple", linewidth=1.2)
+    ax_corr.axvline(
+        selected_offset_s,
+        color="red",
+        linestyle="--",
+        label=f"Candidate offset: {selected_offset_s:.4f}s",
+    )
+    ax_corr.set_xlabel("Lag (s)")
+    ax_corr.set_ylabel("Correlation")
+    ax_corr.grid(True, linestyle=":", alpha=0.5)
+    ax_corr.legend(loc="upper right")
+    fig_corr.tight_layout()
+    fig_corr_path = plots_dir / "step1_cross_correlation.png"
+    fig_corr.savefig(fig_corr_path, dpi=200, bbox_inches="tight")
+
+    t_est_sync = np.asarray(t_est, dtype=float) - float(selected_offset_s)
+    interp_p = interp1d(t_est_sync, pos_est, axis=0, fill_value="extrapolate")
+    pr_sync = interp_p(np.asarray(t_gt, dtype=float))
+    raw_err = np.linalg.norm(pr_sync - np.asarray(pos_gt, dtype=float), axis=1)
+    raw_rmse = float(np.sqrt(np.mean(raw_err**2)))
+
+    fig_raw = plt.figure(figsize=(8.8, 6.6))
+    ax_raw = fig_raw.add_subplot(111, projection="3d")
+    _plot_alignment_map(
+        fig_raw,
+        ax_raw,
+        pos_ref=np.asarray(pos_gt, dtype=float),
+        pos_est=np.asarray(pr_sync, dtype=float),
+        errors_m=np.asarray(raw_err, dtype=float),
+        title=f"Raw Diagnostic (Step 1 Failed)\nrmse={raw_rmse:.6f} m",
+    )
+    fig_raw.tight_layout()
+    fig_raw_path = plots_dir / "step1_raw_trajectory_diagnostic_3d.png"
+    fig_raw.savefig(fig_raw_path, dpi=220, bbox_inches="tight")
+
+    metrics_payload = {
+        "time_alignment": dict(time_metrics),
+        "trajectory": {
+            "ate_rmse_raw_m": float(raw_rmse),
+            "ate_p95_raw_m": float(np.percentile(raw_err, 95)),
+        },
+        "metadata": {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "mode": "real",
+            "gt_path": str(gt_path),
+            "est_path": str(est_path),
+            "gt_format": str(gt_format),
+            "est_format": str(est_format),
+            "gt_topic": str(gt_topic),
+            "est_topic": str(est_topic),
+            "t_offset": float(getattr(args, "t_offset", 0.0)),
+            "t_max_diff": float(getattr(args, "t_max_diff", 0.02)),
+            "step1_failed": True,
+            "step1_failure_reason": str(failure_reason),
+            "user_alert_level": "critical",
+            "user_alert_message": "Step-1 time alignment failed; outputs below are diagnostic only.",
+            "user_alert_reasons": str(failure_reason),
+            "output_dir": str(run_dir),
+            "plot": {
+                "enabled": True,
+                "files": [str(fig_corr_path), str(fig_raw_path)],
+            },
+        },
+    }
+    save_metrics(run_dir, metrics_payload)
+    report_zh_path, report_en_path = write_run_reports(run_dir, metrics_payload)
+
+    print("\n--- STEP 1 FAILURE ---")
+    print(f"reason: {failure_reason}")
+    print("\n--- OUTPUT FILES ---")
+    print(f"Saved figure: {fig_corr_path}")
+    print(f"Saved figure: {fig_raw_path}")
+    print(f"Saved metrics: {run_dir / 'metrics.json'}")
+    print(f"Saved metrics: {run_dir / 'metrics_summary.csv'}")
+    print(f"Saved report: {report_zh_path}")
+    print(f"Saved report: {report_en_path}")
+
+    plt.close(fig_corr)
+    plt.close(fig_raw)
+
+
 def _umeyama_transform(src_xyz, dst_xyz, with_scale=False):
     src = np.asarray(src_xyz, dtype=float)
     dst = np.asarray(dst_xyz, dtype=float)
@@ -637,6 +741,7 @@ def _build_user_alert(
     match_ratio = float(time_metrics.get("evo_matches_ratio_equivalent", np.nan))
     omega_gain = float(time_metrics.get("omega_rmse_improve_pct", np.nan))
     offset_est = float(time_metrics.get("offset_est_s", np.nan))
+    step1_forced_candidate = float(time_metrics.get("step1_forced_candidate_code", 0.0))
     step3_rmse = float(traj_metrics.get("ate_rmse_step3_m", np.nan))
     improve_pct = float(traj_metrics.get("ate_rmse_improve_raw_to_step3_pct", np.nan))
     strong_final_alignment = (
@@ -648,6 +753,8 @@ def _build_user_alert(
 
     if (np.isfinite(peak) and peak < 0.75) or (np.isfinite(psr) and psr < 6.0):
         issues.append("time_alignment_low_confidence")
+    if step1_forced_candidate > 0.5:
+        issues.append("time_alignment_forced_candidate")
     if np.isfinite(match_ratio) and match_ratio < 0.5:
         issues.append("time_overlap_low")
     if np.isfinite(omega_gain) and omega_gain < 5.0 and np.isfinite(offset_est) and abs(offset_est) > 0.02:
@@ -693,6 +800,7 @@ def _build_user_alert(
 
     reason_map = {
         "time_alignment_low_confidence": "Weak time-alignment confidence",
+        "time_alignment_forced_candidate": "Step-1 gating failed; continuing with the highest-confidence candidate offset",
         "time_overlap_low": "Low effective time overlap",
         "time_alignment_weak_gain": "Limited improvement from time alignment",
         "alignment_partial": "Residual local misalignment remains",
@@ -1192,12 +1300,25 @@ def run_pipeline_modular(args, script_dir: Path):
     if not (0.0 <= offset_min_match_ratio <= 1.0):
         raise ValueError("--offset-min-match-ratio must be in [0, 1].")
 
-    t_min = max(t_gt_mid[0], t_est_mid[0])
-    t_max = min(t_gt_mid[-1], t_est_mid[-1])
+    t_min = max(float(np.min(t_gt_mid)), float(np.min(t_est_mid)))
+    t_max = min(float(np.max(t_gt_mid)), float(np.max(t_est_mid)))
     if t_max - t_min < 100 * dt_resample:
         raise ValueError("Not enough overlap between GT and estimation for robust time alignment.")
 
-    t_uniform = np.arange(t_min, t_max, dt_resample)
+    # Keep the resampling grid strictly inside the shared interpolation range.
+    # Floating-point accumulation in np.arange can otherwise produce a last
+    # sample that is microscopically outside interp1d bounds for some cases.
+    eps = max(1e-9, abs(dt_resample) * 1e-6)
+    safe_min = float(np.nextafter(t_min + eps, np.inf))
+    safe_max = float(np.nextafter(t_max - eps, -np.inf))
+    if safe_max - safe_min < 100 * dt_resample:
+        raise ValueError("Not enough valid overlap after applying interpolation safety margins.")
+    sample_count = int(np.floor((safe_max - safe_min) / dt_resample)) + 1
+    t_uniform = safe_min + dt_resample * np.arange(sample_count, dtype=float)
+    # Clamp any last-sample roundoff back into the valid interpolation range.
+    t_uniform = np.clip(t_uniform, safe_min, safe_max)
+    if t_uniform.size < 100:
+        raise ValueError("Not enough valid resampled points after applying interpolation safety margins.")
     sig_gt = interp1d(t_gt_mid, om_gt, kind="linear")(t_uniform)
     sig_est = interp1d(t_est_mid, om_est, kind="linear")(t_uniform)
     sig_gt -= np.mean(sig_gt)
@@ -1242,6 +1363,8 @@ def run_pipeline_modular(args, script_dir: Path):
     overlap_pair_cap = int(match_diag["pair_cap_overlap"])
     overlap_gate_min_pairs = int(match_diag["overlap_gate_min_pairs"])
     fallback_used = 0.0
+    step1_forced_candidate = False
+    step1_force_reason = ""
     if match_ratio_gate < offset_min_match_ratio:
         zero_window_s = 1.0
         zero_mask = np.abs(offsets_s) <= zero_window_s
@@ -1270,7 +1393,7 @@ def run_pipeline_modular(args, script_dir: Path):
             overlap_gate_min_pairs = int(fallback_diag["overlap_gate_min_pairs"])
             fallback_used = 1.0
         else:
-            raise ValueError(
+            step1_force_reason = (
                 "Unreliable step-1 offset estimate: "
                 f"best_match_ratio_global={match_ratio_global:.3f}, "
                 f"best_match_ratio_overlap={match_ratio_overlap:.3f}, "
@@ -1280,6 +1403,12 @@ def run_pipeline_modular(args, script_dir: Path):
                 f"fallback_match_ratio_gate={fallback_ratio_gate:.3f}, "
                 f"required>={offset_min_match_ratio:.3f}. "
                 "Check timestamp quality (duplicates/non-monotonic) or adjust offset search settings."
+            )
+            step1_forced_candidate = True
+            print("--- STEP 1 FALLBACK ---")
+            print(step1_force_reason)
+            print(
+                f"Continuing with highest-confidence candidate offset: {calculated_offset:.4f} s"
             )
 
     print(f"Calculated Time Offset: {calculated_offset:.4f} s")
@@ -1308,6 +1437,11 @@ def run_pipeline_modular(args, script_dir: Path):
         "offset_match_ratio_gate": match_ratio_gate,
         "offset_overlap_pair_cap": float(overlap_pair_cap),
         "offset_overlap_gate_min_pairs": float(overlap_gate_min_pairs),
+        "fallback_offset_s": float(fallback_offset) if 'fallback_offset' in locals() else float("nan"),
+        "fallback_match_ratio_global": float(fallback_ratio_global) if 'fallback_ratio_global' in locals() else float("nan"),
+        "fallback_match_ratio_overlap": float(fallback_ratio_overlap) if 'fallback_ratio_overlap' in locals() else float("nan"),
+        "fallback_match_ratio_gate": float(fallback_ratio_gate) if 'fallback_ratio_gate' in locals() else float("nan"),
+        "step1_forced_candidate_code": 1.0 if step1_forced_candidate else 0.0,
     }
     # Evo-compatible interpretation:
     # - evo applies t_offset to est timestamps before matching.
@@ -1837,6 +1971,8 @@ def run_pipeline_modular(args, script_dir: Path):
             "t_max_diff": float(getattr(args, "t_max_diff", 0.02)),
             "t_start": None if getattr(args, "t_start", None) is None else float(args.t_start),
             "t_end": None if getattr(args, "t_end", None) is None else float(args.t_end),
+            "step1_forced_candidate": bool(step1_forced_candidate),
+            "step1_force_reason": str(step1_force_reason),
             "ape_pose_relation": str(getattr(args, "ape_pose_relation", "trans_part")),
             "rpe_pose_relation": str(getattr(args, "rpe_pose_relation", "trans_part")),
             "eval_align": eval_align_mode,
