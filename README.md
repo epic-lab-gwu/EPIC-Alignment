@@ -1,4 +1,4 @@
-# EPIC-Alignment (EPICA)
+# EPICA: Epic Alignment and Evaluation Toolkit for trajectory
 
 `EPICA` is a trajectory alignment and evaluation toolkit.
 
