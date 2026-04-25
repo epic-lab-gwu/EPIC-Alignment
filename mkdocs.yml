@@ -1,7 +1,7 @@
 site_name: Epic Alignment Docs
 site_description: Trajectory alignment and evaluation toolkit documentation
-repo_url: https://github.com/epic-lab-gwu/epa
-repo_name: epa
+repo_url: https://github.com/epic-lab-gwu/EPIC-Alignment
+repo_name: EPIC-Alignment
 
 theme:
   name: readthedocs
@@ -13,6 +13,7 @@ markdown_extensions:
 extra_javascript:
   - javascripts/mathjax.js
   - javascripts/code-copy.js
+  - javascripts/easter-egg.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
 extra_css:
@@ -23,7 +24,7 @@ nav:
   - Quick Start: quickstart.md
   - CLI Reference: cli.md
   - Benchmark: benchmark.md
+  - OpenVINS Integration: openvins_phase2_minimal.md
   - Architecture: architecture.md
-  - Evaluation Inputs: evaluation_inputs.md
   - Troubleshooting: troubleshooting.md
   - Benchmark Study: benchmark_study.md

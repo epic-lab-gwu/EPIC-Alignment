@@ -1,12 +1,12 @@
 # Benchmark
 
-This page covers the batch evaluation tools built around `epa`, including case discovery, repeated execution, and summary analysis.
+This page covers the batch evaluation tools provided by `epica`, including case discovery, repeated execution, and summary analysis. The main commands on this page are `epa_bench` and `epa_benchall`.
 
 ## Benchmark Scope
 
-`epa` includes a benchmark harness for large-scale case evaluation. The main goal is to run the same evaluation workflow over many prepared cases and collect consistent summaries.
+`epica` includes a benchmark harness for large-scale case evaluation. The main goal is to run the same evaluation workflow over many prepared cases and collect consistent summaries.
 
-In the current repository, the primary benchmark workflow uses a generic cases root that contains `benchmark/` and `GT/`. One common example is an `AlignAnything` data folder, but the workflow is not limited to that dataset name.
+In the current repository, the primary benchmark workflow uses a generic cases root that contains `benchmark/` and `GT/`.
 
 ## Multi-Case Harness
 
@@ -34,19 +34,19 @@ This avoids giving one system the timing result produced by the other.
 
 ## Required Inputs
 
-It is recommended to keep datasets outside the repository (for example, `/home/yifu/epa_data`) and manage paths through environment variables:
+It is recommended to keep datasets outside the repository (for example, `/home/username/epa_data`) and manage paths through environment variables:
 
 ```bash
-export EPA_DATA_ROOT=/home/yifu/epa_data
+export EPA_DATA_ROOT=/home/username/epa_data
 ```
 
-`epa_bench` defaults to `$EPA_CASES_ROOT`; if it is unset, it falls back to `$EPA_ALIGNANYTHING_ROOT`, and then to `$EPA_DATA_ROOT/AlignAnything/AlignAnything`.
+`epa_bench` defaults to `$EPA_CASES_ROOT`; if it is unset, it falls back to `$EPA_ALIGNANYTHING_ROOT`, and then to `$EPA_DATA_ROOT/benchmark_cases`.
 
 Before running the harness, make sure you have:
 
 - a cases root with `benchmark/` and `GT/`
-- the `epa` repository root
-- a Python 3.10+ executable that can run `epa`
+- the `epica` repository root
+- a Python 3.10+ executable that can run `epica`
 - the comparison repository path if you want cross-tool benchmarking
 
 The harness exposes these main path options:
@@ -59,14 +59,14 @@ The harness exposes these main path options:
 
 ## Basic Run
 
-Typical command:
+If you want the main batch benchmark workflow, start here:
 
 ```bash
 epa_bench \
-  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/epa \
-  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/yifu/evo
+  --cases-root /home/username/epa_data/benchmark_cases \
+  --repo-root /home/username/epa \
+  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  --evo-repo /home/username/evo
 ```
 
 This command:
@@ -88,10 +88,10 @@ Typical command:
 
 ```bash
 epa_benchall \
-  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/epa \
-  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/yifu/evo
+  --cases-root /home/username/epa_data/benchmark_cases \
+  --repo-root /home/username/epa \
+  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  --evo-repo /home/username/evo
 ```
 
 ## Per-Case Visualization (Raw / GT / Aligned)
@@ -139,10 +139,10 @@ List matching cases only:
 
 ```bash
 epa_bench \
-  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/epa \
-  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/yifu/evo \
+  --cases-root /home/username/epa_data/benchmark_cases \
+  --repo-root /home/username/epa \
+  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  --evo-repo /home/username/evo \
   --case-pattern euroc \
   --dry-run
 ```
@@ -151,10 +151,10 @@ Run only a subset of methods:
 
 ```bash
 epa_bench \
-  --cases-root /home/yifu/epa_data/AlignAnything/AlignAnything \
-  --repo-root /home/yifu/epa \
-  --python-bin /home/yifu/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/yifu/evo \
+  --cases-root /home/username/epa_data/benchmark_cases \
+  --repo-root /home/username/epa \
+  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  --evo-repo /home/username/evo \
   --methods rovio,svo_stereo \
   --limit 20
 ```
@@ -187,6 +187,26 @@ Typical layout:
 
 ```text
 outputs/<cases_root_name>_bench/run_YYYYmmdd_HHMMSS/
+```
+
+Typical directory tree:
+
+```text
+outputs/<cases_root_name>_bench/run_YYYYmmdd_HHMMSS/
+├── harness_config.json
+├── summary.csv
+├── summary.md
+├── unresolved_cases.csv
+├── cases/
+│   └── *.json
+├── logs/
+│   └── ...
+├── paper_tables/
+│   ├── main_table.tex
+│   ├── dataset_table.tex
+│   └── appendix_full_table.tex
+└── prepared_tum/
+    └── ...
 ```
 
 Common contents:

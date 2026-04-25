@@ -1,12 +1,12 @@
 # CLI Reference
 
-This page summarizes the main `epa` command-line tools, what they do, and the options you will use most often.
+This page summarizes the main command-line tools provided by `epica`. The package installs both `epa` and `epica`; this page uses `epa` in examples, but the two commands are interchangeable.
 
 ## Command Overview
 
 Core pipeline:
 
-- `epa`: run the full 3-step alignment and evaluation pipeline
+- `epa` or `epica`: run the full 3-step alignment and evaluation pipeline
 
 Trajectory and metric tools:
 
@@ -40,7 +40,7 @@ Most tools support these input formats:
 For ROS log formats, install:
 
 ```bash
-pip install -e .[ros]
+python -m pip install "epica[ros]"
 ```
 
 ### Topics for ROS Inputs
@@ -90,9 +90,9 @@ epa_res --help
 epa_config --help
 ```
 
-## `epa`
+## `epa` / `epica`
 
-`epa` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots and summaries into a new run directory.
+`epa` / `epica` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots and summaries into a new run directory.
 
 Common options:
 
@@ -113,7 +113,7 @@ Minimal example:
 ```bash
 epa \
   --engine modular \
-  --gt-csv example_groundtruth.csv \
+  --gt-csv example_data/example_groundtruth.csv \
   --est-path example_data/example_estimation.txt \
   --est-format tum \
   --t-max-diff 0.02 \
@@ -125,7 +125,7 @@ With result bundle export:
 ```bash
 epa \
   --engine modular \
-  --gt-csv example_groundtruth.csv \
+  --gt-csv example_data/example_groundtruth.csv \
   --est-path example_data/example_estimation.txt \
   --est-format tum \
   --save-results outputs/results/run_a.zip
@@ -135,7 +135,7 @@ epa \
   <source src="../images/rerun.mp4" type="video/mp4">
 </video>
 
-*Optional Rerun inspection flow for the main `epa` pipeline.*
+*Optional Rerun inspection flow for the main `epa` / `epica` pipeline.*
 
 ## `epa_traj`
 
@@ -175,7 +175,7 @@ epa_traj \
   --format auto \
   --save-as tum \
   --out-dir outputs/traj_exports \
-  example_groundtruth.csv example_data/example_estimation.txt
+  example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
 ## `epa_ape`
@@ -367,7 +367,7 @@ Run one pair end to end:
 ```bash
 epa \
   --engine modular \
-  --gt-csv example_groundtruth.csv \
+  --gt-csv example_data/example_groundtruth.csv \
   --est-path example_data/example_estimation.txt \
   --est-format tum \
   --plot

@@ -1,15 +1,17 @@
-# OpenVINS Minimal Integration (Phase 2)
+# OpenVINS Integration
 
-This phase adds a minimal OpenVINS-side calling path without changing OpenVINS source code.
+This page describes the lightweight OpenVINS integration path provided by `epica`.
 
-## What was added
+The goal is to keep `epica` as an external module while still supporting OpenVINS-style evaluation commands and workflows.
+
+## Included Scripts
 
 - `scripts/openvins/install_ov_eval_epa_shims.sh`
 - `scripts/openvins/run_minimal_eval_demo.sh`
 
-## Goal
+## Supported OpenVINS-Style Commands
 
-Keep EPA as an external module, but allow OpenVINS-style commands:
+Keep `epica` as an external module, but allow OpenVINS-style commands such as:
 
 - `format_converter`
 - `error_singlerun`
@@ -19,7 +21,7 @@ Keep EPA as an external module, but allow OpenVINS-style commands:
 
 These command names are forwarded to `python -m epa.ov_eval_compat ...`.
 
-## Quick test
+## Quick Start
 
 ```bash
 conda activate epa
@@ -39,7 +41,7 @@ bash scripts/openvins/run_minimal_eval_demo.sh /path/to/open_vins/ov_eval/exampl
 
 The demo now includes:
 
-- EPA full pipeline run via `epa.cli` only (produces rich `plots/` bundle like
+- the `epica` full pipeline run via `epa.cli` only (produces a `plots/` bundle like
   `step1_cross_correlation.png`, `step23_trajectory_alignment_3d.png`,
   `ape_translation_part_*.png`, `rpe_translation_part_*.png`)
 
@@ -55,11 +57,11 @@ To keep files on disk (single-case default is cleanup):
 epa_openvins /path/to/open_vins/ov_eval/example se3 --keep-output
 ```
 
-EPA full pipeline plots are saved under:
+Full pipeline plots are saved under:
 
 - `outputs/run_*/plots/`
 
-If you still want `ov_eval`-style commands, install optional shims:
+If you still want `ov_eval`-style commands, install the optional shims:
 
 ```bash
 bash scripts/openvins/install_ov_eval_epa_shims.sh

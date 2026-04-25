@@ -401,6 +401,82 @@ code {
   color: #0f4f82 !important;
 }
 
+.doc-easter-egg {
+  position: relative;
+  margin: 1.8rem 0 0.4rem;
+  text-align: center;
+}
+
+.doc-easter-egg-button {
+  border: 1px solid #d4e2f0;
+  background: #f7fbff;
+  color: #17324d;
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 6px 16px rgba(92, 121, 152, 0.12);
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+}
+
+.doc-easter-egg-button:hover {
+  background: #eef6ff;
+  transform: translateY(-1px) scale(1.03);
+  box-shadow: 0 10px 22px rgba(92, 121, 152, 0.16);
+}
+
+.doc-easter-egg-button:active {
+  transform: scale(0.98);
+}
+
+.doc-easter-egg-note {
+  margin-top: 0.55rem;
+  color: #6a7f94;
+  font-size: 0.9rem;
+}
+
+.doc-easter-egg-message {
+  margin-top: 0.6rem;
+  color: #17324d;
+  font-size: 0.95rem;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.doc-easter-egg-message.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.doc-confetti-piece {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  font-size: 0.95rem;
+  opacity: 0;
+  transform: translate(-50%, 0) rotate(0deg);
+  animation: doc-confetti-pop 1.2s ease-out forwards;
+}
+
+@keyframes doc-confetti-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.6) rotate(0deg);
+  }
+
+  12% {
+    opacity: 1;
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--dx)), var(--dy)) scale(1.05) rotate(var(--rot));
+  }
+}
+
 @media screen and (max-width: 768px) {
   .doc-image-grid.two-col,
   .doc-image-grid.three-col {

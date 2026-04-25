@@ -1,34 +1,25 @@
-# epa Documentation
+# EPICA Documentation
 
-`epa` is a toolkit for trajectory alignment and evaluation in Vicon-grounded workflows. It is built for reproducible benchmarking, practical analysis, and scalable experiment comparison.
+`epica` is a trajectory alignment and evaluation toolkit. The package installs the command-line entrypoints `epa` and `epica`, which are interchangeable. It is built for reproducible benchmarking, practical analysis, and scalable experiment comparison.
 
 <video class="doc-video" controls autoplay muted loop playsinline preload="metadata">
   <source src="images/rerun.mp4" type="video/mp4">
 </video>
 
-*Rerun demo: follow-view inspection of GT and Step3 trajectories.*
-
-## What epa Does
-
-`epa` helps you:
-
-- Align estimated trajectories with reference trajectories
-- Evaluate trajectory quality with reproducible metrics
-- Generate plots and outputs for analysis, comparison, and reporting
-- Run batch benchmarks across datasets and cases
+*Rerun demo: follow-view inspection of Ground truth and Estimation trajectories.*
 
 ## Features
 
-- 3-step alignment pipeline: time alignment -> extrinsic solve -> world-frame alignment
-- Dedicated CLI suite for end-to-end runs, metric analysis, plotting, and result comparison
-- Reusable configuration system with global and tool-level defaults
-- Plot serialization and offline re-rendering via `epa_fig`
-- Optional Rerun-based visual inspection for trajectories and intermediate stages
-- Benchmark harness for large-scale evaluation and summary generation
+- End-to-end trajectory alignment from time synchronization to final world-frame evaluation
+- Command-line tools for single-run analysis, plotting, metric inspection, and cross-run comparison
+- Reusable configuration defaults to keep repeated workflows consistent
+- Reproducible figure generation through serialized plot specs and offline re-rendering
+- Optional Rerun-based visualization for trajectory inspection and intermediate-stage debugging
+- Batch benchmark workflows for large-scale evaluation, summary plots, and report generation
 
 ## Supported Input Formats
 
-`epa` supports these trajectory and log formats:
+The `epa` / `epica` command supports these trajectory and log formats:
 
 - `auto` for automatic format detection when possible
 - `csv` / `euroc`
@@ -40,57 +31,42 @@
 For ROS log formats (`bag`, `bag2`, `mcap`), install ROS support first:
 
 ```bash
-pip install -e .[ros]
+python -m pip install "epica[ros]"
 ```
 
 ## Main Commands
 
-Core pipeline:
+You may start with these commands:
 
-- `epa`: run the full 3-step alignment and evaluation pipeline
-- `epa_all`: run the single-case full workflow in one command
+- `epa` or `epica`: run the full alignment and evaluation pipeline on one reference-estimation pair
+- `epa_all`: run the single-case workflow in one command, including plots and packaged outputs
 
 Trajectory and metric tools:
 
-- `epa_traj`: inspect, sync, align, and plot trajectories
+- `epa_traj`: inspect, synchronize, align, and plot trajectories
 - `epa_ape`: compute absolute pose error metrics
 - `epa_rpe`: compute relative pose error metrics
-- `epa_res`: compare result bundles and metric outputs
-
-Utilities:
-
-- `epa_config`: manage reusable configuration defaults
-- `epa_fig`: re-render plots from serialized plot specifications
+- `epa_res`: compare multiple runs, result bundles, or metric outputs
 
 Benchmark tools:
 
-- `epa_bench`: run batch benchmarks across many cases
-- `epa_benchall`: run the full multi-case workflow including summary plots and LaTeX tables
-- `epa_plot_summary`: generate summary plots from benchmark CSV outputs
-- `epa_metric_res`: aggregate and compare metric result files
+- `epa_bench`: run multi-case benchmarks across many prepared cases
+- `epa_benchall`: run the full benchmark workflow, including summary plots and LaTeX tables
+
+Advanced utilities such as `epa_config`, `epa_fig`, `epa_plot_summary`, and `epa_metric_res` are documented in the [CLI Reference](cli.md).
 
 ## Typical Workflow
 
-1. Prepare a reference trajectory and an estimated trajectory
-2. Run `epa` for end-to-end alignment and evaluation
-3. Use `epa_ape` or `epa_rpe` for focused metric analysis
+1. Prepare one reference trajectory and one estimated trajectory
+2. Run `epa` (or `epica`) to align them and generate a run directory with metrics and plots
+3. Use `epa_traj`, `epa_ape`, or `epa_rpe` when you want more focused inspection
 4. Use `epa_res` to compare multiple runs
-5. Use benchmark tools for large-scale experiment summaries
-
-## Typical Outputs
-
-A typical run produces:
-
-- Alignment and evaluation metrics
-- CSV and JSON summaries
-- Trajectory and error plots
-- Serialized plot specifications for reproducible figure generation
-- Benchmark case summaries and aggregated reports
+5. Move to `epa_bench` or `epa_benchall` when you need batch evaluation
 
 ## Next Pages
 
-- [Quick Start](quickstart.md)
-- [CLI Reference](cli.md)
-- [Benchmark](benchmark.md)
-- [Troubleshooting](troubleshooting.md)
-- [Architecture](architecture.md)
+- [Quick Start](quickstart.md): run your first example end to end
+- [CLI Reference](cli.md): look up commands and frequently used options
+- [Benchmark](benchmark.md): run batch evaluation and generate summary artifacts
+- [Troubleshooting](troubleshooting.md): resolve common setup and runtime issues
+- [Architecture](architecture.md): understand the pipeline internals and module layout

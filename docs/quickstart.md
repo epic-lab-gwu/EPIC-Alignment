@@ -1,46 +1,87 @@
 # Quick Start
 
-This page walks through a first run using files provided by `epa`.
-
 ## Requirements
 
 - Python 3.10 or newer
 
-## Install
+## Installation
 
-Clone the repository and enter the project directory:
+Create and activate a virtual environment first:
 
 ```bash
-git clone https://github.com/epic-lab-gwu/epa.git epa
-cd epa
+conda create -n epa python=3.10 -y
+conda activate epa
 ```
 
 Install the base package:
 
 ```bash
-pip install -e .
+python -m pip install epica
 ```
 
 Optional extras:
 
 ```bash
-pip install -e .[dev]
-pip install -e .[rerun]
-pip install -e .[ros]
-pip install -e .[geo]
-pip install -e .[ipython]
+python -m pip install "epica[rerun]"
+python -m pip install "epica[ros]"
+python -m pip install "epica[geo]"
 ```
 
 Use:
 
-- `.[rerun]` if you want Rerun visualization
-- `.[ros]` if you want to read `bag`, `bag2`, or `mcap`
-- `.[geo]` if you want map overlays
-- `.[dev]` if you want tests and lint tools
+- `"epica[rerun]"` if you want Rerun visualization
+- `"epica[ros]"` if you want to read `bag`, `bag2`, or `mcap`
+- `"epica[geo]"` if you want map overlays
 
-## First End-to-End Run
+## Quick Start
 
-Template for your own dataset (replace paths and formats):
+For a general workspace:
+
+```bash
+epa --gt-csv <gt_file> --gt-format <gt_format> --est-path <est_file> --est-format <est_format> --plot
+```
+
+`--gt-format` and `--est-format` are optional. `epa` / `epica` defaults to `auto`; only set them when auto-detection is incorrect.
+
+Example with the included files:
+
+```bash
+epa \
+  --engine modular \
+  --gt-csv example_data/example_groundtruth.csv \
+  --est-path example_data/example_estimation.txt \
+  --est-format tum \
+  --t-max-diff 0.02 \
+  --plot
+```
+
+This command:
+
+1. Loads the reference trajectory from `example_data/example_groundtruth.csv`
+2. Loads the estimated trajectory from `example_data/example_estimation.txt`
+3. Runs time alignment, extrinsic calibration, and world-frame alignment
+4. Computes evaluation metrics
+5. Exports figures and summaries
+
+Single-case full workflow:
+
+```bash
+epa_all --gt <gt_file> --est <est_file> --format tum
+```
+
+Multi-case benchmark:
+
+```bash
+epa_bench --cases-root /path/to/cases_root
+```
+
+Multi-case full workflow:
+
+```bash
+epa_benchall --cases-root /path/to/cases_root
+```
+
+For your own dataset, replace the example paths and formats:
 
 ```bash
 epa \
@@ -51,28 +92,6 @@ epa \
   --rerun
 ```
 
-`--gt-format` and `--est-format` are optional. `epa` defaults to `auto`; only set them when auto-detection is incorrect.
-
-Example:
-
-```bash
-epa \
-  --engine modular \
-  --gt-csv example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --t-max-diff 0.02 \
-  --plot
-```
-
-This command:
-
-1. Loads the reference trajectory from `example_groundtruth.csv`
-2. Loads the estimated trajectory from `example_data/example_estimation.txt`
-3. Runs time alignment, extrinsic calibration, and world-frame alignment
-4. Computes evaluation metrics
-5. Exports figures and summaries
-
 ## What You Should See
 
 Each run creates a new directory under `outputs/`:
@@ -81,16 +100,41 @@ Each run creates a new directory under `outputs/`:
 outputs/run_YYYYmmdd_HHMMSS/
 ```
 
-Typical outputs:
+Typical layout:
+
+```text
+outputs/run_YYYYmmdd_HHMMSS/
+├── metrics.json
+├── metrics_summary.csv
+├── report_en.md
+├── report_zh.md
+└── plots/
+    ├── step1_cross_correlation.png
+    ├── step1_time_alignment.png
+    ├── step23_trajectory_alignment_3d.png
+    ├── ape_translation_part_raw.png
+    ├── ape_translation_part_hist.png
+    ├── ape_translation_part_box.png
+    ├── ape_translation_part_violin.png
+    ├── ape_translation_part_stats.png
+    ├── ape_translation_part_se3_raw.png
+    ├── rpe_translation_part_raw.png
+    ├── rpe_translation_part_hist.png
+    ├── rpe_translation_part_box.png
+    ├── rpe_translation_part_violin.png
+    ├── rpe_translation_part_stats.png
+    └── piecewise_segment_rmse.png
+```
+
+Most users will check these first:
 
 - `metrics.json`
 - `metrics_summary.csv`
-- `report_zh.md`
 - `report_en.md`
-- `plots/*.png`
-- stage figures such as time alignment and 3D trajectory plots (also in `plots/`)
+- `plots/step1_time_alignment.png`
+- `plots/step23_trajectory_alignment_3d.png`
 
-If `--plot` is enabled, `epa` also writes metric plots into `outputs/run_.../plots/`.
+`report_zh.md` is also generated in the current workflow. If `--plot` is enabled, `epa` also writes metric plots into `outputs/run_.../plots/`.
 
 ![Step 1 time alignment result](images/quickstart_step1_time_alignment.png)
 
@@ -100,7 +144,7 @@ If `--plot` is enabled, `epa` also writes metric plots into `outputs/run_.../plo
 
 *Step 2 and Step 3 output: aligned trajectories in 3D.*
 
-## Run APE and RPE Directly
+## Run APE and RPE
 
 You can evaluate the same trajectories directly with the metric tools:
 
@@ -136,14 +180,14 @@ Common variants:
 
 - Synchronize before plotting: `epa_traj --format tum --sync --ref 1 gt.tum est.tum --plot`
 - Align to the reference: `epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot`
-- Export converted trajectories: `epa_traj --format auto --save-as tum --out-dir outputs/traj_exports example_groundtruth.csv example_data/example_estimation.txt`
+- Export converted trajectories: `epa_traj --format auto --save-as tum --out-dir outputs/traj_exports example_data/example_groundtruth.csv example_data/example_estimation.txt`
 
 ## ROS Bag Inputs
 
 If your trajectories are stored in ROS logs, install ROS support first:
 
 ```bash
-pip install -e .[ros]
+python -m pip install "epica[ros]"
 ```
 
 Then provide both the format and topic:
@@ -167,12 +211,12 @@ Supported ROS log inputs:
 
 ## Optional Rerun Visualization
 
-If Rerun support is installed, add `--rerun` to the main pipeline or metric tools:
+If [Rerun](https://github.com/rerun-io/rerun) support is installed, add `--rerun` to the main pipeline or metric tools:
 
 ```bash
 epa \
   --engine modular \
-  --gt-csv example_groundtruth.csv \
+  --gt-csv example_data/example_groundtruth.csv \
   --est-path example_data/example_estimation.txt \
   --est-format tum \
   --plot \
