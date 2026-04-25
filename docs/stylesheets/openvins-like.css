@@ -216,6 +216,13 @@ code {
   line-height: 1.55;
 }
 
+.hljs-string,
+.hljs-quote,
+.hljs-template-variable,
+.hljs-subst {
+  color: #ffd7a8;
+}
+
 .code-copy-button {
   position: absolute;
   top: 0.6rem;
