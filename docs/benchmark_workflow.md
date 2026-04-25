@@ -1,4 +1,4 @@
-# Benchmark
+# Benchmark Workflow
 
 This page covers the batch evaluation tools provided by `epica`, including case discovery, repeated execution, and summary analysis. The main commands on this page are `epa_bench` and `epa_benchall`.
 
@@ -16,21 +16,7 @@ It:
 
 - discover benchmark cases from prepared dataset and ground-truth directories
 - run `epa` on each case
-- run the comparison pipeline on the same case
 - write per-case JSON records, logs, and summary tables
-
-## Fairness and Comparison Logic
-
-The harness evaluates `epa` and the comparison pipeline independently.
-
-Important properties:
-
-- offsets are not shared between systems
-- `epa` uses its own internal step-1 time alignment estimate
-- the comparison pipeline uses its own offset search logic inside the harness
-- summary tables record both systems' offsets, match counts, and final errors
-
-This avoids giving one system the timing result produced by the other.
 
 ## Required Inputs
 
@@ -47,7 +33,6 @@ Before running the harness, make sure you have:
 - a cases root with `benchmark/` and `GT/`
 - the `epica` repository root
 - a Python 3.10+ executable that can run `epica`
-- the comparison repository path if you want cross-tool benchmarking
 
 The harness exposes these main path options:
 
@@ -55,7 +40,6 @@ The harness exposes these main path options:
 - `--repo-root`
 - `--python-bin`
 - `--epa-src`
-- `--evo-repo`
 
 ## Basic Run
 
@@ -65,15 +49,14 @@ If you want the main batch benchmark workflow, start here:
 epa_bench \
   --cases-root /home/username/epa_data/benchmark_cases \
   --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/username/evo
+  --python-bin /home/username/miniconda3/envs/epa/bin/python
 ```
 
 This command:
 
 1. discover benchmark cases
 2. prepare temporary TUM trajectories for each case
-3. run `epa` and the comparison pipeline independently
+3. run `epa` on each case
 4. aggregate the per-case outputs into a summary table
 
 ## Full Multi-Case Workflow
@@ -90,8 +73,7 @@ Typical command:
 epa_benchall \
   --cases-root /home/username/epa_data/benchmark_cases \
   --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/username/evo
+  --python-bin /home/username/miniconda3/envs/epa/bin/python
 ```
 
 ## Per-Case Visualization (Raw / GT / Aligned)
@@ -142,7 +124,6 @@ epa_bench \
   --cases-root /home/username/epa_data/benchmark_cases \
   --repo-root /home/username/epa \
   --python-bin /home/username/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/username/evo \
   --case-pattern euroc \
   --dry-run
 ```
@@ -154,30 +135,9 @@ epa_bench \
   --cases-root /home/username/epa_data/benchmark_cases \
   --repo-root /home/username/epa \
   --python-bin /home/username/miniconda3/envs/epa/bin/python \
-  --evo-repo /home/username/evo \
   --methods rovio,svo_stereo \
   --limit 20
 ```
-
-## Time Alignment Sweep Controls
-
-The harness exposes offset-search controls for the comparison side of the benchmark:
-
-- `--t-max-diff`
-- `--offset-min`
-- `--offset-max`
-- `--offset-coarse-step`
-- `--offset-refine-window`
-- `--offset-refine-step`
-- `--min-match-ratio`
-
-These options control the comparison-side offset sweep.
-
-In practice:
-
-- widen the offset range if you expect larger timestamp drift
-- reduce step size if you want finer offset search
-- increase `min-match-ratio` if you want to reject weak associations
 
 ## Output Structure
 
@@ -222,25 +182,20 @@ Common contents:
 - `harness_config.json`: the run configuration snapshot
 - `unresolved_cases.csv`: discovered but unresolved cases, when applicable
 
-![Benchmark status counts](images/benchmark_status_counts.png)
-
-*Example benchmark summary: case status counts.*
-
 ## Key Columns in `summary.csv`
 
 Important fields include:
 
 - `case`, `dataset`, `method`
-- `status`, `epa_status`, `evo_status`
-- `epa_offset_est_s`, `evo_offset_s`
+- `status`, `epa_status`
+- `epa_offset_est_s`
 - `epa_ate_rmse_raw_m`, `epa_ate_rmse_step3_m`
-- `evo_ape_raw_rmse_m`, `evo_ape_se3_rmse_m`
-- `epa_improve_pct`, `evo_improve_pct`
-- `epa_matches_equivalent`, `evo_matches`
+- `epa_improve_pct`
+- `epa_matches_equivalent`
 - `epa_run_dir`
 - `error`
 
-These fields cover both metric comparison and failure diagnosis.
+These fields cover per-case metrics, output locations, and failure diagnosis.
 
 ## Summary Plot Generation
 
@@ -262,20 +217,8 @@ By default, plots are written to:
 Typical figures:
 
 - status count chart
-- aligned RMSE scatter plot
-- improvement percentage scatter plot
-- match-count scatter plot
-- offset distribution histogram
-- dataset-level aligned RMSE box plot
 - top-case aligned RMSE chart
-
-![Aligned RMSE scatter plot](images/benchmark_aligned_rmse_scatter_log.png)
-
-*Example benchmark comparison: aligned RMSE for `epa` vs the comparison pipeline.*
-
-![Aligned RMSE by dataset](images/benchmark_aligned_rmse_by_dataset_box.png)
-
-*Example benchmark comparison grouped by dataset.*
+- other benchmark summary figures under `<summary_dir>/plots/`
 
 Useful option:
 
@@ -363,12 +306,10 @@ If a harness run is incomplete or noisy, check these first:
 
 - the Python executable passed with `--python-bin`
 - the cases root path
-- the comparison repository path
 - unresolved cases listed in `unresolved_cases.csv`
 - per-case stderr logs under `logs/`
 
 If many cases have poor match counts, revisit:
 
 - `t-max-diff`
-- offset sweep range
 - minimum match ratio

@@ -245,5 +245,5 @@ epa_config --help
 ## Next Steps
 
 - Go to [CLI Reference](cli.md) for command-level options
-- Go to [Benchmark](benchmark.md) for batch evaluation workflows
+- Go to [Benchmark Workflow](benchmark_workflow.md) for batch evaluation workflows
 - Go to [Troubleshooting](troubleshooting.md) if your first run fails

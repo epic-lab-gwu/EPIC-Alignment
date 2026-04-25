@@ -1,4 +1,4 @@
-# Benchmark Study
+# Tool Comparison
 
 This page summarizes a direct benchmark study in which `epica` and `evo` were evaluated separately on 139 cases from the `euroc_mav`, `grand_tour`, `lamaria`, and `uzh_fpv` datasets.
 
@@ -22,11 +22,11 @@ Interpretation:
 - `epica` has a much lower median aligned RMSE.
 - Excluding critical cases removes the heavy-tailed failure regime and gives a clearer view of normal-case performance.
 
-<img src="images/benchmark_study_aligned_rmse_scatter.png" alt="Aligned RMSE scatter" style="width:72%; display:block; margin:0 auto;">
+<img src="../images/benchmark_study_aligned_rmse_scatter.png" alt="Aligned RMSE scatter" style="width:72%; display:block; margin:0 auto;">
 
 *Aligned RMSE scatter on non-critical comparable cases. Points below the diagonal favor `epica`.*
 
-<img src="images/benchmark_study_aligned_rmse_ecdf.png" alt="Aligned RMSE ECDF" style="width:72%; display:block; margin:0 auto;">
+<img src="../images/benchmark_study_aligned_rmse_ecdf.png" alt="Aligned RMSE ECDF" style="width:72%; display:block; margin:0 auto;">
 
 *Aligned RMSE ECDF on non-critical comparable cases. A left-shifted curve indicates better overall error distribution.*
 
@@ -57,17 +57,17 @@ Interpretation:
 - Dataset `lamaria` is excluded from the non-critical comparison because all comparable cases in the current run are classified as critical.
 - Ties are omitted from the dataset win column; in the current run they are `7` for `euroc_mav`, `24` for `grand_tour`, and `0` for `uzh_fpv`.
 
-<img src="images/benchmark_study_dataset_boxplot.png" alt="Per-dataset boxplot" style="width:72%; display:block; margin:0 auto;">
+<img src="../images/benchmark_study_dataset_boxplot.png" alt="Per-dataset boxplot" style="width:72%; display:block; margin:0 auto;">
 
 *Per-dataset aligned RMSE distribution for non-critical comparable cases.*
 
-<img src="images/benchmark_study_win_tie_loss_stacked.png" alt="Win tie loss stacked bar" style="width:72%; display:block; margin:0 auto;">
+<img src="../images/benchmark_study_win_tie_loss_stacked.png" alt="Win tie loss stacked bar" style="width:72%; display:block; margin:0 auto;">
 
 *Win / tie / loss counts under the benchmark-study winner rule.*
 
 ## Per-Case Comparison
 
-<img src="images/benchmark_study_improvement_box.png" alt="Improvement boxplot" style="width:72%; display:block; margin:0 auto;">
+<img src="../images/benchmark_study_improvement_box.png" alt="Improvement boxplot" style="width:72%; display:block; margin:0 auto;">
 
 *Improvement percentage distribution, added as an extra view for quick comparison.*
 

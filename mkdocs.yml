@@ -23,8 +23,8 @@ nav:
   - Home: index.md
   - Quick Start: quickstart.md
   - CLI Reference: cli.md
-  - Benchmark: benchmark.md
+  - Benchmark Workflow: benchmark_workflow.md
   - OpenVINS Integration: openvins_phase2_minimal.md
   - Architecture: architecture.md
   - Troubleshooting: troubleshooting.md
-  - Benchmark Study: benchmark_study.md
+  - Tool Comparison: tool_comparison.md

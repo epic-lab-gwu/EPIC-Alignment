@@ -223,6 +223,41 @@ code {
   color: #ffd7a8;
 }
 
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-name {
+  color: #8fd3ff;
+}
+
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.function_,
+.hljs-function .hljs-title,
+.hljs-section,
+.hljs-attr,
+.hljs-attribute,
+.hljs-selector-id,
+.hljs-selector-class,
+.hljs-link {
+  color: #9ee6ff;
+}
+
+.hljs-number,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-variable,
+.hljs-params,
+.hljs-type,
+.hljs-built_in {
+  color: #b8e7ff;
+}
+
+.hljs-comment,
+.hljs-meta {
+  color: #b3c7db;
+}
+
 .code-copy-button {
   position: absolute;
   top: 0.6rem;

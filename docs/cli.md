@@ -20,7 +20,7 @@ Utilities:
 - `epa_config`: manage reusable global and tool-level defaults
 - `epa_fig`: re-render plots from serialized plot bundles
 
-Benchmark tools are documented separately in [Benchmark](benchmark.md).
+Benchmark tools are documented separately in [Benchmark Workflow](benchmark_workflow.md).
 
 ## Shared Concepts
 
