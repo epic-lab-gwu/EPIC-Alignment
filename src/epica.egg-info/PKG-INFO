@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: epica
-Version: 0.1.5
+Version: 0.1.6
 Summary: Trajectory alignment and evaluation toolkit
 Requires-Python: >=3.10
 Description-Content-Type: text/markdown
@@ -20,6 +20,9 @@ Requires-Dist: mypy>=1.0; extra == "dev"
 Requires-Dist: ruff>=0.6; extra == "dev"
 Provides-Extra: ipython
 Requires-Dist: ipython>=8.0; extra == "ipython"
+Provides-Extra: analysis
+Requires-Dist: jupyter>=1.0; extra == "analysis"
+Requires-Dist: pandas>=2.0; extra == "analysis"
 
 # EPICA: Epic Trajectory Alignment and Evaluation Toolkit
 `EPICA` is a trajectory alignment and evaluation toolkit.
