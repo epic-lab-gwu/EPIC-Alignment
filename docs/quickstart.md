@@ -38,21 +38,15 @@ Use:
 For a general workspace:
 
 ```bash
-epa --gt-csv <gt_file> --gt-format <gt_format> --est-path <est_file> --est-format <est_format> --plot
+epa <gt_file> <est_file>
 ```
 
-`--gt-format` and `--est-format` are optional. `epa` / `epica` defaults to `auto`; only set them when auto-detection is incorrect.
+`epa` / `epica` defaults to format auto-detection and plot generation. Only set formats when auto-detection is incorrect.
 
 Example with the included files:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --t-max-diff 0.02 \
-  --plot
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
 This command:
@@ -72,24 +66,19 @@ epa_all --gt <gt_file> --est <est_file> --format tum
 Multi-case benchmark:
 
 ```bash
-epa_bench --cases-root /path/to/cases_root
+epa_bench /path/to/cases_root
 ```
 
 Multi-case full workflow:
 
 ```bash
-epa_benchall --cases-root /path/to/cases_root
+epa_benchall /path/to/cases_root
 ```
 
 For your own dataset, replace the example paths and formats:
 
 ```bash
-epa \
-  --gt-csv /path/to/your/gt.tum \
-  --est-path /path/to/your/est.tum \
-  --t-max-diff 0.02 \
-  --plot \
-  --rerun
+epa /path/to/your/gt.tum /path/to/your/est.tum --rerun
 ```
 
 ## What You Should See
@@ -193,14 +182,9 @@ python -m pip install "epica[ros]"
 Then provide both the format and topic:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv /path/to/run.bag \
-  --gt-format bag \
-  --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag \
-  --est-format bag \
-  --est-topic /odom
+epa /path/to/run.bag /path/to/run.bag \
+  --gt-format bag --gt-topic /vicon/pose \
+  --est-format bag --est-topic /odom
 ```
 
 Supported ROS log inputs:
@@ -214,13 +198,7 @@ Supported ROS log inputs:
 If [Rerun](https://github.com/rerun-io/rerun) support is installed, add `--rerun` to the main pipeline or metric tools:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --plot \
-  --rerun
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt --rerun
 ```
 
 <video class="doc-video" controls muted loop playsinline preload="metadata">

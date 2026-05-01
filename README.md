@@ -36,16 +36,13 @@ pip install "epica[geo]"    # map-related tools
 For General Workspace:
 
 ```bash
-epa --gt-csv <gt_file> --gt-format <gt_format> --est-path <est_file> --est-format <est_format> --plot
+epa <gt_file> <est_file>
 ```
 
 Example:
 
 ```bash
-epa \
-  --gt-csv ./example_data/example_groundtruth.csv --gt-format csv \
-  --est-path ./example_data/example_estimation.txt --est-format tum \
-  --plot
+epa ./example_data/example_groundtruth.csv ./example_data/example_estimation.txt
 ```
 
 Single-case full workflow:
@@ -57,13 +54,13 @@ epa_all --gt <gt_file> --est <est_file> --format tum
 Multi-case benchmark:
 
 ```bash
-epa_bench --cases-root /path/to/cases_root
+epa_bench /path/to/cases_root
 ```
 
 Multi-case full workflow:
 
 ```bash
-epa_benchall --cases-root /path/to/cases_root
+epa_benchall /path/to/cases_root
 ```
 
 OpenVINS examples:

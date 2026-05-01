@@ -56,12 +56,10 @@ def _build_epa_cmd(
         python_bin,
         "-m",
         "epa.cli",
-        "--gt-csv",
         str(gt_path),
+        str(est_path),
         "--gt-format",
         "tum",
-        "--est-path",
-        str(est_path),
         "--est-format",
         "tum",
     ]

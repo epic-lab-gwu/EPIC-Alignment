@@ -31,26 +31,25 @@ export EPA_DATA_ROOT=/home/username/epa_data
 Before running the harness, make sure you have:
 
 - a cases root with `benchmark/` and `GT/`
-- the `epica` repository root
-- a Python 3.10+ executable that can run `epica`
+- a Python 3.10+ environment that can run `epica`
 
-The harness exposes these main path options:
+The common case only needs the cases root. These path options remain available for scripts and unusual environments:
 
 - `--cases-root`
 - `--repo-root`
 - `--python-bin`
 - `--epa-src`
+- `--jobs`
 
 ## Basic Run
 
 If you want the main batch benchmark workflow, start here:
 
 ```bash
-epa_bench \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python
+epa_bench /home/username/epa_data/benchmark_cases
 ```
+
+The default is `--jobs auto`, which uses the available CPU cores without exceeding the number of cases. Add `--jobs N` when you want to override it.
 
 This command:
 
@@ -70,10 +69,7 @@ Use `epa_benchall` if you want the full batch workflow in one command:
 Typical command:
 
 ```bash
-epa_benchall \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python
+epa_benchall /home/username/epa_data/benchmark_cases
 ```
 
 ## Per-Case Visualization (Raw / GT / Aligned)
@@ -97,13 +93,7 @@ The command resolves the latest `run_*` automatically when `--run-dir` points to
 Direct `epa` command (manual paths):
 
 ```bash
-epa \
-  --gt-csv /path/to/gt.tum \
-  --gt-format tum \
-  --est-path /path/to/est.tum \
-  --est-format tum \
-  --plot \
-  --rerun
+epa /path/to/gt.tum /path/to/est.tum --rerun
 ```
 
 ## Useful Filters
@@ -121,9 +111,7 @@ List matching cases only:
 
 ```bash
 epa_bench \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  /home/username/epa_data/benchmark_cases \
   --case-pattern euroc \
   --dry-run
 ```
@@ -132,9 +120,7 @@ Run only a subset of methods:
 
 ```bash
 epa_bench \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  /home/username/epa_data/benchmark_cases \
   --methods rovio,svo_stereo \
   --limit 20
 ```
@@ -321,8 +307,8 @@ Recommended workflow:
 
 If a harness run is incomplete or noisy, check these first:
 
-- the Python executable passed with `--python-bin`
 - the cases root path
+- the active Python environment
 - unresolved cases listed in `unresolved_cases.csv`
 - per-case stderr logs under `logs/`
 

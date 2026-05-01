@@ -5,8 +5,8 @@ from typing import List
 
 @dataclass(frozen=True)
 class PipelineOptions:
-    gt_csv: str = "example_data/example_groundtruth.csv"
-    gt_format: str = "csv"
+    gt_csv: str = ""
+    gt_format: str = "auto"
     gt_topic: str = ""
     est_path: str = ""
     est_format: str = "auto"

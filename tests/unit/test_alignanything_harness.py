@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from epa.benchmark.alignanything_harness import (
+    _resolve_jobs,
     _write_summary_md,
     discover_cases,
     load_pose_table,
@@ -100,4 +101,17 @@ def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:
     assert "Invalid --cases-root" in msg
     assert "EPA_DATA_ROOT" in msg
     assert "EPA_CASES_ROOT" in msg
-    assert "epa_bench --cases-root" in msg
+    assert "epa_bench /home/yifu/epa_data/benchmark_cases" in msg
+
+
+def test_benchmark_parser_accepts_positional_cases_root_and_jobs() -> None:
+    parser = __import__("epa.benchmark.alignanything_harness", fromlist=["build_parser"]).build_parser()
+    args = parser.parse_args(["/tmp/cases_root", "--jobs", "4"])
+    assert args.cases_root_pos == "/tmp/cases_root"
+    assert args.jobs == "4"
+
+
+def test_resolve_jobs_auto_is_bounded_by_case_count() -> None:
+    assert _resolve_jobs("auto", 0) == 1
+    assert _resolve_jobs("auto", 2) <= 2
+    assert _resolve_jobs("1", 100) == 1

@@ -10,6 +10,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="epa CLI wrapper (modular engine)."
     )
     parser.add_argument(
+        "inputs",
+        nargs="*",
+        metavar="INPUT",
+        help="Optional positional inputs: <gt_file> <est_file>.",
+    )
+    parser.add_argument(
         "--engine",
         choices=["modular"],
         default="modular",
@@ -20,17 +26,29 @@ def build_parser() -> argparse.ArgumentParser:
         default="",
         help="Path to JSON config file. If set, config values override CLI flags.",
     )
-    parser.add_argument("--gt-csv", default="example_data/example_groundtruth.csv", help="Path to GT trajectory file/bag")
+    parser.add_argument(
+        "--gt",
+        dest="gt_alias",
+        default="",
+        help="Ground-truth trajectory path. Alias for --gt-csv.",
+    )
+    parser.add_argument("--gt-csv", default="", help="Path to GT trajectory file/bag")
     parser.add_argument(
         "--gt-format",
         choices=["auto", "csv", "euroc", "tum", "kitti", "bag", "bag2", "mcap"],
-        default="csv",
+        default="auto",
         help="Ground-truth trajectory format",
     )
     parser.add_argument(
         "--gt-topic",
         default="",
         help="GT topic for bag inputs (e.g. /vicon/pose)",
+    )
+    parser.add_argument(
+        "--est",
+        dest="est_alias",
+        default="",
+        help="Estimated trajectory path. Alias for --est-path.",
     )
     parser.add_argument("--est-path", default="", help="Path to estimation trajectory")
     parser.add_argument(
@@ -319,9 +337,50 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _normalize_inputs(parser: argparse.ArgumentParser, args: argparse.Namespace) -> argparse.Namespace:
+    inputs = list(getattr(args, "inputs", []) or [])
+    if len(inputs) > 2:
+        parser.error("Expected at most two positional inputs: <gt_file> <est_file>.")
+
+    gt_flags = [value for value in [getattr(args, "gt_alias", ""), getattr(args, "gt_csv", "")] if value]
+    est_flags = [value for value in [getattr(args, "est_alias", ""), getattr(args, "est_path", "")] if value]
+    raw_argv = list(getattr(args, "_raw_argv", []) or [])
+    explicit_gt = any(
+        tok == "--gt" or tok.startswith("--gt=") or tok == "--gt-csv" or tok.startswith("--gt-csv=")
+        for tok in raw_argv
+    )
+    explicit_est = any(
+        tok == "--est" or tok.startswith("--est=") or tok == "--est-path" or tok.startswith("--est-path=")
+        for tok in raw_argv
+    )
+    if len(gt_flags) > 1:
+        parser.error("Use only one of --gt or --gt-csv.")
+    if len(est_flags) > 1:
+        parser.error("Use only one of --est or --est-path.")
+    if inputs and (explicit_gt or explicit_est):
+        parser.error("Use either positional inputs or --gt/--est flags, not both.")
+
+    if inputs:
+        if len(inputs) != 2:
+            parser.error("Positional mode requires exactly two inputs: <gt_file> <est_file>.")
+        args.gt_csv, args.est_path = inputs
+    else:
+        args.gt_csv = gt_flags[0] if gt_flags else ""
+        args.est_path = est_flags[0] if est_flags else ""
+
+    if not bool(getattr(args, "synthetic", False)):
+        if not args.gt_csv or not args.est_path:
+            parser.error("Provide <gt_file> <est_file>, or use --gt/--est.")
+
+    return args
+
+
 def main(argv=None) -> int:
     parser = build_parser()
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args_with_config(parser, argv=argv, config_dest="config", tool_name="epa")
+    args._raw_argv = raw_argv
+    args = _normalize_inputs(parser, args)
     return run(args)
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import copy
 import csv
 import json
@@ -150,11 +151,7 @@ def _format_cases_root_error(
     if not cases_root.exists():
         detail_lines.insert(0, f"- Base path does not exist: {cases_root}")
 
-    cmd_example = (
-        "epa_bench "
-        f"--cases-root {suggested_cases_root} "
-        "--repo-root /path/to/epa"
-    )
+    cmd_example = f"epa_bench {suggested_cases_root}"
 
     lines = [
         f"Invalid --cases-root: {cases_root}",
@@ -651,7 +648,32 @@ def _default_cases_root() -> str:
     override = os.getenv("EPA_CASES_ROOT", "").strip() or os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip()
     if override:
         return override
-    return str(_default_data_root() / "AlignAnything" / "AlignAnything")
+    return str(_default_data_root() / "benchmark_cases")
+
+
+def _default_evo_repo() -> str:
+    return os.getenv("EVO_REPO", "").strip()
+
+
+def _parse_jobs(value: str) -> str:
+    text = str(value).strip().lower()
+    if text == "auto":
+        return text
+    try:
+        jobs = int(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--jobs must be a positive integer or 'auto'.") from exc
+    if jobs < 1:
+        raise argparse.ArgumentTypeError("--jobs must be >= 1 or 'auto'.")
+    return str(jobs)
+
+
+def _resolve_jobs(value: str, case_count: int) -> int:
+    text = str(value).strip().lower()
+    if text == "auto":
+        cpu_count = os.cpu_count() or 1
+        return max(1, min(cpu_count, max(1, case_count)))
+    return int(text)
 
 
 def _resolve_cli_path(path_str: str, repo_root: Path) -> Path:
@@ -678,6 +700,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Independent benchmark harness for EPA vs evo over a cases root."
     )
     parser.add_argument(
+        "cases_root_pos",
+        nargs="?",
+        metavar="cases_root",
+        help="Cases root containing benchmark/ and GT/. Overrides --cases-root.",
+    )
+    parser.add_argument(
         "--cases-root",
         "--alignanything-root",
         dest="cases_root",
@@ -685,7 +713,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Path to the cases root containing benchmark/ and GT/. "
             "Default: $EPA_CASES_ROOT or $EPA_ALIGNANYTHING_ROOT or "
-            "$EPA_DATA_ROOT/AlignAnything/AlignAnything."
+            "$EPA_DATA_ROOT/benchmark_cases."
         ),
     )
     parser.add_argument(
@@ -700,7 +728,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--python-bin",
-        default="/home/yifu/miniconda3/envs/epa/bin/python",
+        default=sys.executable,
         help="Python executable used to run epa (should be py3.10+).",
     )
     parser.add_argument(
@@ -710,8 +738,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--evo-repo",
-        default="/home/yifu/evo",
-        help="Local evo repository path for imports.",
+        default=_default_evo_repo(),
+        help="Local evo repository path for imports. Default: $EVO_REPO.",
     )
     parser.add_argument(
         "--case-pattern",
@@ -725,6 +753,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma-separated method filter, e.g. 'rovio,svo_stereo'.",
     )
     parser.add_argument("--limit", type=int, default=0, help="Max number of cases to run.")
+    parser.add_argument(
+        "-j",
+        "--jobs",
+        type=_parse_jobs,
+        default="auto",
+        help="Number of benchmark cases to run in parallel, or 'auto'. Default: auto.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Discover and print cases only.")
 
     parser.add_argument("--dt-resample", type=float, default=0.001, help="epa dt_resample.")
@@ -793,9 +828,187 @@ def _filter_cases(
     return selected
 
 
+def _failed_summary_row(
+    case: BenchmarkCase,
+    *,
+    gt: str,
+    est: str,
+    error: str,
+) -> dict[str, object]:
+    return {
+        "case": case.case_id,
+        "dataset": case.dataset,
+        "method": case.method,
+        "status": "failed",
+        "gt": gt,
+        "est": est,
+        "epa_status": "failed",
+        "evo_status": "failed",
+        "epa_offset_est_s": float("nan"),
+        "evo_offset_s": float("nan"),
+        "epa_ate_rmse_raw_m": float("nan"),
+        "epa_ate_rmse_step3_m": float("nan"),
+        "evo_ape_raw_rmse_m": float("nan"),
+        "evo_ape_se3_rmse_m": float("nan"),
+        "epa_improve_pct": float("nan"),
+        "evo_improve_pct": float("nan"),
+        "epa_xcorr_peak": float("nan"),
+        "epa_xcorr_psr": float("nan"),
+        "epa_omega_improve_pct": float("nan"),
+        "epa_matches_equivalent": float("nan"),
+        "evo_matches": float("nan"),
+        "epa_run_dir": "",
+        "epa_stdout_log": "",
+        "epa_stderr_log": "",
+        "evo_sweep_evals": 0,
+        "error": error,
+    }
+
+
+def _run_benchmark_case(
+    case: BenchmarkCase,
+    *,
+    align_root: Path,
+    prepared_dir: Path,
+    logs_dir: Path,
+    case_json_dir: Path,
+    repo_root: Path,
+    python_bin: Path,
+    epa_src: Path,
+    dt_resample: float,
+    quat_interp: str,
+    mplconfig_root: Path,
+    evo_repo: Path,
+    t_max_diff: float,
+    offset_min: float,
+    offset_max: float,
+    offset_coarse_step: float,
+    offset_refine_window: float,
+    offset_refine_step: float,
+    min_match_ratio: float,
+) -> dict[str, object]:
+    case_payload: dict[str, object] = {
+        "case": case.case_id,
+        "dataset": case.dataset,
+        "method": case.method,
+        "sequence": case.sequence,
+        "gt_path": str(case.gt_path),
+        "est_path": str(case.est_path),
+        "status": "failed",
+        "offset_policy": "epa_internal + evo_independent_sweep",
+    }
+    try:
+        gt_data = load_pose_table(case.gt_path)
+        est_data = load_pose_table(case.est_path)
+    except Exception as exc:
+        case_payload["error"] = f"Load error: {exc}"
+        case_json_path = case_json_dir / f"{case.case_id}.json"
+        case_json_path.parent.mkdir(parents=True, exist_ok=True)
+        case_json_path.write_text(json.dumps(case_payload, indent=2), encoding="utf-8")
+        return _failed_summary_row(
+            case,
+            gt=str(case.gt_path),
+            est=str(case.est_path),
+            error=str(exc),
+        )
+
+    gt_tum = prepared_dir / f"{case.case_id}__gt.tum"
+    est_tum = prepared_dir / f"{case.case_id}__est.tum"
+    _write_tum(gt_tum, gt_data)
+    _write_tum(est_tum, est_data)
+
+    epa_stdout_log = logs_dir / "epa" / f"{case.case_id}.stdout.log"
+    epa_stderr_log = logs_dir / "epa" / f"{case.case_id}.stderr.log"
+    epa_result = _run_epa_case(
+        case,
+        gt_tum,
+        est_tum,
+        repo_root=repo_root,
+        python_bin=python_bin,
+        epa_src=epa_src,
+        dt_resample=dt_resample,
+        quat_interp=quat_interp,
+        mplconfigdir=mplconfig_root / case.case_id,
+        stdout_log_path=epa_stdout_log,
+        stderr_log_path=epa_stderr_log,
+    )
+
+    try:
+        evo_result = _run_evo_case(
+            gt_data=gt_data,
+            est_data=est_data,
+            evo_repo=evo_repo,
+            t_max_diff=t_max_diff,
+            offset_min=offset_min,
+            offset_max=offset_max,
+            offset_coarse_step=offset_coarse_step,
+            offset_refine_window=offset_refine_window,
+            offset_refine_step=offset_refine_step,
+            min_match_ratio=min_match_ratio,
+        )
+    except Exception as exc:
+        evo_result = {
+            "status": "failed",
+            "offset_s": float("nan"),
+            "matches": 0,
+            "ape_raw_rmse_m": float("nan"),
+            "ape_se3_rmse_m": float("nan"),
+            "improve_pct": float("nan"),
+            "sweep_evals": 0,
+            "error": str(exc),
+        }
+
+    both_ok = (epa_result.get("status") == "ok") and (evo_result.get("status") == "ok")
+    row = {
+        "case": case.case_id,
+        "dataset": case.dataset,
+        "method": case.method,
+        "status": _bool_to_status(both_ok),
+        "gt": str(case.gt_path.relative_to(align_root)),
+        "est": str(case.est_path.relative_to(align_root)),
+        "epa_status": epa_result.get("status", "failed"),
+        "evo_status": evo_result.get("status", "failed"),
+        "epa_offset_est_s": _as_float(epa_result.get("offset_est_s")),
+        "evo_offset_s": _as_float(evo_result.get("offset_s")),
+        "epa_ate_rmse_raw_m": _as_float(epa_result.get("ate_rmse_raw_m")),
+        "epa_ate_rmse_step3_m": _as_float(epa_result.get("ate_rmse_step3_m")),
+        "evo_ape_raw_rmse_m": _as_float(evo_result.get("ape_raw_rmse_m")),
+        "evo_ape_se3_rmse_m": _as_float(evo_result.get("ape_se3_rmse_m")),
+        "epa_improve_pct": _as_float(epa_result.get("improve_raw_to_step3_pct")),
+        "evo_improve_pct": _as_float(evo_result.get("improve_pct")),
+        "epa_xcorr_peak": _as_float(epa_result.get("xcorr_peak")),
+        "epa_xcorr_psr": _as_float(epa_result.get("xcorr_psr")),
+        "epa_omega_improve_pct": _as_float(epa_result.get("omega_improve_pct")),
+        "epa_matches_equivalent": _as_float(epa_result.get("evo_matches_equivalent")),
+        "evo_matches": _as_float(evo_result.get("matches")),
+        "epa_run_dir": str(epa_result.get("run_dir", "")),
+        "epa_stdout_log": str(epa_result.get("stdout_log", "")),
+        "epa_stderr_log": str(epa_result.get("stderr_log", "")),
+        "evo_sweep_evals": int(evo_result.get("sweep_evals", 0)),
+        "error": "",
+    }
+    if row["status"] != "ok":
+        row["error"] = str(epa_result.get("stderr_tail", "") or evo_result.get("error", ""))
+
+    case_payload.update(
+        {
+            "status": row["status"],
+            "gt_prepared_tum": str(gt_tum),
+            "est_prepared_tum": str(est_tum),
+            "epa": epa_result,
+            "evo": evo_result,
+        }
+    )
+    case_json_path = case_json_dir / f"{case.case_id}.json"
+    case_json_path.parent.mkdir(parents=True, exist_ok=True)
+    case_json_path.write_text(json.dumps(case_payload, indent=2), encoding="utf-8")
+    return row
+
+
 def run(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
-    align_root = _resolve_cli_path(args.cases_root, repo_root)
+    cases_root_arg = str(getattr(args, "cases_root_pos", "") or getattr(args, "cases_root", ""))
+    align_root = _resolve_cli_path(cases_root_arg, repo_root)
     output_root = (
         _resolve_cli_path(args.output_root, repo_root)
         if str(args.output_root).strip()
@@ -803,7 +1016,7 @@ def run(args: argparse.Namespace) -> int:
     )
     python_bin = _resolve_cli_path(args.python_bin, repo_root)
     epa_src = _resolve_cli_path(args.epa_src, repo_root)
-    evo_repo = _resolve_cli_path(args.evo_repo, repo_root)
+    evo_repo = _resolve_cli_path(args.evo_repo, repo_root) if str(args.evo_repo).strip() else Path("")
 
     cases, unresolved = discover_cases(align_root)
     cases = _filter_cases(cases, args.case_pattern, args.methods, args.limit)
@@ -825,150 +1038,57 @@ def run(args: argparse.Namespace) -> int:
     if unresolved:
         _write_csv(unresolved, run_dir / "unresolved_cases.csv")
 
-    summary_rows: list[dict[str, object]] = []
-    for index, case in enumerate(cases, start=1):
-        print(f"[{index}/{len(cases)}] {case.case_id}")
-        case_payload: dict[str, object] = {
-            "case": case.case_id,
-            "dataset": case.dataset,
-            "method": case.method,
-            "sequence": case.sequence,
-            "gt_path": str(case.gt_path),
-            "est_path": str(case.est_path),
-            "status": "failed",
-            "offset_policy": "epa_internal + evo_independent_sweep",
-        }
-        try:
-            gt_data = load_pose_table(case.gt_path)
-            est_data = load_pose_table(case.est_path)
-        except Exception as exc:
-            case_payload["error"] = f"Load error: {exc}"
-            case_json_path = case_json_dir / f"{case.case_id}.json"
-            case_json_path.parent.mkdir(parents=True, exist_ok=True)
-            case_json_path.write_text(json.dumps(case_payload, indent=2), encoding="utf-8")
-            summary_rows.append(
-                {
-                    "case": case.case_id,
-                    "dataset": case.dataset,
-                    "method": case.method,
-                    "status": "failed",
-                    "gt": str(case.gt_path),
-                    "est": str(case.est_path),
-                    "epa_status": "failed",
-                    "evo_status": "failed",
-                    "epa_offset_est_s": float("nan"),
-                    "evo_offset_s": float("nan"),
-                    "epa_ate_rmse_raw_m": float("nan"),
-                    "epa_ate_rmse_step3_m": float("nan"),
-                    "evo_ape_raw_rmse_m": float("nan"),
-                    "evo_ape_se3_rmse_m": float("nan"),
-                    "epa_improve_pct": float("nan"),
-                    "evo_improve_pct": float("nan"),
-                    "epa_xcorr_peak": float("nan"),
-                    "epa_xcorr_psr": float("nan"),
-                    "epa_omega_improve_pct": float("nan"),
-                    "epa_matches_equivalent": float("nan"),
-                    "evo_matches": float("nan"),
-                    "epa_run_dir": "",
-                    "epa_stdout_log": "",
-                    "epa_stderr_log": "",
-                    "evo_sweep_evals": 0,
-                    "error": str(exc),
-                }
-            )
-            continue
-
-        gt_tum = prepared_dir / f"{case.case_id}__gt.tum"
-        est_tum = prepared_dir / f"{case.case_id}__est.tum"
-        _write_tum(gt_tum, gt_data)
-        _write_tum(est_tum, est_data)
-
-        epa_stdout_log = logs_dir / "epa" / f"{case.case_id}.stdout.log"
-        epa_stderr_log = logs_dir / "epa" / f"{case.case_id}.stderr.log"
-        epa_result = _run_epa_case(
-            case,
-            gt_tum,
-            est_tum,
-            repo_root=repo_root,
-            python_bin=python_bin,
-            epa_src=epa_src,
-            dt_resample=args.dt_resample,
-            quat_interp=args.quat_interp,
-            mplconfigdir=mplconfigdir,
-            stdout_log_path=epa_stdout_log,
-            stderr_log_path=epa_stderr_log,
-        )
-
-        try:
-            evo_result = _run_evo_case(
-                gt_data=gt_data,
-                est_data=est_data,
-                evo_repo=evo_repo,
-                t_max_diff=args.t_max_diff,
-                offset_min=args.offset_min,
-                offset_max=args.offset_max,
-                offset_coarse_step=args.offset_coarse_step,
-                offset_refine_window=args.offset_refine_window,
-                offset_refine_step=args.offset_refine_step,
-                min_match_ratio=args.min_match_ratio,
-            )
-        except Exception as exc:
-            evo_result = {
-                "status": "failed",
-                "offset_s": float("nan"),
-                "matches": 0,
-                "ape_raw_rmse_m": float("nan"),
-                "ape_se3_rmse_m": float("nan"),
-                "improve_pct": float("nan"),
-                "sweep_evals": 0,
-                "error": str(exc),
+    jobs = _resolve_jobs(args.jobs, len(cases))
+    worker_kwargs = {
+        "align_root": align_root,
+        "prepared_dir": prepared_dir,
+        "logs_dir": logs_dir,
+        "case_json_dir": case_json_dir,
+        "repo_root": repo_root,
+        "python_bin": python_bin,
+        "epa_src": epa_src,
+        "dt_resample": args.dt_resample,
+        "quat_interp": args.quat_interp,
+        "mplconfig_root": mplconfigdir,
+        "evo_repo": evo_repo,
+        "t_max_diff": args.t_max_diff,
+        "offset_min": args.offset_min,
+        "offset_max": args.offset_max,
+        "offset_coarse_step": args.offset_coarse_step,
+        "offset_refine_window": args.offset_refine_window,
+        "offset_refine_step": args.offset_refine_step,
+        "min_match_ratio": args.min_match_ratio,
+    }
+    summary_rows_by_index: dict[int, dict[str, object]] = {}
+    if jobs == 1:
+        for index, case in enumerate(cases, start=1):
+            print(f"[{index}/{len(cases)}] {case.case_id}")
+            summary_rows_by_index[index] = _run_benchmark_case(case, **worker_kwargs)
+    else:
+        print(f"Running benchmark cases with {jobs} workers.")
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            futures = {
+                executor.submit(_run_benchmark_case, case, **worker_kwargs): (index, case)
+                for index, case in enumerate(cases, start=1)
             }
+            completed = 0
+            for future in as_completed(futures):
+                index, case = futures[future]
+                completed += 1
+                try:
+                    summary_rows_by_index[index] = future.result()
+                    status = summary_rows_by_index[index].get("status", "unknown")
+                    print(f"[{completed}/{len(cases)}] {case.case_id} -> {status}")
+                except Exception as exc:
+                    print(f"[{completed}/{len(cases)}] {case.case_id} -> failed: {exc}")
+                    summary_rows_by_index[index] = _failed_summary_row(
+                        case,
+                        gt=str(case.gt_path),
+                        est=str(case.est_path),
+                        error=str(exc),
+                    )
 
-        both_ok = (epa_result.get("status") == "ok") and (evo_result.get("status") == "ok")
-        row = {
-            "case": case.case_id,
-            "dataset": case.dataset,
-            "method": case.method,
-            "status": _bool_to_status(both_ok),
-            "gt": str(case.gt_path.relative_to(align_root)),
-            "est": str(case.est_path.relative_to(align_root)),
-            "epa_status": epa_result.get("status", "failed"),
-            "evo_status": evo_result.get("status", "failed"),
-            "epa_offset_est_s": _as_float(epa_result.get("offset_est_s")),
-            "evo_offset_s": _as_float(evo_result.get("offset_s")),
-            "epa_ate_rmse_raw_m": _as_float(epa_result.get("ate_rmse_raw_m")),
-            "epa_ate_rmse_step3_m": _as_float(epa_result.get("ate_rmse_step3_m")),
-            "evo_ape_raw_rmse_m": _as_float(evo_result.get("ape_raw_rmse_m")),
-            "evo_ape_se3_rmse_m": _as_float(evo_result.get("ape_se3_rmse_m")),
-            "epa_improve_pct": _as_float(epa_result.get("improve_raw_to_step3_pct")),
-            "evo_improve_pct": _as_float(evo_result.get("improve_pct")),
-            "epa_xcorr_peak": _as_float(epa_result.get("xcorr_peak")),
-            "epa_xcorr_psr": _as_float(epa_result.get("xcorr_psr")),
-            "epa_omega_improve_pct": _as_float(epa_result.get("omega_improve_pct")),
-            "epa_matches_equivalent": _as_float(epa_result.get("evo_matches_equivalent")),
-            "evo_matches": _as_float(evo_result.get("matches")),
-            "epa_run_dir": str(epa_result.get("run_dir", "")),
-            "epa_stdout_log": str(epa_result.get("stdout_log", "")),
-            "epa_stderr_log": str(epa_result.get("stderr_log", "")),
-            "evo_sweep_evals": int(evo_result.get("sweep_evals", 0)),
-            "error": "",
-        }
-        if row["status"] != "ok":
-            row["error"] = str(epa_result.get("stderr_tail", "") or evo_result.get("error", ""))
-        summary_rows.append(row)
-
-        case_payload.update(
-            {
-                "status": row["status"],
-                "gt_prepared_tum": str(gt_tum),
-                "est_prepared_tum": str(est_tum),
-                "epa": epa_result,
-                "evo": evo_result,
-            }
-        )
-        case_json_path = case_json_dir / f"{case.case_id}.json"
-        case_json_path.parent.mkdir(parents=True, exist_ok=True)
-        case_json_path.write_text(json.dumps(case_payload, indent=2), encoding="utf-8")
+    summary_rows = [summary_rows_by_index[index] for index in range(1, len(cases) + 1)]
 
     _write_csv(summary_rows, run_dir / "summary.csv")
     _write_summary_md(summary_rows, run_dir / "summary.md")

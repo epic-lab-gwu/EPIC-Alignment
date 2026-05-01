@@ -1252,7 +1252,7 @@ def run_pipeline_modular(args, script_dir: Path):
             pos_est[i] = Rw_true.T @ (p_offset - tw_true)
     else:
         if args.est_path is None or args.est_path == "":
-            raise ValueError("Real mode requires --est-path")
+            raise ValueError("Real mode requires <gt_file> <est_file>, or --gt/--est.")
 
         est_path = Path(args.est_path)
         if not est_path.is_absolute():
