@@ -8,6 +8,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -761,6 +762,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Number of benchmark cases to run in parallel, or 'auto'. Default: auto.",
     )
     parser.add_argument("--dry-run", action="store_true", help="Discover and print cases only.")
+    parser.add_argument(
+        "--keep-prepared",
+        action="store_true",
+        help="Keep prepared_tum/ files for later case reruns. Default removes them after summary generation.",
+    )
 
     parser.add_argument("--dt-resample", type=float, default=0.001, help="epa dt_resample.")
     parser.add_argument(
@@ -1101,6 +1107,9 @@ def run(args: argparse.Namespace) -> int:
         )
     except Exception as exc:
         print(f"[warn] Failed to generate LaTeX tables: {exc}")
+
+    if not bool(getattr(args, "keep_prepared", False)) and prepared_dir.exists():
+        shutil.rmtree(prepared_dir)
 
     done = sum(1 for row in summary_rows if row["status"] == "ok")
     print(f"Finished: {done}/{len(summary_rows)} cases both_ok")

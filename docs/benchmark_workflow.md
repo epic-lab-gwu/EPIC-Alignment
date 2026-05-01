@@ -151,8 +151,6 @@ outputs/<cases_root_name>_bench/run_YYYYmmdd_HHMMSS/
 │   ├── main_table.tex
 │   ├── dataset_table.tex
 │   └── appendix_full_table.tex
-└── prepared_tum/
-    └── ...
 ```
 
 Common contents:
@@ -164,9 +162,10 @@ Common contents:
 - `paper_tables/appendix_full_table.tex`: full per-case LaTeX longtable for appendix
 - `cases/*.json`: one JSON file per case
 - `logs/`: stdout and stderr logs for executed tools
-- `prepared_tum/`: prepared TUM files used by the harness
 - `harness_config.json`: the run configuration snapshot
 - `unresolved_cases.csv`: discovered but unresolved cases, when applicable
+
+`prepared_tum/` is removed by default to keep benchmark outputs small. Add `--keep-prepared` if you want to keep those intermediate files for later `epa_rerun` debugging.
 
 ## Analysis Notebook
 

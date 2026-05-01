@@ -91,6 +91,22 @@ def test_load_estimation_trajectory_auto_kitti(tmp_path: Path) -> None:
     np.testing.assert_allclose(pos[:, 0], np.array([1.0, 2.0]))
 
 
+def test_load_estimation_trajectory_auto_extended_tum(tmp_path: Path) -> None:
+    traj_path = tmp_path / "est.txt"
+    traj_path.write_text(
+        "# timestamp tx ty tz qx qy qz qw covariance...\n"
+        "1403715278.51214 0.002838 0.000289 0.000852 0.826838 0.001484 0.562417 0.004867 0 0 0 0\n"
+        "1403715278.56214 0.006419 0.001126 0.003255 0.823966 0.000233 0.566622 0.004321 0 0 0 0\n",
+        encoding="utf-8",
+    )
+
+    t, pos, quat = load_estimation_trajectory(traj_path, est_format="auto")
+
+    assert t.shape == (2,)
+    np.testing.assert_allclose(pos[:, 0], np.array([0.002838, 0.006419]))
+    np.testing.assert_allclose(np.linalg.norm(quat, axis=1), np.ones(2))
+
+
 def test_load_reference_trajectory_tum(tmp_path: Path) -> None:
     traj_path = tmp_path / "gt.tum"
     traj_path.write_text(

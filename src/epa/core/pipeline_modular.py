@@ -28,6 +28,7 @@ from .evaluation import (
     summarize_abs_errors,
 )
 from .io_utils import (
+    compact_metrics_payload,
     load_estimation_trajectory,
     load_reference_trajectory,
     make_output_dir,
@@ -2059,10 +2060,19 @@ def run_pipeline_modular(args, script_dir: Path):
     plot_files = [p for p in plot_files if p.name in retained_plot_names and p.exists()]
     metrics_payload["metadata"]["plot"]["files"] = [str(p) for p in retained_plot_paths]
 
-    save_metrics(run_dir, metrics_payload)
+    output_metrics_payload = (
+        metrics_payload
+        if bool(getattr(args, "save_full_metrics", False))
+        else compact_metrics_payload(metrics_payload)
+    )
+    output_metrics_payload["metadata"]["metrics_detail"] = (
+        "full" if bool(getattr(args, "save_full_metrics", False)) else "compact"
+    )
+
+    save_metrics(run_dir, output_metrics_payload)
     report_zh_path, report_en_path = write_run_reports(run_dir, metrics_payload)
     if bundle_path is not None:
-        write_result_bundle(run_dir, metrics_payload, bundle_path)
+        write_result_bundle(run_dir, output_metrics_payload, bundle_path)
 
     print("\n--- OUTPUT FILES ---")
     print(f"Saved figure: {fig_corr_path}")

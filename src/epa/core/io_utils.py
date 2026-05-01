@@ -38,6 +38,24 @@ def to_builtin(value):
     return value
 
 
+COMPACT_METRICS_DROP_KEYS = {"_error_arrays", "_x_axis", "_pair_ids"}
+
+
+def compact_metrics_payload(metrics_payload):
+    def _compact(value):
+        if isinstance(value, dict):
+            return {
+                key: _compact(item)
+                for key, item in value.items()
+                if key not in COMPACT_METRICS_DROP_KEYS
+            }
+        if isinstance(value, list):
+            return [_compact(item) for item in value]
+        return value
+
+    return _compact(metrics_payload)
+
+
 def save_metrics(output_dir, metrics_payload):
     output_dir = Path(output_dir)
     json_path = output_dir / "metrics.json"
@@ -780,8 +798,19 @@ def _infer_text_trajectory_format(path):
             if not line or line.startswith("#"):
                 continue
             cols = line.replace(",", " ").split()
-            if len(cols) >= 12:
-                return "kitti"
+            values = np.asarray([float(col) for col in cols], dtype=float)
+            if values.size >= 12:
+                mat = np.array(
+                    [
+                        [values[0], values[1], values[2]],
+                        [values[4], values[5], values[6]],
+                        [values[8], values[9], values[10]],
+                    ],
+                    dtype=float,
+                )
+                det = float(np.linalg.det(mat))
+                if det > 0.5 and np.allclose(mat @ mat.T, np.eye(3), atol=1e-2):
+                    return "kitti"
             if len(cols) >= 8:
                 return "tum"
             break

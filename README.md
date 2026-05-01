@@ -119,8 +119,9 @@ Multi-case benchmark with `epa_bench`:
 - `paper_tables/`
 - `cases/`
 - `logs/`
-- `prepared_tum/`
 - `unresolved_cases.csv` if some GT mappings cannot be resolved
+
+`metrics.json` is compact by default. Use `--save-full-metrics` for full per-sample APE/RPE arrays. Benchmark `prepared_tum/` files are removed by default; use `--keep-prepared` when you need them for later case reruns.
 
 ## Analysis Notebook
 

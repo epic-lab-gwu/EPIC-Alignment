@@ -102,6 +102,7 @@ Common options:
 - `--t-offset`: constant offset applied to estimation timestamps before sync
 - `--plot` and `--no-plot`: enable or disable metric plot generation
 - `--save-results`: write a bundled result zip
+- `--save-full-metrics`: keep full per-sample APE/RPE arrays in `metrics.json`
 - `--rerun`: enable Rerun logging
 
 Minimal example:

@@ -113,6 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Only discover cases without executing the benchmark.",
     )
+    p.add_argument(
+        "--keep-prepared",
+        action="store_true",
+        help="Keep prepared_tum/ files for later case reruns.",
+    )
     return p
 
 
@@ -158,6 +163,8 @@ def run(args: argparse.Namespace) -> int:
     bench_cmd.extend(["--jobs", str(args.jobs)])
     if bool(args.dry_run):
         bench_cmd.append("--dry-run")
+    if bool(args.keep_prepared):
+        bench_cmd.append("--keep-prepared")
     for pattern in args.case_pattern:
         if str(pattern).strip():
             bench_cmd.extend(["--case-pattern", str(pattern)])
