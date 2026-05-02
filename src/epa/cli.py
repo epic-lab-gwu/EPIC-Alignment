@@ -308,6 +308,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Optional path to save a bundled result zip (e.g. outputs/results/run1.zip).",
     )
     parser.add_argument(
+        "--output-root",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--save-full-metrics",
         action="store_true",
         help="Keep full per-sample APE/RPE arrays in metrics.json. Default writes compact metrics.",

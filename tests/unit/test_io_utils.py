@@ -9,6 +9,7 @@ from epa.core.io_utils import (
     load_estimation_tum,
     load_reference_trajectory,
     load_vicon_csv,
+    make_output_dir,
     write_result_bundle,
 )
 
@@ -157,3 +158,24 @@ def test_write_result_bundle_creates_zip_with_manifest_and_metrics(tmp_path: Pat
         assert "metrics_summary.csv" in names
         assert "report_zh.md" in names
         assert "report_en.md" in names
+
+
+def test_make_output_dir_retries_existing_timestamp_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDateTime:
+        @classmethod
+        def now(cls):
+            return cls()
+
+        def strftime(self, fmt: str) -> str:
+            return "run_20260101_000000"
+
+    monkeypatch.setattr("epa.core.io_utils.datetime", FixedDateTime)
+    output_root = tmp_path / "outputs"
+
+    first = make_output_dir(tmp_path, output_root=output_root)
+    second = make_output_dir(tmp_path, output_root=output_root)
+    third = make_output_dir(tmp_path, output_root=output_root)
+
+    assert first.name == "run_20260101_000000"
+    assert second.name == "run_20260101_000000_01"
+    assert third.name == "run_20260101_000000_02"

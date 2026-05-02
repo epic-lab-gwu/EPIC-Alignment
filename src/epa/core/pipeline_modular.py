@@ -1206,7 +1206,7 @@ def _search_direct_offset_from_matched_pairs(
 
 
 def run_pipeline_modular(args, script_dir: Path):
-    run_dir = make_output_dir(script_dir)
+    run_dir = make_output_dir(script_dir, output_root=getattr(args, "output_root", ""))
     print(f"Saving outputs to: {run_dir}")
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)

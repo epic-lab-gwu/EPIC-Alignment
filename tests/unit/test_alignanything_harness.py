@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 
 from epa.benchmark.alignanything_harness import (
+    BenchmarkCase,
+    _run_benchmark_case,
     _resolve_jobs,
     _write_summary_md,
     discover_cases,
@@ -60,6 +62,42 @@ def test_discover_cases_maps_euroc_gt(tmp_path: Path) -> None:
     assert case.est_path == est_file
 
 
+def test_discover_cases_without_pose_directory(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    gt_file = align_root / "GT" / "custom" / "seq_01.txt"
+    est_file = align_root / "benchmark" / "custom" / "orbslam3" / "seq_01" / "trajectory.txt"
+    gt_file.parent.mkdir(parents=True, exist_ok=True)
+    est_file.parent.mkdir(parents=True, exist_ok=True)
+    gt_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+    est_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 1
+    assert cases[0].dataset == "custom"
+    assert cases[0].method == "orbslam3"
+    assert cases[0].sequence == "seq_01"
+
+
+def test_discover_cases_system_with_sequence_files(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    gt_file = align_root / "GT" / "custom" / "seq_02.tum"
+    est_file = align_root / "benchmark" / "custom" / "vins" / "seq_02_poses.txt"
+    gt_file.parent.mkdir(parents=True, exist_ok=True)
+    est_file.parent.mkdir(parents=True, exist_ok=True)
+    gt_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+    est_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 1
+    assert cases[0].method == "vins"
+    assert cases[0].sequence == "seq_02"
+    assert cases[0].gt_path == gt_file
+
+
 def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     rows = [
         {
@@ -86,9 +124,64 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     out = tmp_path / "summary.md"
     _write_summary_md(rows, out)
     text = out.read_text(encoding="utf-8")
-    assert "raw_rmse_m (v/e, ↓)" in text
-    assert "improve_pct (v/e, ↑)" in text
+    assert "raw_rmse_m (↓)" in text
+    assert "improve_pct (↑)" in text
     assert "epa_xcorr_peak (↑)" in text
+
+
+def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    gt = align_root / "GT" / "demo" / "seq.txt"
+    est = align_root / "benchmark" / "demo" / "sys" / "seq_poses.txt"
+    gt.parent.mkdir(parents=True, exist_ok=True)
+    est.parent.mkdir(parents=True, exist_ok=True)
+    gt.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+    est.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+
+    def fake_run_epa_case(*args, **kwargs):
+        assert kwargs["output_root"] == tmp_path / "run" / "epa_runs"
+        return {
+            "status": "ok",
+            "run_dir": str(tmp_path / "run" / "epa_runs" / "run_demo"),
+            "offset_est_s": 0.0,
+            "ate_rmse_raw_m": 2.0,
+            "ate_rmse_step3_m": 1.0,
+            "improve_raw_to_step3_pct": 50.0,
+        }
+
+    def fake_run_evo_case(*args, **kwargs):
+        raise AssertionError("evo should not run unless --with-evo is set")
+
+    monkeypatch.setattr("epa.benchmark.alignanything_harness._run_epa_case", fake_run_epa_case)
+    monkeypatch.setattr("epa.benchmark.alignanything_harness._run_evo_case", fake_run_evo_case)
+
+    row = _run_benchmark_case(
+        BenchmarkCase("demo_seq_sys", "demo", "sys", "seq", gt, est),
+        align_root=align_root,
+        prepared_dir=tmp_path / "run" / "prepared_tum",
+        logs_dir=tmp_path / "run" / "logs",
+        case_json_dir=tmp_path / "run" / "cases",
+        repo_root=tmp_path,
+        python_bin=Path("/usr/bin/python"),
+        epa_src=tmp_path / "src",
+        dt_resample=0.001,
+        quat_interp="linear",
+        mplconfig_root=tmp_path / "run" / ".mplconfig",
+        output_root=tmp_path / "run" / "epa_runs",
+        evo_repo=tmp_path / "evo",
+        with_evo=False,
+        t_max_diff=0.02,
+        offset_min=-1.0,
+        offset_max=1.0,
+        offset_coarse_step=0.5,
+        offset_refine_window=0.5,
+        offset_refine_step=0.1,
+        min_match_ratio=0.05,
+    )
+
+    assert row["status"] == "ok"
+    assert row["epa_status"] == "ok"
+    assert row["evo_status"] == "not_run"
 
 
 def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:

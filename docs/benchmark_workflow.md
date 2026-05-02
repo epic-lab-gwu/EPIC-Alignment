@@ -41,6 +41,29 @@ The common case only needs the cases root. These path options remain available f
 - `--epa-src`
 - `--jobs`
 
+## Supported Case Layouts
+
+`epa_bench` discovers trajectory files under `benchmark/` and matches each sequence to a GT file under `GT/`.
+
+The original layout is still supported:
+
+```text
+cases_root/
+├── benchmark/<dataset>/pose/<method>/<sequence>/*_poses.txt
+└── GT/**/<sequence>.txt
+```
+
+The `pose/` directory is optional. These layouts are also accepted:
+
+```text
+cases_root/
+├── benchmark/<dataset>/<method>/<sequence>/trajectory.txt
+├── benchmark/<dataset>/<method>/<sequence>_poses.txt
+└── GT/**/<sequence>.txt
+```
+
+GT files can use `.txt`, `.tum`, or `.csv`. Estimation files can use common trajectory names such as `*_poses.txt`, `trajectory.txt`, `.tum`, or `.csv`.
+
 ## Basic Run
 
 If you want the main batch benchmark workflow, start here:

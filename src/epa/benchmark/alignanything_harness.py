@@ -35,6 +35,93 @@ def _safe_case_id(dataset: str, sequence: str, method: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("_")
 
 
+_GT_SUFFIXES = (".txt", ".tum", ".csv")
+_EST_SUFFIXES = (".txt", ".tum", ".csv")
+_EST_STEM_SUFFIXES = ("_poses", "_pose", "_trajectory", "_traj")
+_GENERIC_EST_STEMS = {"poses", "pose", "trajectory", "traj"}
+
+
+def _strip_est_suffix(stem: str) -> str:
+    for suffix in _EST_STEM_SUFFIXES:
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)]
+    return "" if stem in _GENERIC_EST_STEMS else stem
+
+
+def _is_est_trajectory_file(path: Path) -> bool:
+    if path.suffix.lower() not in _EST_SUFFIXES:
+        return False
+    if path.suffix.lower() in {".tum", ".csv"}:
+        return True
+    stem = path.stem
+    if stem in _GENERIC_EST_STEMS:
+        return True
+    return any(stem.endswith(suffix) for suffix in _EST_STEM_SUFFIXES)
+
+
+def _with_supported_gt_suffixes(path_without_suffix: Path) -> list[Path]:
+    return [path_without_suffix.with_suffix(suffix) for suffix in _GT_SUFFIXES]
+
+
+def _first_existing(paths: list[Path]) -> Path | None:
+    for path in paths:
+        if path.exists():
+            return path
+    return None
+
+
+def _glob_gt(gt_root: Path, pattern: str) -> Path | None:
+    matches: list[Path] = []
+    for suffix in _GT_SUFFIXES:
+        matches.extend(p for p in gt_root.glob(f"{pattern}{suffix}") if p.is_file())
+    if matches:
+        return sorted(matches)[0]
+    return None
+
+
+def _case_candidates(rel_pose: Path) -> list[tuple[str, str, str]]:
+    parts = rel_pose.parts
+    if len(parts) < 2:
+        return []
+
+    dataset = parts[0]
+    dirs = list(parts[1:-1])
+    file_base = _strip_est_suffix(Path(parts[-1]).stem)
+    candidates: list[tuple[str, str, str]] = []
+
+    def add(method: str, sequence: str) -> None:
+        method = str(method).strip()
+        sequence = str(sequence).strip()
+        if method and sequence:
+            candidates.append((dataset, method, sequence))
+
+    if "pose" in parts:
+        pose_idx = parts.index("pose")
+        after_pose = list(parts[pose_idx + 1 : -1])
+        if len(after_pose) >= 2:
+            add(after_pose[0], after_pose[1])
+        if len(after_pose) >= 1 and file_base:
+            add(after_pose[0], file_base)
+            add(file_base, after_pose[-1])
+
+    if len(dirs) >= 2:
+        add(dirs[-2], dirs[-1])
+        add(dirs[-1], dirs[-2])
+    if len(dirs) >= 1 and file_base:
+        add(dirs[-1], file_base)
+        add(file_base, dirs[-1])
+    if file_base:
+        add("default", file_base)
+
+    deduped: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            deduped.append(candidate)
+            seen.add(candidate)
+    return deduped
+
+
 def _sniff_delimiter(path: Path) -> str | None:
     with path.open("r", encoding="utf-8") as f:
         for raw in f:
@@ -91,47 +178,36 @@ def _resolve_gt_for_case(gt_root: Path, rel_pose: Path, sequence: str) -> Path |
     dataset = parts[0]
 
     if dataset == "euroc_mav":
-        cand = gt_root / "euroc_mav" / f"{sequence}.txt"
-        if cand.exists():
+        cand = _first_existing(_with_supported_gt_suffixes(gt_root / "euroc_mav" / sequence))
+        if cand is not None:
             return cand
 
     if dataset == "grand_tour":
-        matches = list((gt_root / "grand_tour").glob(f"**/{sequence}.txt"))
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            return sorted(matches)[0]
+        match = _glob_gt(gt_root / "grand_tour", f"**/{sequence}")
+        if match is not None:
+            return match
 
     if dataset == "lamaria":
         subset = parts[1] if len(parts) > 1 else ""
         if subset:
-            cand = gt_root / "lamaria" / subset / f"{sequence}.txt"
-            if cand.exists():
+            cand = _first_existing(_with_supported_gt_suffixes(gt_root / "lamaria" / subset / sequence))
+            if cand is not None:
                 return cand
-        matches = list((gt_root / "lamaria").glob(f"**/{sequence}.txt"))
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            return sorted(matches)[0]
+        match = _glob_gt(gt_root / "lamaria", f"**/{sequence}")
+        if match is not None:
+            return match
 
     if dataset == "uzh_fpv":
         subset = parts[1] if len(parts) > 1 else ""
         if subset:
-            cand = gt_root / f"uzhfpv_{subset}" / f"{sequence}.txt"
-            if cand.exists():
+            cand = _first_existing(_with_supported_gt_suffixes(gt_root / f"uzhfpv_{subset}" / sequence))
+            if cand is not None:
                 return cand
-        matches = list(gt_root.glob(f"uzhfpv*/{sequence}.txt"))
-        if len(matches) == 1:
-            return matches[0]
-        if len(matches) > 1:
-            return sorted(matches)[0]
+        match = _glob_gt(gt_root, f"uzhfpv*/{sequence}")
+        if match is not None:
+            return match
 
-    generic = list(gt_root.glob(f"**/{sequence}.txt"))
-    if len(generic) == 1:
-        return generic[0]
-    if len(generic) > 1:
-        return sorted(generic)[0]
-    return None
+    return _glob_gt(gt_root, f"**/{sequence}")
 
 
 def _format_cases_root_error(
@@ -189,17 +265,26 @@ def discover_cases(cases_root: Path) -> tuple[list[BenchmarkCase], list[dict[str
 
     cases: list[BenchmarkCase] = []
     unresolved: list[dict[str, str]] = []
-    for est_path in sorted(bench_root.rglob("*_poses.txt")):
+    for est_path in sorted(p for p in bench_root.rglob("*") if p.is_file() and _is_est_trajectory_file(p)):
         rel_pose = est_path.relative_to(bench_root)
-        parts = rel_pose.parts
-        if "pose" not in parts:
+        candidates = _case_candidates(rel_pose)
+        if not candidates:
             continue
-        pose_idx = parts.index("pose")
-        if pose_idx + 2 >= len(parts):
-            continue
-        method = parts[pose_idx + 1]
-        sequence = parts[pose_idx + 2]
-        dataset = parts[0]
+
+        selected: tuple[str, str, str, Path] | None = None
+        first_candidate = candidates[0]
+        for dataset, method, sequence in candidates:
+            gt_path = _resolve_gt_for_case(gt_root, rel_pose, sequence)
+            if gt_path is not None:
+                selected = (dataset, method, sequence, gt_path)
+                break
+
+        if selected is None:
+            dataset, method, sequence = first_candidate
+            gt_path = None
+        else:
+            dataset, method, sequence, gt_path = selected
+
         gt_path = _resolve_gt_for_case(gt_root, rel_pose, sequence)
         if gt_path is None:
             unresolved.append(
@@ -273,6 +358,7 @@ def _run_epa_case(
     dt_resample: float,
     quat_interp: str,
     mplconfigdir: Path,
+    output_root: Path,
     stdout_log_path: Path,
     stderr_log_path: Path,
 ) -> dict[str, object]:
@@ -303,6 +389,8 @@ def _run_epa_case(
         str(dt_resample),
         "--quat-interp",
         quat_interp,
+        "--output-root",
+        str(output_root),
     ]
     proc = subprocess.run(
         cmd,
@@ -566,35 +654,29 @@ def _write_csv(rows: list[dict[str, object]], path: Path) -> None:
 
 def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
     total = len(rows)
-    both_ok = sum(1 for row in rows if row.get("status") == "ok")
+    epa_ok = sum(1 for row in rows if row.get("status") == "ok")
+    has_evo = any(row.get("evo_status") == "ok" for row in rows)
     lines = [
         "# EPA Independent Benchmark",
         "",
         f"- total cases: {total}",
-        f"- both_ok: {both_ok}",
-        "- offset policy: `epa` internal xcorr estimate + `evo` independent sweep (no sharing)",
+        f"- epa_ok: {epa_ok}",
         "",
-        "## Table 1: Common Metrics (epa / evo)",
+        "## Table 1: EPA Metrics",
         "",
-        "| case | status (epa/evo) | raw_rmse_m (v/e, ↓) | aligned_rmse_m (v/e, ↓) | improve_pct (v/e, ↑) | offset_s (v/e, N/A) | matches (v/e, ↑) |",
+        "| case | status | raw_rmse_m (↓) | aligned_rmse_m (↓) | improve_pct (↑) | offset_s (N/A) | matches (↑) |",
         "|---|---|---:|---:|---:|---:|---:|",
     ]
     for row in rows:
         lines.append(
-            "| {case} | {status} / {estatus} | {vr} / {er} | {va} / {ea} | {vi} / {ei} | {vo} / {eo} | {vm} / {em} |".format(
+            "| {case} | {status} | {vr} | {va} | {vi} | {vo} | {vm} |".format(
                 case=row.get("case", ""),
                 status=row.get("epa_status", ""),
-                estatus=row.get("evo_status", ""),
                 vr=_fmt(row.get("epa_ate_rmse_raw_m"), 3),
                 va=_fmt(row.get("epa_ate_rmse_step3_m"), 3),
-                er=_fmt(row.get("evo_ape_raw_rmse_m"), 3),
-                ea=_fmt(row.get("evo_ape_se3_rmse_m"), 3),
                 vi=_fmt(row.get("epa_improve_pct"), 2),
-                ei=_fmt(row.get("evo_improve_pct"), 2),
                 vo=_fmt(row.get("epa_offset_est_s"), 3),
-                eo=_fmt(row.get("evo_offset_s"), 3),
                 vm=_fmt(row.get("epa_matches_equivalent"), 0),
-                em=_fmt(row.get("evo_matches"), 0),
             )
         )
     lines.extend(
@@ -615,26 +697,31 @@ def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
                 omega=_fmt(row.get("epa_omega_improve_pct"), 2),
             )
         )
-    lines.extend(
-        [
-            "",
-            "## Table 3: evo-only Metrics",
-            "",
-            "| case | evo_sweep_evals (N/A) |",
-            "|---|---:|",
-        ]
-    )
-    for row in rows:
-        lines.append(
-            "| {case} | {sweeps} |".format(
-                case=row.get("case", ""),
-                sweeps=_fmt(row.get("evo_sweep_evals"), 0),
-            )
+    if has_evo:
+        lines.extend(
+            [
+                "",
+                "## Table 3: Legacy evo Baseline",
+                "",
+                "| case | evo_status | evo_aligned_rmse_m (↓) | evo_improve_pct (↑) | evo_offset_s (N/A) | evo_sweep_evals (N/A) |",
+                "|---|---|---:|---:|---:|---:|",
+            ]
         )
+        for row in rows:
+            lines.append(
+                "| {case} | {status} | {rmse} | {improve} | {offset} | {sweeps} |".format(
+                    case=row.get("case", ""),
+                    status=row.get("evo_status", ""),
+                    rmse=_fmt(row.get("evo_ape_se3_rmse_m"), 3),
+                    improve=_fmt(row.get("evo_improve_pct"), 2),
+                    offset=_fmt(row.get("evo_offset_s"), 3),
+                    sweeps=_fmt(row.get("evo_sweep_evals"), 0),
+                )
+            )
     lines.extend(
         [
             "",
-            "注：`↑` 越大越好，`↓` 越小越好，`N/A` 为参数或过程量，不适用统一优劣方向。",
+            "Note: `↑` means larger is better, `↓` means smaller is better, and `N/A` marks process parameters without a universal quality direction.",
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -698,7 +785,7 @@ def _default_output_root(repo_root: Path, cases_root: Path) -> Path:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Independent benchmark harness for EPA vs evo over a cases root."
+        description="Independent benchmark harness for EPA over a cases root."
     )
     parser.add_argument(
         "cases_root_pos",
@@ -740,7 +827,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--evo-repo",
         default=_default_evo_repo(),
-        help="Local evo repository path for imports. Default: $EVO_REPO.",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--with-evo",
+        action="store_true",
+        help="Also run the legacy evo baseline comparison.",
     )
     parser.add_argument(
         "--case-pattern",
@@ -779,33 +871,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--t-max-diff",
         type=float,
         default=0.02,
-        help="evo timestamp association max diff.",
+        help=argparse.SUPPRESS,
     )
-    parser.add_argument("--offset-min", type=float, default=-20.0, help="evo sweep min offset.")
-    parser.add_argument("--offset-max", type=float, default=20.0, help="evo sweep max offset.")
+    parser.add_argument("--offset-min", type=float, default=-20.0, help=argparse.SUPPRESS)
+    parser.add_argument("--offset-max", type=float, default=20.0, help=argparse.SUPPRESS)
     parser.add_argument(
         "--offset-coarse-step",
         type=float,
         default=0.5,
-        help="evo sweep coarse step.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--offset-refine-window",
         type=float,
         default=0.5,
-        help="evo refine half-window around best coarse offset.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--offset-refine-step",
         type=float,
         default=0.05,
-        help="evo sweep refine step.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--min-match-ratio",
         type=float,
         default=0.05,
-        help="Minimum match ratio used when selecting evo offset.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--latex-main-max-rows",
@@ -884,7 +976,9 @@ def _run_benchmark_case(
     dt_resample: float,
     quat_interp: str,
     mplconfig_root: Path,
+    output_root: Path,
     evo_repo: Path,
+    with_evo: bool,
     t_max_diff: float,
     offset_min: float,
     offset_max: float,
@@ -901,7 +995,7 @@ def _run_benchmark_case(
         "gt_path": str(case.gt_path),
         "est_path": str(case.est_path),
         "status": "failed",
-        "offset_policy": "epa_internal + evo_independent_sweep",
+        "offset_policy": "epa_internal",
     }
     try:
         gt_data = load_pose_table(case.gt_path)
@@ -935,41 +1029,54 @@ def _run_benchmark_case(
         dt_resample=dt_resample,
         quat_interp=quat_interp,
         mplconfigdir=mplconfig_root / case.case_id,
+        output_root=output_root,
         stdout_log_path=epa_stdout_log,
         stderr_log_path=epa_stderr_log,
     )
 
-    try:
-        evo_result = _run_evo_case(
-            gt_data=gt_data,
-            est_data=est_data,
-            evo_repo=evo_repo,
-            t_max_diff=t_max_diff,
-            offset_min=offset_min,
-            offset_max=offset_max,
-            offset_coarse_step=offset_coarse_step,
-            offset_refine_window=offset_refine_window,
-            offset_refine_step=offset_refine_step,
-            min_match_ratio=min_match_ratio,
-        )
-    except Exception as exc:
+    if with_evo:
+        try:
+            evo_result = _run_evo_case(
+                gt_data=gt_data,
+                est_data=est_data,
+                evo_repo=evo_repo,
+                t_max_diff=t_max_diff,
+                offset_min=offset_min,
+                offset_max=offset_max,
+                offset_coarse_step=offset_coarse_step,
+                offset_refine_window=offset_refine_window,
+                offset_refine_step=offset_refine_step,
+                min_match_ratio=min_match_ratio,
+            )
+        except Exception as exc:
+            evo_result = {
+                "status": "failed",
+                "offset_s": float("nan"),
+                "matches": 0,
+                "ape_raw_rmse_m": float("nan"),
+                "ape_se3_rmse_m": float("nan"),
+                "improve_pct": float("nan"),
+                "sweep_evals": 0,
+                "error": str(exc),
+            }
+    else:
         evo_result = {
-            "status": "failed",
+            "status": "not_run",
             "offset_s": float("nan"),
             "matches": 0,
             "ape_raw_rmse_m": float("nan"),
             "ape_se3_rmse_m": float("nan"),
             "improve_pct": float("nan"),
             "sweep_evals": 0,
-            "error": str(exc),
+            "error": "",
         }
 
-    both_ok = (epa_result.get("status") == "ok") and (evo_result.get("status") == "ok")
+    epa_ok = epa_result.get("status") == "ok"
     row = {
         "case": case.case_id,
         "dataset": case.dataset,
         "method": case.method,
-        "status": _bool_to_status(both_ok),
+        "status": _bool_to_status(epa_ok),
         "gt": str(case.gt_path.relative_to(align_root)),
         "est": str(case.est_path.relative_to(align_root)),
         "epa_status": epa_result.get("status", "failed"),
@@ -993,8 +1100,10 @@ def _run_benchmark_case(
         "evo_sweep_evals": int(evo_result.get("sweep_evals", 0)),
         "error": "",
     }
-    if row["status"] != "ok":
+    if epa_result.get("status") != "ok":
         row["error"] = str(epa_result.get("stderr_tail", "") or evo_result.get("error", ""))
+    elif with_evo and evo_result.get("status") != "ok":
+        row["error"] = str(evo_result.get("error", ""))
 
     case_payload.update(
         {
@@ -1036,6 +1145,7 @@ def run(args: argparse.Namespace) -> int:
     prepared_dir = run_dir / "prepared_tum"
     logs_dir = run_dir / "logs"
     case_json_dir = run_dir / "cases"
+    epa_runs_dir = run_dir / "epa_runs"
     mplconfigdir = run_dir / ".mplconfig"
     mplconfigdir.mkdir(parents=True, exist_ok=True)
 
@@ -1056,7 +1166,9 @@ def run(args: argparse.Namespace) -> int:
         "dt_resample": args.dt_resample,
         "quat_interp": args.quat_interp,
         "mplconfig_root": mplconfigdir,
+        "output_root": epa_runs_dir,
         "evo_repo": evo_repo,
+        "with_evo": bool(getattr(args, "with_evo", False)),
         "t_max_diff": args.t_max_diff,
         "offset_min": args.offset_min,
         "offset_max": args.offset_max,
@@ -1112,7 +1224,7 @@ def run(args: argparse.Namespace) -> int:
         shutil.rmtree(prepared_dir)
 
     done = sum(1 for row in summary_rows if row["status"] == "ok")
-    print(f"Finished: {done}/{len(summary_rows)} cases both_ok")
+    print(f"Finished: {done}/{len(summary_rows)} cases epa_ok")
     print(f"Run dir: {run_dir}")
     return 0
 

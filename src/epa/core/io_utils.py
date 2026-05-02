@@ -965,14 +965,18 @@ def load_estimation_trajectory(path, est_format, est_topic=""):
     raise ValueError(f"Unsupported estimation format: {est_format}")
 
 
-def make_output_dir(script_dir):
-    output_root = script_dir / "outputs"
+def make_output_dir(script_dir, output_root=None):
+    output_root = Path(output_root) if output_root else script_dir / "outputs"
+    if not output_root.is_absolute():
+        output_root = script_dir / output_root
     output_root.mkdir(parents=True, exist_ok=True)
     run_stamp = datetime.now().strftime("run_%Y%m%d_%H%M%S")
-    run_dir = output_root / run_stamp
-    idx = 1
-    while run_dir.exists():
-        run_dir = output_root / f"{run_stamp}_{idx:02d}"
-        idx += 1
-    run_dir.mkdir(parents=True, exist_ok=False)
-    return run_dir
+    for idx in range(10000):
+        suffix = "" if idx == 0 else f"_{idx:02d}"
+        run_dir = output_root / f"{run_stamp}{suffix}"
+        try:
+            run_dir.mkdir(parents=True, exist_ok=False)
+            return run_dir
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"Could not create a unique output directory under: {output_root}")
