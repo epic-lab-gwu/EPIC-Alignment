@@ -74,6 +74,8 @@ cases_root/
 └── GT/**/<sequence>.txt
 ```
 
+One `<method>` directory can contain many sequences, either as sequence files or sequence subdirectories.
+
 GT files can use `.txt`, `.tum`, or `.csv`. The `pose/` directory is optional.
 
 ## Outputs

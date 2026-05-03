@@ -98,6 +98,8 @@ cases_root/
 └── GT/**/<sequence>.txt
 ```
 
+One `<method>` directory can contain many sequences, either as sequence files or sequence subdirectories.
+
 GT files can use `.txt`, `.tum`, or `.csv`. The `pose/` directory is optional.
 
 Temporary prepared trajectory files are removed by default after the benchmark finishes. Add `--keep-prepared` only if you want to inspect those intermediate files later.

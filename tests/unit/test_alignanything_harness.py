@@ -98,6 +98,57 @@ def test_discover_cases_system_with_sequence_files(tmp_path: Path) -> None:
     assert cases[0].gt_path == gt_file
 
 
+def test_discover_cases_multiple_sequences_under_one_system(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    gt_root = align_root / "GT" / "custom"
+    system_root = align_root / "benchmark" / "custom" / "vins"
+    gt_root.mkdir(parents=True, exist_ok=True)
+    system_root.mkdir(parents=True, exist_ok=True)
+
+    for seq in ["seq_01", "seq_02"]:
+        (gt_root / f"{seq}.txt").write_text(
+            "1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n",
+            encoding="utf-8",
+        )
+        (system_root / f"{seq}_poses.txt").write_text(
+            "1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n",
+            encoding="utf-8",
+        )
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 2
+    assert {case.method for case in cases} == {"vins"}
+    assert {case.sequence for case in cases} == {"seq_01", "seq_02"}
+
+
+def test_discover_cases_multiple_sequence_dirs_under_one_system(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    gt_root = align_root / "GT" / "custom"
+    system_root = align_root / "benchmark" / "custom" / "orbslam3"
+    gt_root.mkdir(parents=True, exist_ok=True)
+
+    for seq in ["room_a", "room_b"]:
+        (gt_root / f"{seq}.txt").write_text(
+            "1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n",
+            encoding="utf-8",
+        )
+        est_file = system_root / seq / "trajectory.txt"
+        est_file.parent.mkdir(parents=True, exist_ok=True)
+        est_file.write_text(
+            "1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n",
+            encoding="utf-8",
+        )
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 2
+    assert {case.method for case in cases} == {"orbslam3"}
+    assert {case.sequence for case in cases} == {"room_a", "room_b"}
+
+
 def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     rows = [
         {
