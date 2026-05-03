@@ -28,7 +28,14 @@ Example with the included files:
 epa example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
-`epa` runs the full alignment pipeline, detects trajectory formats automatically, writes plots by default, and exports a compact `metrics.json`. If format detection is wrong, set `--gt-format` and `--est-format` explicitly.
+`epa` runs the full alignment pipeline, detects trajectory formats automatically, writes plots by default, and exports a compact `metrics.json`. Step-1 time alignment uses the full input trajectory; later solve/evaluation stages are capped to 100 Hz by default. If format detection is wrong, set `--gt-format` and `--est-format` explicitly.
+
+Supported one-pair inputs:
+
+- `csv` / `euroc`: header-based pose CSV with timestamp, position, and quaternion columns
+- `tum`: text rows in `t tx ty tz qx qy qz qw`
+- `kitti`: text rows with a 3x4 pose matrix
+- `bag`, `bag2`, `mcap`: ROS log inputs with explicit topics
 
 ## Check Outputs
 
@@ -45,7 +52,7 @@ outputs/run_YYYYmmdd_HHMMSS/
     └── step23_trajectory_alignment_3d.png
 ```
 
-Start with `report_en.md` for a readable summary, `metrics_summary.csv` for table-friendly numbers, and the two plots below for the main alignment diagnostics. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis.
+Start with `report_en.md` for a readable summary, `metrics_summary.csv` for table-friendly numbers, and the two plots below for the main alignment diagnostics. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis. Add `--no-downsample` only if you need full-rate solve/evaluation.
 
 ![Step 1 time alignment result](images/quickstart_step1_time_alignment.png)
 
@@ -80,6 +87,18 @@ outputs/<benchmark_name>_bench/run_YYYYmmdd_HHMMSS/
 ├── logs/
 └── paper_tables/
 ```
+
+The benchmark root should contain `benchmark/` and `GT/`. Common layouts are:
+
+```text
+cases_root/
+├── benchmark/<dataset>/pose/<method>/<sequence>/*_poses.txt
+├── benchmark/<dataset>/<method>/<sequence>/trajectory.txt
+├── benchmark/<dataset>/<method>/<sequence>_poses.txt
+└── GT/**/<sequence>.txt
+```
+
+GT files can use `.txt`, `.tum`, or `.csv`. The `pose/` directory is optional.
 
 Temporary prepared trajectory files are removed by default after the benchmark finishes. Add `--keep-prepared` only if you want to inspect those intermediate files later.
 

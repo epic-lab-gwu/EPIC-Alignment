@@ -33,7 +33,7 @@ pip install "epica[geo]"    # map-related tools
 
 ## Quick Start
 
-For General Workspace:
+Run one trajectory pair:
 
 ```bash
 epa <gt_file> <est_file>
@@ -45,48 +45,36 @@ Example:
 epa ./example_data/example_groundtruth.csv ./example_data/example_estimation.txt
 ```
 
-Single-case full workflow:
-
-```bash
-epa_all --gt <gt_file> --est <est_file> --format tum
-```
-
-Multi-case benchmark:
+Run a multi-case benchmark:
 
 ```bash
 epa_bench /path/to/cases_root
 ```
 
-Multi-case full workflow:
+`epa` detects trajectory formats automatically, writes plots by default, caps post-time-alignment solve/evaluation to 100 Hz, and exports compact metrics. Step-1 time alignment still uses the full input trajectory. `epa_bench` discovers cases, runs them in parallel by default, and removes temporary prepared files unless `--keep-prepared` is set.
 
-```bash
-epa_benchall /path/to/cases_root
+## Input Formats
+
+For one-pair runs, `epa <gt_file> <est_file>` uses format auto-detection by default.
+
+Supported trajectory inputs:
+
+- `csv` / `euroc`: header-based pose CSV with timestamp, position, and quaternion columns
+- `tum`: text rows in `t tx ty tz qx qy qz qw`
+- `kitti`: text rows with a 3x4 pose matrix
+- `bag`, `bag2`, `mcap`: ROS log inputs; pass `--gt-topic` and `--est-topic`
+
+For benchmarks, the cases root should contain `benchmark/` and `GT/`:
+
+```text
+cases_root/
+├── benchmark/<dataset>/pose/<method>/<sequence>/*_poses.txt
+├── benchmark/<dataset>/<method>/<sequence>/trajectory.txt
+├── benchmark/<dataset>/<method>/<sequence>_poses.txt
+└── GT/**/<sequence>.txt
 ```
 
-OpenVINS examples:
-
-Single case:
-
-```bash
-epa_openvins /path/to/case_dir se3 --keep-output
-```
-
-Multiple cases:
-
-```bash
-epa_openvins /path/to/case_a /path/to/case_b --align-mode se3
-```
-
-Run from OpenVINS repo root:
-
-```bash
-epa_openvins ./ov_eval/example none --keep-output
-```
-
-Each case directory should contain:
-
-- `stamped_groundtruth.txt`
-- `stamped_traj_estimate.txt`
+GT files can use `.txt`, `.tum`, or `.csv`. The `pose/` directory is optional.
 
 ## Outputs
 
@@ -100,16 +88,6 @@ Single `epa` run:
 - `report_en.md`
 - `report_zh.md`
 
-Single-case full workflow with `epa_all`:
-
-- creates one `outputs/epa_all/run_YYYYMMDD_HHMMSS/` folder
-- typical subfolders inside:
-- `main_workspace/`
-- `ape/`
-- `rpe/`
-- `traj/`
-- `openvins/` if `--case-dir` is provided
-
 Multi-case benchmark with `epa_bench`:
 
 - creates `outputs/<cases_root_name>_bench/run_YYYYMMDD_HHMMSS/`
@@ -119,9 +97,10 @@ Multi-case benchmark with `epa_bench`:
 - `paper_tables/`
 - `cases/`
 - `logs/`
+- `epa_runs/`
 - `unresolved_cases.csv` if some GT mappings cannot be resolved
 
-`metrics.json` is compact by default. Use `--save-full-metrics` for full per-sample APE/RPE arrays. Benchmark `prepared_tum/` files are removed by default; use `--keep-prepared` when you need them for later case reruns.
+`metrics.json` is compact by default. Use `--save-full-metrics` for full per-sample APE/RPE arrays. Use `--no-downsample` only when you need full-rate solve/evaluation. Benchmark `prepared_tum/` files are removed by default; use `--keep-prepared` when you need them for later case reruns.
 
 ## Analysis Notebook
 
@@ -137,12 +116,12 @@ The notebook reads an existing `summary.csv`, summarizes datasets and methods, r
 ## Common CLI Toolchain
 
 - `epa` / `epica`: run the main 3-step EPA pipeline for one GT/EST pair
-- `epa_all`: run the single-case full workflow in one command
 - `epa_bench`: run the multi-case benchmark harness over a cases root
-- `epa_benchall`: run the multi-case full workflow, including summary plots and LaTeX tables
 - `epa_ape`: compute APE for one trajectory pair
 - `epa_rpe`: compute RPE for one trajectory pair
 - `epa_traj`: inspect, align, sync, and visualize trajectories
+- `epa_benchall`: run the extended multi-case workflow, including summary plots
+- `epa_all`: run the extended single-case workflow
 - `epa_openvins`: run EPA on one or multiple OpenVINS case folders
 
 ## Documentation Link

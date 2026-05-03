@@ -166,6 +166,8 @@ def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPa
         epa_src=tmp_path / "src",
         dt_resample=0.001,
         quat_interp="linear",
+        downsample_hz=100.0,
+        no_downsample=False,
         mplconfig_root=tmp_path / "run" / ".mplconfig",
         output_root=tmp_path / "run" / "epa_runs",
         evo_repo=tmp_path / "evo",

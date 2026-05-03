@@ -357,6 +357,8 @@ def _run_epa_case(
     epa_src: Path,
     dt_resample: float,
     quat_interp: str,
+    downsample_hz: float,
+    no_downsample: bool,
     mplconfigdir: Path,
     output_root: Path,
     stdout_log_path: Path,
@@ -389,9 +391,13 @@ def _run_epa_case(
         str(dt_resample),
         "--quat-interp",
         quat_interp,
+        "--downsample-hz",
+        str(downsample_hz),
         "--output-root",
         str(output_root),
     ]
+    if bool(no_downsample):
+        cmd.append("--no-downsample")
     proc = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -798,31 +804,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--alignanything-root",
         dest="cases_root",
         default=_default_cases_root(),
-        help=(
-            "Path to the cases root containing benchmark/ and GT/. "
-            "Default: $EPA_CASES_ROOT or $EPA_ALIGNANYTHING_ROOT or "
-            "$EPA_DATA_ROOT/benchmark_cases."
-        ),
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--output-root",
         default="",
-        help="Where benchmark outputs are written. Default: outputs/<cases_root_name>_bench",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--repo-root",
         default=".",
-        help="Repository root for running epa CLI.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--python-bin",
         default=sys.executable,
-        help="Python executable used to run epa (should be py3.10+).",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--epa-src",
         default="src",
-        help="epa source dir to append into PYTHONPATH.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--evo-repo",
@@ -832,7 +834,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--with-evo",
         action="store_true",
-        help="Also run the legacy evo baseline comparison.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--case-pattern",
@@ -860,12 +862,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Keep prepared_tum/ files for later case reruns. Default removes them after summary generation.",
     )
 
-    parser.add_argument("--dt-resample", type=float, default=0.001, help="epa dt_resample.")
+    parser.add_argument("--dt-resample", type=float, default=0.001, help=argparse.SUPPRESS)
+    parser.add_argument("--downsample-hz", type=float, default=100.0, help=argparse.SUPPRESS)
+    parser.add_argument("--no-downsample", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument(
         "--quat-interp",
         choices=["linear", "slerp"],
         default="linear",
-        help="epa quaternion interpolation mode.",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--t-max-diff",
@@ -903,7 +907,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--latex-main-max-rows",
         type=int,
         default=18,
-        help="Maximum per-case rows kept in paper LaTeX main table.",
+        help=argparse.SUPPRESS,
     )
     return parser
 
@@ -975,6 +979,8 @@ def _run_benchmark_case(
     epa_src: Path,
     dt_resample: float,
     quat_interp: str,
+    downsample_hz: float,
+    no_downsample: bool,
     mplconfig_root: Path,
     output_root: Path,
     evo_repo: Path,
@@ -1028,6 +1034,8 @@ def _run_benchmark_case(
         epa_src=epa_src,
         dt_resample=dt_resample,
         quat_interp=quat_interp,
+        downsample_hz=downsample_hz,
+        no_downsample=no_downsample,
         mplconfigdir=mplconfig_root / case.case_id,
         output_root=output_root,
         stdout_log_path=epa_stdout_log,
@@ -1165,6 +1173,8 @@ def run(args: argparse.Namespace) -> int:
         "epa_src": epa_src,
         "dt_resample": args.dt_resample,
         "quat_interp": args.quat_interp,
+        "downsample_hz": args.downsample_hz,
+        "no_downsample": bool(getattr(args, "no_downsample", False)),
         "mplconfig_root": mplconfigdir,
         "output_root": epa_runs_dir,
         "evo_repo": evo_repo,
