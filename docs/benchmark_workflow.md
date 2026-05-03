@@ -62,6 +62,16 @@ cases_root/
 └── GT/**/<sequence>.txt
 ```
 
+One `<method>` directory can contain many sequences. For example:
+
+```text
+cases_root/
+├── benchmark/<dataset>/<method>/seq_01_poses.txt
+├── benchmark/<dataset>/<method>/seq_02_poses.txt
+├── benchmark/<dataset>/<method>/seq_03/trajectory.txt
+└── GT/**/seq_01.txt
+```
+
 GT files can use `.txt`, `.tum`, or `.csv`. Estimation files can use common trajectory names such as `*_poses.txt`, `trajectory.txt`, `.tum`, or `.csv`.
 
 ## Basic Run

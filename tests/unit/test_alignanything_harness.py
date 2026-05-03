@@ -247,7 +247,8 @@ def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:
     assert "Invalid --cases-root" in msg
     assert "EPA_DATA_ROOT" in msg
     assert "EPA_CASES_ROOT" in msg
-    assert "epa_bench /home/yifu/epa_data/benchmark_cases" in msg
+    assert "epa_bench " in msg
+    assert "benchmark_cases" in msg
 
 
 def test_benchmark_parser_accepts_positional_cases_root_and_jobs() -> None:
