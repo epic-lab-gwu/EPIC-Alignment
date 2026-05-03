@@ -54,8 +54,10 @@ def test_run_builds_and_executes_epa_cmd(tmp_path: Path, monkeypatch: pytest.Mon
     cmd = captured["cmd"]
     assert cmd is not None
     assert cmd[:3] == ["/usr/bin/python3", "-m", "epa.cli"]
-    assert "--gt-csv" in cmd
-    assert "--est-path" in cmd
+    assert cmd[3:5] == [
+        str(run_dir / "prepared_tum" / f"{case_id}__gt.tum"),
+        str(run_dir / "prepared_tum" / f"{case_id}__est.tum"),
+    ]
     assert "--plot" in cmd
     assert "--rerun" in cmd
     assert cmd[-2:] == ["--t-max-diff", "0.02"]

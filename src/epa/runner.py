@@ -10,7 +10,9 @@ def run(ns: Namespace) -> int:
         print("Dry run command:")
         print(
             "python -m epa.cli "
-            f"--gt-csv {getattr(ns, 'gt_csv', 'example_data/example_groundtruth.csv')} "
+            f"{getattr(ns, 'gt_csv', '<gt_file>')} "
+            f"{getattr(ns, 'est_path', '<est_file>')} "
+            f"--gt-format {getattr(ns, 'gt_format', 'auto')} "
             f"--est-format {getattr(ns, 'est_format', 'auto')} ..."
         )
         return 0

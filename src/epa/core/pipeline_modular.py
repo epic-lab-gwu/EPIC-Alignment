@@ -28,6 +28,7 @@ from .evaluation import (
     summarize_abs_errors,
 )
 from .io_utils import (
+    compact_metrics_payload,
     load_estimation_trajectory,
     load_reference_trajectory,
     make_output_dir,
@@ -60,6 +61,38 @@ def _apply_time_window(tvals, pos, quat, t_start=None, t_end=None):
     if np.sum(mask) < 2:
         raise ValueError("Time window filtering kept fewer than 2 trajectory samples.")
     return tvals[mask], np.asarray(pos, dtype=float)[mask], np.asarray(quat, dtype=float)[mask]
+
+
+def _downsample_by_max_hz(tvals, pos, quat, max_hz):
+    tvals = np.asarray(tvals, dtype=float).reshape(-1)
+    pos = np.asarray(pos, dtype=float)
+    quat = np.asarray(quat, dtype=float)
+    max_hz = float(max_hz)
+    if max_hz <= 0.0 or tvals.size <= 2:
+        return tvals, pos, quat, {
+            "enabled": False,
+            "max_hz": max_hz,
+            "input_samples": int(tvals.size),
+            "output_samples": int(tvals.size),
+        }
+
+    min_dt = 1.0 / max_hz
+    keep = [0]
+    last_t = float(tvals[0])
+    for idx in range(1, tvals.size - 1):
+        if float(tvals[idx]) - last_t >= min_dt * (1.0 - 1e-9):
+            keep.append(idx)
+            last_t = float(tvals[idx])
+    if keep[-1] != tvals.size - 1:
+        keep.append(tvals.size - 1)
+
+    ids = np.asarray(keep, dtype=int)
+    return tvals[ids], pos[ids], quat[ids], {
+        "enabled": bool(ids.size < tvals.size),
+        "max_hz": max_hz,
+        "input_samples": int(tvals.size),
+        "output_samples": int(ids.size),
+    }
 
 
 def _cum_distance(points_xyz):
@@ -1205,7 +1238,7 @@ def _search_direct_offset_from_matched_pairs(
 
 
 def run_pipeline_modular(args, script_dir: Path):
-    run_dir = make_output_dir(script_dir)
+    run_dir = make_output_dir(script_dir, output_root=getattr(args, "output_root", ""))
     print(f"Saving outputs to: {run_dir}")
     plots_dir = run_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
@@ -1252,7 +1285,7 @@ def run_pipeline_modular(args, script_dir: Path):
             pos_est[i] = Rw_true.T @ (p_offset - tw_true)
     else:
         if args.est_path is None or args.est_path == "":
-            raise ValueError("Real mode requires --est-path")
+            raise ValueError("Real mode requires <gt_file> <est_file>, or --gt/--est.")
 
         est_path = Path(args.est_path)
         if not est_path.is_absolute():
@@ -1527,6 +1560,25 @@ def run_pipeline_modular(args, script_dir: Path):
     fig1.savefig(fig1_path, dpi=200, bbox_inches="tight")
 
     t_est_sync = t_est - calculated_offset
+    t_gt_full = np.asarray(t_gt, dtype=float)
+    pos_gt_full = np.asarray(pos_gt, dtype=float)
+    quat_gt_full = np.asarray(quat_gt, dtype=float)
+    downsample_hz = 0.0 if bool(getattr(args, "no_downsample", False)) else float(getattr(args, "downsample_hz", 100.0))
+    if downsample_hz < 0.0:
+        raise ValueError("--downsample-hz must be >= 0.")
+    t_gt, pos_gt, quat_gt, downsample_info = _downsample_by_max_hz(
+        t_gt_full,
+        pos_gt_full,
+        quat_gt_full,
+        downsample_hz,
+    )
+    if bool(downsample_info["enabled"]):
+        print(
+            "Downsampled solve/eval trajectory: "
+            f"{downsample_info['input_samples']} -> {downsample_info['output_samples']} "
+            f"samples at <= {downsample_info['max_hz']:.3f} Hz"
+        )
+
     interp_p = interp1d(t_est_sync, pos_est, axis=0, fill_value="extrapolate")
     pr_sync = interp_p(t_gt)
     if args.quat_interp == "slerp":
@@ -1978,6 +2030,7 @@ def run_pipeline_modular(args, script_dir: Path):
             "eval_align": eval_align_mode,
             "eval_n_to_align": eval_n_to_align,
             "eval_project_to_plane": eval_project_to_plane,
+            "downsample": downsample_info,
             "alignment_quality_label": quality_label,
             "rigid_alignability_label": rigid_alignability_label,
             "rigid_alignability_reasons": rigid_alignability_reasons,
@@ -2059,10 +2112,19 @@ def run_pipeline_modular(args, script_dir: Path):
     plot_files = [p for p in plot_files if p.name in retained_plot_names and p.exists()]
     metrics_payload["metadata"]["plot"]["files"] = [str(p) for p in retained_plot_paths]
 
-    save_metrics(run_dir, metrics_payload)
+    output_metrics_payload = (
+        metrics_payload
+        if bool(getattr(args, "save_full_metrics", False))
+        else compact_metrics_payload(metrics_payload)
+    )
+    output_metrics_payload["metadata"]["metrics_detail"] = (
+        "full" if bool(getattr(args, "save_full_metrics", False)) else "compact"
+    )
+
+    save_metrics(run_dir, output_metrics_payload)
     report_zh_path, report_en_path = write_run_reports(run_dir, metrics_payload)
     if bundle_path is not None:
-        write_result_bundle(run_dir, metrics_payload, bundle_path)
+        write_result_bundle(run_dir, output_metrics_payload, bundle_path)
 
     print("\n--- OUTPUT FILES ---")
     print(f"Saved figure: {fig_corr_path}")

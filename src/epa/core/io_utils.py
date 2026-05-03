@@ -38,6 +38,24 @@ def to_builtin(value):
     return value
 
 
+COMPACT_METRICS_DROP_KEYS = {"_error_arrays", "_x_axis", "_pair_ids"}
+
+
+def compact_metrics_payload(metrics_payload):
+    def _compact(value):
+        if isinstance(value, dict):
+            return {
+                key: _compact(item)
+                for key, item in value.items()
+                if key not in COMPACT_METRICS_DROP_KEYS
+            }
+        if isinstance(value, list):
+            return [_compact(item) for item in value]
+        return value
+
+    return _compact(metrics_payload)
+
+
 def save_metrics(output_dir, metrics_payload):
     output_dir = Path(output_dir)
     json_path = output_dir / "metrics.json"
@@ -780,8 +798,19 @@ def _infer_text_trajectory_format(path):
             if not line or line.startswith("#"):
                 continue
             cols = line.replace(",", " ").split()
-            if len(cols) >= 12:
-                return "kitti"
+            values = np.asarray([float(col) for col in cols], dtype=float)
+            if values.size >= 12:
+                mat = np.array(
+                    [
+                        [values[0], values[1], values[2]],
+                        [values[4], values[5], values[6]],
+                        [values[8], values[9], values[10]],
+                    ],
+                    dtype=float,
+                )
+                det = float(np.linalg.det(mat))
+                if det > 0.5 and np.allclose(mat @ mat.T, np.eye(3), atol=1e-2):
+                    return "kitti"
             if len(cols) >= 8:
                 return "tum"
             break
@@ -936,14 +965,18 @@ def load_estimation_trajectory(path, est_format, est_topic=""):
     raise ValueError(f"Unsupported estimation format: {est_format}")
 
 
-def make_output_dir(script_dir):
-    output_root = script_dir / "outputs"
+def make_output_dir(script_dir, output_root=None):
+    output_root = Path(output_root) if output_root else script_dir / "outputs"
+    if not output_root.is_absolute():
+        output_root = script_dir / output_root
     output_root.mkdir(parents=True, exist_ok=True)
     run_stamp = datetime.now().strftime("run_%Y%m%d_%H%M%S")
-    run_dir = output_root / run_stamp
-    idx = 1
-    while run_dir.exists():
-        run_dir = output_root / f"{run_stamp}_{idx:02d}"
-        idx += 1
-    run_dir.mkdir(parents=True, exist_ok=False)
-    return run_dir
+    for idx in range(10000):
+        suffix = "" if idx == 0 else f"_{idx:02d}"
+        run_dir = output_root / f"{run_stamp}{suffix}"
+        try:
+            run_dir.mkdir(parents=True, exist_ok=False)
+            return run_dir
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"Could not create a unique output directory under: {output_root}")

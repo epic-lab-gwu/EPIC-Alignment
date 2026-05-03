@@ -4,103 +4,42 @@
 
 - Python 3.10 or newer
 
-## Installation
+## Install
 
-Create and activate a virtual environment first:
+Create a clean environment and install the package:
 
 ```bash
 conda create -n epa python=3.10 -y
 conda activate epa
-```
-
-Install the base package:
-
-```bash
 python -m pip install epica
 ```
 
-Optional extras:
+## Run One Pair
+
+Use `epa` when you have one reference trajectory and one estimated trajectory:
 
 ```bash
-python -m pip install "epica[rerun]"
-python -m pip install "epica[ros]"
-python -m pip install "epica[geo]"
+epa <gt_file> <est_file>
 ```
-
-Use:
-
-- `"epica[rerun]"` if you want Rerun visualization
-- `"epica[ros]"` if you want to read `bag`, `bag2`, or `mcap`
-- `"epica[geo]"` if you want map overlays
-
-## Quick Start
-
-For a general workspace:
-
-```bash
-epa --gt-csv <gt_file> --gt-format <gt_format> --est-path <est_file> --est-format <est_format> --plot
-```
-
-`--gt-format` and `--est-format` are optional. `epa` / `epica` defaults to `auto`; only set them when auto-detection is incorrect.
 
 Example with the included files:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --t-max-diff 0.02 \
-  --plot
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
-This command:
+`epa` runs the full alignment pipeline, detects trajectory formats automatically, writes plots by default, and exports a compact `metrics.json`. Step-1 time alignment uses the full input trajectory; later solve/evaluation stages are capped to 100 Hz by default. If format detection is wrong, set `--gt-format` and `--est-format` explicitly.
 
-1. Loads the reference trajectory from `example_data/example_groundtruth.csv`
-2. Loads the estimated trajectory from `example_data/example_estimation.txt`
-3. Runs time alignment, extrinsic calibration, and world-frame alignment
-4. Computes evaluation metrics
-5. Exports figures and summaries
+Supported one-pair inputs:
 
-Single-case full workflow:
+- `csv` / `euroc`: header-based pose CSV with timestamp, position, and quaternion columns
+- `tum`: text rows in `t tx ty tz qx qy qz qw`
+- `kitti`: text rows with a 3x4 pose matrix
+- `bag`, `bag2`, `mcap`: ROS log inputs with explicit topics
 
-```bash
-epa_all --gt <gt_file> --est <est_file> --format tum
-```
+## Check Outputs
 
-Multi-case benchmark:
-
-```bash
-epa_bench --cases-root /path/to/cases_root
-```
-
-Multi-case full workflow:
-
-```bash
-epa_benchall --cases-root /path/to/cases_root
-```
-
-For your own dataset, replace the example paths and formats:
-
-```bash
-epa \
-  --gt-csv /path/to/your/gt.tum \
-  --est-path /path/to/your/est.tum \
-  --t-max-diff 0.02 \
-  --plot \
-  --rerun
-```
-
-## What You Should See
-
-Each run creates a new directory under `outputs/`:
-
-```text
-outputs/run_YYYYmmdd_HHMMSS/
-```
-
-Typical layout:
+Each run creates a timestamped directory under `outputs/`:
 
 ```text
 outputs/run_YYYYmmdd_HHMMSS/
@@ -109,141 +48,64 @@ outputs/run_YYYYmmdd_HHMMSS/
 ├── report_en.md
 ├── report_zh.md
 └── plots/
-    ├── step1_cross_correlation.png
     ├── step1_time_alignment.png
-    ├── step23_trajectory_alignment_3d.png
-    ├── ape_translation_part_raw.png
-    ├── ape_translation_part_hist.png
-    ├── ape_translation_part_box.png
-    ├── ape_translation_part_violin.png
-    ├── ape_translation_part_stats.png
-    ├── ape_translation_part_se3_raw.png
-    ├── rpe_translation_part_raw.png
-    ├── rpe_translation_part_hist.png
-    ├── rpe_translation_part_box.png
-    ├── rpe_translation_part_violin.png
-    ├── rpe_translation_part_stats.png
-    └── piecewise_segment_rmse.png
+    └── step23_trajectory_alignment_3d.png
 ```
 
-Most users will check these first:
-
-- `metrics.json`
-- `metrics_summary.csv`
-- `report_en.md`
-- `plots/step1_time_alignment.png`
-- `plots/step23_trajectory_alignment_3d.png`
-
-`report_zh.md` is also generated in the current workflow. If `--plot` is enabled, `epa` also writes metric plots into `outputs/run_.../plots/`.
+Start with `report_en.md` for a readable summary, `metrics_summary.csv` for table-friendly numbers, and the two plots below for the main alignment diagnostics. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis. Add `--no-downsample` only if you need full-rate solve/evaluation.
 
 ![Step 1 time alignment result](images/quickstart_step1_time_alignment.png)
 
-*Step 1 output: rotational signals after temporal alignment.*
+*Step 1: rotational signals after temporal alignment.*
 
 ![Step 2/3 trajectory alignment result](images/quickstart_step23_alignment_3d.png)
 
-*Step 2 and Step 3 output: aligned trajectories in 3D.*
+*Step 2 and Step 3: aligned trajectories in 3D.*
 
-## Run APE and RPE
+## Run A Benchmark
 
-You can evaluate the same trajectories directly with the metric tools:
-
-```bash
-epa_ape tum gt.tum est.tum \
-  --pose_relation trans_part \
-  --align \
-  --t_max_diff 0.02 \
-  --plot
-```
+Use `epa_bench` when you have many cases organized under one benchmark root:
 
 ```bash
-epa_rpe tum gt.tum est.tum \
-  --pose_relation trans_part \
-  --delta 1 \
-  --delta_unit f \
-  --all_pairs \
-  --align \
-  --plot
+epa_bench <cases_root>
 ```
 
-Use these commands when you want metric analysis without running the full pipeline.
-
-## Inspect Trajectories
-
-Use `epa_traj` to inspect, synchronize, and plot trajectories:
+Example:
 
 ```bash
-epa_traj --format tum --plot --plot-mode xz gt.tum est.tum
+epa_bench /home/username/epa_data/benchmark_cases
 ```
 
-Common variants:
+`epa_bench` runs cases in parallel by default with `--jobs auto`, writes one folder per case, and collects the results into a benchmark summary:
 
-- Synchronize before plotting: `epa_traj --format tum --sync --ref 1 gt.tum est.tum --plot`
-- Align to the reference: `epa_traj --format tum --sync --align --ref 1 gt.tum est.tum --plot`
-- Export converted trajectories: `epa_traj --format auto --save-as tum --out-dir outputs/traj_exports example_data/example_groundtruth.csv example_data/example_estimation.txt`
-
-## ROS Bag Inputs
-
-If your trajectories are stored in ROS logs, install ROS support first:
-
-```bash
-python -m pip install "epica[ros]"
+```text
+outputs/<benchmark_name>_bench/run_YYYYmmdd_HHMMSS/
+├── summary.csv
+├── summary.md
+├── unresolved_cases.csv
+├── cases/
+├── logs/
+└── paper_tables/
 ```
 
-Then provide both the format and topic:
+The benchmark root should contain `benchmark/` and `GT/`. Common layouts are:
 
-```bash
-epa \
-  --engine modular \
-  --gt-csv /path/to/run.bag \
-  --gt-format bag \
-  --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag \
-  --est-format bag \
-  --est-topic /odom
+```text
+cases_root/
+├── benchmark/<dataset>/pose/<method>/<sequence>/*_poses.txt
+├── benchmark/<dataset>/<method>/<sequence>/trajectory.txt
+├── benchmark/<dataset>/<method>/<sequence>_poses.txt
+└── GT/**/<sequence>.txt
 ```
 
-Supported ROS log inputs:
+One `<method>` directory can contain many sequences, either as sequence files or sequence subdirectories.
 
-- `bag`
-- `bag2`
-- `mcap`
+GT files can use `.txt`, `.tum`, or `.csv`. The `pose/` directory is optional.
 
-## Optional Rerun Visualization
-
-If [Rerun](https://github.com/rerun-io/rerun) support is installed, add `--rerun` to the main pipeline or metric tools:
-
-```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --plot \
-  --rerun
-```
-
-<video class="doc-video" controls muted loop playsinline preload="metadata">
-  <source src="../images/rerun.mp4" type="video/mp4">
-</video>
-
-*Rerun demo: interactive follow-view playback during trajectory inspection.*
-
-Use this to inspect trajectory geometry and intermediate alignment stages.
-
-## Useful Help Commands
-
-```bash
-epa --help
-epa_traj --help
-epa_ape --help
-epa_rpe --help
-epa_res --help
-epa_config --help
-```
+Temporary prepared trajectory files are removed by default after the benchmark finishes. Add `--keep-prepared` only if you want to inspect those intermediate files later.
 
 ## Next Steps
 
-- Go to [CLI Reference](cli.md) for command-level options
-- Go to [Benchmark Workflow](benchmark_workflow.md) for batch evaluation workflows
-- Go to [Troubleshooting](troubleshooting.md) if your first run fails
+- Go to [CLI Reference](cli.md) for command-level options.
+- Go to [Benchmark Workflow](benchmark_workflow.md) for batch evaluation details.
+- Go to [Troubleshooting](troubleshooting.md) if your first run fails.

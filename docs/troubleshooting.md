@@ -69,20 +69,16 @@ Fix:
 
 This is one of the most common first-run issues, so it is usually just a path mismatch.
 
-## `Real mode requires --est-path`
+## `Provide <gt_file> <est_file>, or use --gt/--est`
 
 Cause:
 
-- the main pipeline was started without an estimation trajectory
+- the main pipeline was started without both trajectory inputs
 
 Fix:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
 ## `Unsupported format` or `Cannot infer trajectory format`
@@ -103,7 +99,7 @@ Examples:
 
 ```bash
 epa_traj --format tum gt.tum est.tum --plot
-epa --gt-format csv --est-format tum --gt-csv example_data/example_groundtruth.csv --est-path est.tum
+epa example_data/example_groundtruth.csv est.tum --gt-format csv --est-format tum
 ```
 
 ## `Topic not found in bag` or `No trajectory messages found for topic`
@@ -131,13 +127,9 @@ Cause:
 Fix:
 
 ```bash
-epa \
-  --gt-csv /path/to/run.bag \
-  --gt-format bag \
-  --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag \
-  --est-format bag \
-  --est-topic /odom
+epa /path/to/run.bag /path/to/run.bag \
+  --gt-format bag --gt-topic /vicon/pose \
+  --est-format bag --est-topic /odom
 ```
 
 ## `Trajectory association produced only X matches`

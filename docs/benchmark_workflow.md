@@ -31,26 +31,58 @@ export EPA_DATA_ROOT=/home/username/epa_data
 Before running the harness, make sure you have:
 
 - a cases root with `benchmark/` and `GT/`
-- the `epica` repository root
-- a Python 3.10+ executable that can run `epica`
+- a Python 3.10+ environment that can run `epica`
 
-The harness exposes these main path options:
+The common case only needs the cases root. These path options remain available for scripts and unusual environments:
 
 - `--cases-root`
 - `--repo-root`
 - `--python-bin`
 - `--epa-src`
+- `--jobs`
+
+## Supported Case Layouts
+
+`epa_bench` discovers trajectory files under `benchmark/` and matches each sequence to a GT file under `GT/`.
+
+The original layout is still supported:
+
+```text
+cases_root/
+├── benchmark/<dataset>/pose/<method>/<sequence>/*_poses.txt
+└── GT/**/<sequence>.txt
+```
+
+The `pose/` directory is optional. These layouts are also accepted:
+
+```text
+cases_root/
+├── benchmark/<dataset>/<method>/<sequence>/trajectory.txt
+├── benchmark/<dataset>/<method>/<sequence>_poses.txt
+└── GT/**/<sequence>.txt
+```
+
+One `<method>` directory can contain many sequences. For example:
+
+```text
+cases_root/
+├── benchmark/<dataset>/<method>/seq_01_poses.txt
+├── benchmark/<dataset>/<method>/seq_02_poses.txt
+├── benchmark/<dataset>/<method>/seq_03/trajectory.txt
+└── GT/**/seq_01.txt
+```
+
+GT files can use `.txt`, `.tum`, or `.csv`. Estimation files can use common trajectory names such as `*_poses.txt`, `trajectory.txt`, `.tum`, or `.csv`.
 
 ## Basic Run
 
 If you want the main batch benchmark workflow, start here:
 
 ```bash
-epa_bench \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python
+epa_bench /home/username/epa_data/benchmark_cases
 ```
+
+The default is `--jobs auto`, which uses the available CPU cores without exceeding the number of cases. Add `--jobs N` when you want to override it.
 
 This command:
 
@@ -70,10 +102,7 @@ Use `epa_benchall` if you want the full batch workflow in one command:
 Typical command:
 
 ```bash
-epa_benchall \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python
+epa_benchall /home/username/epa_data/benchmark_cases
 ```
 
 ## Per-Case Visualization (Raw / GT / Aligned)
@@ -97,13 +126,7 @@ The command resolves the latest `run_*` automatically when `--run-dir` points to
 Direct `epa` command (manual paths):
 
 ```bash
-epa \
-  --gt-csv /path/to/gt.tum \
-  --gt-format tum \
-  --est-path /path/to/est.tum \
-  --est-format tum \
-  --plot \
-  --rerun
+epa /path/to/gt.tum /path/to/est.tum --rerun
 ```
 
 ## Useful Filters
@@ -121,9 +144,7 @@ List matching cases only:
 
 ```bash
 epa_bench \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  /home/username/epa_data/benchmark_cases \
   --case-pattern euroc \
   --dry-run
 ```
@@ -132,9 +153,7 @@ Run only a subset of methods:
 
 ```bash
 epa_bench \
-  --cases-root /home/username/epa_data/benchmark_cases \
-  --repo-root /home/username/epa \
-  --python-bin /home/username/miniconda3/envs/epa/bin/python \
+  /home/username/epa_data/benchmark_cases \
   --methods rovio,svo_stereo \
   --limit 20
 ```
@@ -165,8 +184,6 @@ outputs/<cases_root_name>_bench/run_YYYYmmdd_HHMMSS/
 │   ├── main_table.tex
 │   ├── dataset_table.tex
 │   └── appendix_full_table.tex
-└── prepared_tum/
-    └── ...
 ```
 
 Common contents:
@@ -178,9 +195,10 @@ Common contents:
 - `paper_tables/appendix_full_table.tex`: full per-case LaTeX longtable for appendix
 - `cases/*.json`: one JSON file per case
 - `logs/`: stdout and stderr logs for executed tools
-- `prepared_tum/`: prepared TUM files used by the harness
 - `harness_config.json`: the run configuration snapshot
 - `unresolved_cases.csv`: discovered but unresolved cases, when applicable
+
+`prepared_tum/` is removed by default to keep benchmark outputs small. Add `--keep-prepared` if you want to keep those intermediate files for later `epa_rerun` debugging.
 
 ## Analysis Notebook
 
@@ -321,8 +339,8 @@ Recommended workflow:
 
 If a harness run is incomplete or noisy, check these first:
 
-- the Python executable passed with `--python-bin`
 - the cases root path
+- the active Python environment
 - unresolved cases listed in `unresolved_cases.csv`
 - per-case stderr logs under `logs/`
 
