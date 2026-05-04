@@ -2,7 +2,6 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from .calibration import solve_world_alignment
-from .evaluation import summarize_abs_errors
 from .math_utils import normalize_quat_array
 from ..metric_cli_common import cum_distance
 
