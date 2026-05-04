@@ -54,6 +54,33 @@ def test_compute_metrics_can_include_raw_arrays() -> None:
     assert rpe["_error_arrays"]["translation_part"].shape[0] == rpe["pair_count"]
 
 
+def test_rpe_point_distance_ratio_keeps_pair_aligned_raw_arrays() -> None:
+    pos = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ],
+        dtype=float,
+    )
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (pos.shape[0], 1))
+
+    rpe = compute_rpe_evo_style(
+        pos,
+        quat,
+        pos,
+        quat,
+        delta=1,
+        delta_unit="f",
+        include_raw=True,
+    )
+    ratio = rpe["_error_arrays"]["point_distance_error_ratio"]
+
+    assert ratio.shape[0] == rpe["pair_count"]
+    assert np.isnan(ratio[0])
+    assert ratio[1] == 0.0
+
+
 def test_normalize_pose_relation_accepts_evo_aliases() -> None:
     assert normalize_pose_relation("ape", "trans_part") == "translation_part"
     assert normalize_pose_relation("rpe", "angle_deg") == "rotation_angle_deg"

@@ -51,12 +51,16 @@ def _strip_est_suffix(stem: str) -> str:
 def _is_est_trajectory_file(path: Path) -> bool:
     if path.suffix.lower() not in _EST_SUFFIXES:
         return False
-    if path.suffix.lower() in {".tum", ".csv"}:
-        return True
     stem = path.stem
-    if stem in _GENERIC_EST_STEMS:
-        return True
-    return any(stem.endswith(suffix) for suffix in _EST_STEM_SUFFIXES)
+    if path.suffix.lower() == ".txt" and not (
+        stem in _GENERIC_EST_STEMS or any(stem.endswith(suffix) for suffix in _EST_STEM_SUFFIXES)
+    ):
+        return False
+    try:
+        _sniff_trajectory_columns(path)
+    except Exception:
+        return False
+    return True
 
 
 def _with_supported_gt_suffixes(path_without_suffix: Path) -> list[Path]:
@@ -131,6 +135,21 @@ def _sniff_delimiter(path: Path) -> str | None:
             if "," in line:
                 return ","
             return None
+    raise ValueError(f"No numeric rows found in trajectory file: {path}")
+
+
+def _sniff_trajectory_columns(path: Path) -> int:
+    delimiter = _sniff_delimiter(path)
+    with path.open("r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            cols = line.split(delimiter) if delimiter == "," else line.split()
+            values = [float(col.strip()) for col in cols if str(col).strip()]
+            if len(values) < 8:
+                raise ValueError(f"Trajectory must have at least 8 columns: {path}")
+            return len(values)
     raise ValueError(f"No numeric rows found in trajectory file: {path}")
 
 
@@ -285,7 +304,6 @@ def discover_cases(cases_root: Path) -> tuple[list[BenchmarkCase], list[dict[str
         else:
             dataset, method, sequence, gt_path = selected
 
-        gt_path = _resolve_gt_for_case(gt_root, rel_pose, sequence)
         if gt_path is None:
             unresolved.append(
                 {
@@ -395,12 +413,15 @@ def _run_epa_case(
         str(downsample_hz),
         "--output-root",
         str(output_root),
+        "--run-label",
+        case.case_id,
     ]
     if bool(no_downsample):
         cmd.append("--no-downsample")
     proc = subprocess.run(
         cmd,
         cwd=repo_root,
+        env=env,
         capture_output=True,
         text=True,
         check=False,

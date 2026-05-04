@@ -149,6 +149,26 @@ def test_discover_cases_multiple_sequence_dirs_under_one_system(tmp_path: Path) 
     assert {case.sequence for case in cases} == {"room_a", "room_b"}
 
 
+def test_discover_cases_ignores_non_trajectory_csv_and_tum_files(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    gt_file = align_root / "GT" / "custom" / "seq_01.txt"
+    est_file = align_root / "benchmark" / "custom" / "vins" / "seq_01.tum"
+    summary_file = align_root / "benchmark" / "custom" / "vins" / "summary.csv"
+    bad_tum_file = align_root / "benchmark" / "custom" / "vins" / "notes.tum"
+    gt_file.parent.mkdir(parents=True, exist_ok=True)
+    est_file.parent.mkdir(parents=True, exist_ok=True)
+    gt_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+    est_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+    summary_file.write_text("case,status\nseq_01,ok\n", encoding="utf-8")
+    bad_tum_file.write_text("not a trajectory\n", encoding="utf-8")
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 1
+    assert cases[0].est_path == est_file
+
+
 def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     rows = [
         {
@@ -191,6 +211,7 @@ def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPa
 
     def fake_run_epa_case(*args, **kwargs):
         assert kwargs["output_root"] == tmp_path / "run" / "epa_runs"
+        assert args[0].case_id == "demo_seq_sys"
         return {
             "status": "ok",
             "run_dir": str(tmp_path / "run" / "epa_runs" / "run_demo"),

@@ -7,6 +7,7 @@ from epa.core.pipeline_modular import (
     _downsample_by_max_hz,
     _match_nearest_timestamps,
     _offset_match_diagnostics,
+    _select_gt_overlap_window,
     _search_direct_offset_from_matched_pairs,
 )
 from epa.core.calibration import solve_world_alignment
@@ -63,6 +64,42 @@ def test_downsample_by_max_hz_caps_dense_eval_grid_and_keeps_endpoints() -> None
     assert np.min(np.diff(t_ds[:-1])) >= 0.01 * (1.0 - 1e-6)
     assert pos_ds.shape[0] == t_ds.size
     assert quat_ds.shape[0] == t_ds.size
+
+
+def test_select_gt_overlap_window_trims_to_estimation_support() -> None:
+    t = np.arange(0.0, 10.0, 1.0)
+    pos = np.column_stack([t, t * 0.0, t * 0.0])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t.size, 1))
+    t_est_sync = np.arange(3.0, 8.0, 1.0)
+
+    t_sel, pos_sel, quat_sel, info = _select_gt_overlap_window(
+        t, pos, quat, t_est_sync, min_samples=3
+    )
+
+    assert not bool(info["fallback_used"])
+    assert str(info["mode"]) == "overlap"
+    np.testing.assert_allclose(t_sel, np.array([3.0, 4.0, 5.0, 6.0, 7.0]))
+    assert pos_sel.shape[0] == t_sel.size
+    assert quat_sel.shape[0] == t_sel.size
+    assert float(info["extrapolated_sample_ratio"]) == 0.0
+
+
+def test_select_gt_overlap_window_falls_back_when_overlap_too_small() -> None:
+    t = np.arange(0.0, 10.0, 1.0)
+    pos = np.column_stack([t, t * 0.0, t * 0.0])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t.size, 1))
+    t_est_sync = np.array([3.0, 4.0])
+
+    t_sel, pos_sel, quat_sel, info = _select_gt_overlap_window(
+        t, pos, quat, t_est_sync, min_samples=3
+    )
+
+    assert bool(info["fallback_used"])
+    assert str(info["mode"]) == "full_gt_extrapolate_fallback"
+    np.testing.assert_allclose(t_sel, t)
+    assert pos_sel.shape[0] == t.size
+    assert quat_sel.shape[0] == t.size
+    assert float(info["extrapolated_sample_ratio"]) > 0.0
 
 
 def test_match_nearest_timestamps_allows_repeated_est_indices() -> None:
