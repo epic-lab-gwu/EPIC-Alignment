@@ -26,7 +26,6 @@ from epa.core.calibration import (
     solve_world_alignment,
 )
 from epa.core.pipeline_modular import (
-    _associate_ref_est_like_evo,
     _search_direct_offset_from_matched_pairs,
 )
 from epa.core.time_alignment import (

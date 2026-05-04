@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 import json
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -213,7 +212,6 @@ def main() -> int:
 
     for idx, row in enumerate(rows, start=1):
         idea = row['idea_id']
-        pref = f"{idx:02d}_{idea}"
 
         if idea in existing_checkers and existing_checkers[idea]():
             report_rows.append(

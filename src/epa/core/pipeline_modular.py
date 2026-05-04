@@ -9,13 +9,9 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation as R
 
-from .calibration import (
-    solve_world_alignment,
-)
 from .evaluation import (
     compute_ape_evo_style,
     compute_rpe_evo_style,
@@ -23,49 +19,38 @@ from .evaluation import (
     print_metric_block,
 )
 from .io_utils import (
-    compact_metrics_payload,
     load_estimation_trajectory,
     load_reference_trajectory,
     make_output_dir,
     save_metrics,
-    write_result_bundle,
     write_run_reports,
 )
-from .math_utils import normalize_quat_array, rmse
 from .steps import (
-    _associate_gt_est,
+    _associate_gt_est as _associate_gt_est,
     _compute_step2_residual_metrics,
     _compute_trajectory_metrics,
-    _downsample_by_max_hz,
-    _map_est_to_ref_nearest,
-    _match_nearest_timestamps,
-    _offset_match_diagnostics,
+    _downsample_by_max_hz as _downsample_by_max_hz,
+    _match_nearest_timestamps as _match_nearest_timestamps,
+    _offset_match_diagnostics as _offset_match_diagnostics,
     _prepare_solve_eval_trajectories,
     _run_time_alignment,
-    _search_direct_offset_from_matched_pairs,
-    _select_gt_overlap_window,
+    _search_direct_offset_from_matched_pairs as _search_direct_offset_from_matched_pairs,
+    _select_gt_overlap_window as _select_gt_overlap_window,
     _solve_step2_step3,
 )
 from .outputs import (
-    _generate_and_cleanup_metric_plots,
     _plot_alignment_map,
     _plot_piecewise_diagnostics,
     _plot_stage_alignment_maps,
     _plot_step1_outputs,
-    _resolve_result_bundle_path,
-    _set_axes_equal_3d,
     _write_outputs,
 )
 from .diagnostics import (
     _build_user_alert,
     _compute_alignment_quality,
-    _compute_piecewise_alignment,
+    _compute_piecewise_alignment as _compute_piecewise_alignment,
     _compute_piecewise_diagnostics,
     _compute_rigid_alignability,
-    _segment_blend_weights,
-    _segment_heading_angles_deg,
-    _segment_ranges_by_time,
-    _umeyama_transform,
 )
 from ..metric_cli_common import (
     align_for_eval,
@@ -73,7 +58,6 @@ from ..metric_cli_common import (
     project_to_plane,
 )
 from ..viz.rerun_viz import log_alignment_to_rerun
-from ..viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots
 
 
 def _apply_time_window(tvals, pos, quat, t_start=None, t_end=None):
@@ -530,7 +514,6 @@ def run_pipeline_modular(args, script_dir: Path):
         downsample_hz=downsample_hz,
         quat_interp=args.quat_interp,
     )
-    t_est_sync = solve_eval["t_est_sync"]
     t_gt = solve_eval["t_gt"]
     pos_gt = solve_eval["pos_gt"]
     quat_gt = solve_eval["quat_gt"]
@@ -575,7 +558,6 @@ def run_pipeline_modular(args, script_dir: Path):
     Rw_calc = solved["Rw_calc"]
     tw_calc = solved["tw_calc"]
     pr_corrected = solved["pr_corrected"]
-    pr_corrected_solve = solved["pr_corrected_solve"]
     pr_final = solved["pr_final"]
     pr_final_global = solved["pr_final_global"]
     q_step2 = solved["q_step2"]
@@ -643,7 +625,6 @@ def run_pipeline_modular(args, script_dir: Path):
     step2_err = traj_eval["step2_err"]
     step3_err = traj_eval["step3_err"]
     raw_stats = traj_eval["raw_stats"]
-    step2_stats = traj_eval["step2_stats"]
     step3_stats = traj_eval["step3_stats"]
     traj_metrics = traj_eval["traj_metrics"]
 
