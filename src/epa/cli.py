@@ -307,6 +307,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--run-label",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--save-full-metrics",
         action="store_true",
         help="Keep full per-sample APE/RPE arrays in metrics.json. Default writes compact metrics.",

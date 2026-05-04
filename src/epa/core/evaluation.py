@@ -242,7 +242,8 @@ def compute_rpe_evo_style(
     est_distances = np.array([np.linalg.norm(pos_est[i] - pos_est[j]) for i, j in id_pairs])
     point_distance_err = np.abs(ref_distances - est_distances)
     ratio_mask = ref_distances != 0.0
-    point_ratio = np.divide(point_distance_err[ratio_mask], ref_distances[ratio_mask]) * 100.0
+    point_ratio = np.full(len(id_pairs), np.nan, dtype=float)
+    point_ratio[ratio_mask] = np.divide(point_distance_err[ratio_mask], ref_distances[ratio_mask]) * 100.0
 
     E = []
     for i, j in id_pairs:

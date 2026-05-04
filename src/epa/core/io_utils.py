@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -643,27 +644,10 @@ def load_csv_numeric_columns(path):
 
 def load_vicon_csv(path):
     columns, data = load_csv_numeric_columns(path)
-    t_col = find_col(columns, ["#timestamp", "timestamp"])
-    px_col = find_col(columns, ["p_RS_R_x [m]", "p_x", "px", "tx"])
-    py_col = find_col(columns, ["p_RS_R_y [m]", "p_y", "py", "ty"])
-    pz_col = find_col(columns, ["p_RS_R_z [m]", "p_z", "pz", "tz"])
-    qx_col = find_col(columns, ["q_RS_x []", "q_x", "qx"])
-    qy_col = find_col(columns, ["q_RS_y []", "q_y", "qy"])
-    qz_col = find_col(columns, ["q_RS_z []", "q_z", "qz"])
-    qw_col = find_col(columns, ["q_RS_w []", "q_w", "qw"])
-
-    needed = [t_col, px_col, py_col, pz_col, qx_col, qy_col, qz_col, qw_col]
-    if any(c is None for c in needed):
-        raise ValueError(f"GT CSV missing required columns: {path}")
-
-    t = normalize_time_to_seconds(data[t_col], zero_start=False)
-    pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
-    quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
-    return t, pos, quat
+    return _trajectory_from_csv_columns(columns, data, path, label="GT CSV")
 
 
-def load_estimation_csv(path):
-    columns, data = load_csv_numeric_columns(path)
+def _trajectory_from_csv_columns(columns, data, path, label):
     t_col = find_col(columns, ["#timestamp", "timestamp", "time", "t"])
     px_col = find_col(columns, ["p_RS_R_x [m]", "p_x", "px", "tx", "x"])
     py_col = find_col(columns, ["p_RS_R_y [m]", "p_y", "py", "ty", "y"])
@@ -672,14 +656,49 @@ def load_estimation_csv(path):
     qy_col = find_col(columns, ["q_RS_y []", "q_y", "qy"])
     qz_col = find_col(columns, ["q_RS_z []", "q_z", "qz"])
     qw_col = find_col(columns, ["q_RS_w []", "q_w", "qw"])
-
     needed = [t_col, px_col, py_col, pz_col, qx_col, qy_col, qz_col, qw_col]
     if any(c is None for c in needed):
-        raise ValueError(f"Estimation CSV missing required columns: {path}")
+        raise ValueError(f"{label} missing required columns: {path}")
 
-    t = normalize_time_to_seconds(data[t_col], zero_start=False)
+    t = data[t_col]
     pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
     quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
+    return _sanitize_timed_trajectory(t, pos, quat, path)
+
+
+def load_estimation_csv(path):
+    columns, data = load_csv_numeric_columns(path)
+    return _trajectory_from_csv_columns(columns, data, path, label="Estimation CSV")
+
+
+def _sanitize_timed_trajectory(t, pos, quat, path):
+    t = np.asarray(t, dtype=float).reshape(-1)
+    pos = np.asarray(pos, dtype=float)
+    quat = normalize_quat_array(np.asarray(quat, dtype=float))
+    if t.size != pos.shape[0] or t.size != quat.shape[0]:
+        raise ValueError(f"Trajectory arrays have inconsistent lengths: {path}")
+
+    finite = np.isfinite(t) & np.isfinite(pos).all(axis=1) & np.isfinite(quat).all(axis=1)
+    q_norm = np.linalg.norm(quat, axis=1)
+    finite &= q_norm > 1e-12
+    t = t[finite]
+    pos = pos[finite]
+    quat = normalize_quat_array(quat[finite])
+    if t.size < 2:
+        raise ValueError(f"Trajectory has fewer than 2 valid rows: {path}")
+
+    order = np.argsort(t, kind="mergesort")
+    t = t[order]
+    pos = pos[order]
+    quat = quat[order]
+    keep = np.ones(t.shape[0], dtype=bool)
+    keep[1:] = np.diff(t) > 0.0
+    t = t[keep]
+    pos = pos[keep]
+    quat = quat[keep]
+    if t.size < 2:
+        raise ValueError(f"Trajectory has fewer than 2 unique timestamps: {path}")
+    t = normalize_time_to_seconds(t, zero_start=False)
     return t, pos, quat
 
 
@@ -690,10 +709,10 @@ def load_estimation_tum(path):
     if arr.shape[1] < 8:
         raise ValueError("Trajectory file must have at least 8 columns: t tx ty tz qx qy qz qw")
 
-    t = normalize_time_to_seconds(arr[:, 0], zero_start=False)
+    t = arr[:, 0]
     pos = arr[:, 1:4]
     quat = normalize_quat_array(arr[:, 4:8])
-    return t, pos, quat
+    return _sanitize_timed_trajectory(t, pos, quat, path)
 
 
 def load_estimation_kitti(path):
@@ -965,15 +984,24 @@ def load_estimation_trajectory(path, est_format, est_topic=""):
     raise ValueError(f"Unsupported estimation format: {est_format}")
 
 
-def make_output_dir(script_dir, output_root=None):
+def _safe_run_label(label) -> str:
+    text = str(label or "").strip()
+    if not text:
+        return ""
+    return re.sub(r"[^a-zA-Z0-9._-]+", "_", text).strip("._-")
+
+
+def make_output_dir(script_dir, output_root=None, run_label=""):
     output_root = Path(output_root) if output_root else script_dir / "outputs"
     if not output_root.is_absolute():
         output_root = script_dir / output_root
     output_root.mkdir(parents=True, exist_ok=True)
     run_stamp = datetime.now().strftime("run_%Y%m%d_%H%M%S")
+    safe_label = _safe_run_label(run_label)
+    run_name = f"{run_stamp}_{safe_label}" if safe_label else run_stamp
     for idx in range(10000):
         suffix = "" if idx == 0 else f"_{idx:02d}"
-        run_dir = output_root / f"{run_stamp}{suffix}"
+        run_dir = output_root / f"{run_name}{suffix}"
         try:
             run_dir.mkdir(parents=True, exist_ok=False)
             return run_dir

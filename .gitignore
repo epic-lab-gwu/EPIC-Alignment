@@ -1,6 +1,7 @@
 .codex
 __pycache__/
 *.pyc
+*.egg-info/
 track.md
 AGENTS.md
 
