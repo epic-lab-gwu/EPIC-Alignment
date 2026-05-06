@@ -8,6 +8,31 @@ It provides:
 - OpenVINS compatibility entrypoints
 - optional plotting and rerun-based visualization
 
+## Architecture
+
+High-level system view:
+
+<p align="center">
+  <img src="docs/images/architecture_system_diagram_v2.png" alt="EPA architecture diagram" width="900">
+</p>
+
+`EPA` has three main surfaces:
+
+- the main `epa` / `epica` pipeline for one GT/EST pair
+- the `epa_bench` harness for multi-case benchmark runs
+- the `ov_eval` compatibility layer for legacy-style summaries
+
+<p align="center">
+  <img src="docs/images/readme_step23_alignment_3d.png" alt="Step 1 to Step 3 trajectory alignment" width="88%">
+</p>
+
+<p align="center">
+  <img src="docs/images/readme_ape_translation_part_se3_raw.png" alt="APE translation error curve" width="52%">
+  <video width="46%" autoplay muted loop playsinline>
+    <source src="docs/images/rerun.mp4" type="video/mp4">
+  </video>
+</p>
+
 ## Installation
 
 Create and activate a virtual environment first (recommended):
