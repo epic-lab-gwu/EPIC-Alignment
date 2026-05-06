@@ -28,9 +28,7 @@ High-level system view:
 
 <p align="center">
   <img src="docs/images/readme_ape_translation_part_se3_raw.png" alt="APE translation error curve" width="52%">
-  <video width="46%" autoplay muted loop playsinline>
-    <source src="docs/images/rerun.mp4" type="video/mp4">
-  </video>
+  <img src="docs/images/rerun.gif" alt="Rerun demo animation" width="46%">
 </p>
 
 ## Installation
