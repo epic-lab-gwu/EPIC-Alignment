@@ -21,6 +21,10 @@ from epa.traj_tool import run as run_traj
 
 _VALID_ALIGN_MODES = {"posyaw", "posyawsingle", "se3", "se3single", "sim3", "none"}
 _DEFAULT_ASSOC_MAX_DIFF = 0.02
+_DEFAULT_EPA_DT_RESAMPLE = 0.001
+_DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO = 0.3
+_DEFAULT_EPA_DOWNSAMPLE_HZ = 100.0
+_DEFAULT_EPA_QUAT_INTERP = "linear"
 
 
 def _fmt(v: float, nd: int = 3) -> str:
@@ -330,6 +334,11 @@ def _evaluate_pair_epa_step3(
     file_gt: Path,
     file_est: Path,
     max_diff: float,
+    *,
+    dt_resample: float = _DEFAULT_EPA_DT_RESAMPLE,
+    offset_min_match_ratio: float = _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
+    downsample_hz: float = _DEFAULT_EPA_DOWNSAMPLE_HZ,
+    quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
 ) -> dict:
     t_gt, p_gt, q_gt = _load_pose_file(file_gt)
     t_est, p_est, q_est = _load_pose_file(file_est)
@@ -343,9 +352,9 @@ def _evaluate_pair_epa_step3(
         quat_gt=q_gt,
         t_est=t_est,
         quat_est=q_est,
-        dt_resample=0.001,
+        dt_resample=float(dt_resample),
         offset_search_window_s=0.0,
-        offset_min_match_ratio=0.3,
+        offset_min_match_ratio=float(offset_min_match_ratio),
         evo_match_max_diff_s=float(max_diff),
         artificial_offset_s=None,
     )
@@ -357,8 +366,8 @@ def _evaluate_pair_epa_step3(
         pos_est=p_est,
         quat_est=q_est,
         calculated_offset=float(step1["calculated_offset"]),
-        downsample_hz=100.0,
-        quat_interp="linear",
+        downsample_hz=float(downsample_hz),
+        quat_interp=str(quat_interp),
     )
     solved = _solve_step2_step3(
         pr_sync=solve_eval["pr_sync"],
@@ -403,6 +412,7 @@ def _evaluate_pair_epa_step3(
         "gt_quat": gt_quat,
         "est_pos": est_pos,
         "est_quat": est_quat,
+        "eval_source": "epa_step3",
         "ate3_ori": dict(ape3["rotation_angle_deg"]),
         "ate3_pos": dict(ape3["translation_part"]),
         "ate2_ori": dict(ape2["rotation_angle_deg"]),
@@ -415,6 +425,12 @@ def _evaluate_pair(
     file_est: Path,
     align_mode: str,
     max_diff: float,
+    *,
+    epa_dt_resample: float = _DEFAULT_EPA_DT_RESAMPLE,
+    epa_offset_min_match_ratio: float = _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
+    epa_downsample_hz: float = _DEFAULT_EPA_DOWNSAMPLE_HZ,
+    epa_quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
+    epa_no_fallback: bool = False,
 ) -> dict:
     if str(align_mode).lower() == "se3":
         try:
@@ -422,19 +438,59 @@ def _evaluate_pair(
                 file_gt=file_gt,
                 file_est=file_est,
                 max_diff=float(max_diff),
+                dt_resample=float(epa_dt_resample),
+                offset_min_match_ratio=float(epa_offset_min_match_ratio),
+                downsample_hz=float(epa_downsample_hz),
+                quat_interp=str(epa_quat_interp),
             )
         except Exception as exc:
+            param_msg = (
+                f"epa_dt_resample={float(epa_dt_resample):.6g}, "
+                f"epa_offset_min_match_ratio={float(epa_offset_min_match_ratio):.6g}, "
+                f"epa_downsample_hz={float(epa_downsample_hz):.6g}, "
+                f"epa_quat_interp={epa_quat_interp}"
+            )
+            if bool(epa_no_fallback):
+                raise RuntimeError(
+                    f"EPA Step3 evaluation failed for {file_est.name}; {param_msg}: {exc}"
+                ) from exc
             print(
                 f"[warn] EPA Step3 evaluation failed for {file_est.name}; "
-                f"falling back to ov_eval-style SE3: {exc}"
+                f"{param_msg}; falling back to ov_eval-style SE3: {exc}"
             )
 
-    return _evaluate_pair_ov_style(
+    result = _evaluate_pair_ov_style(
         file_gt=file_gt,
         file_est=file_est,
         align_mode=align_mode,
         max_diff=float(max_diff),
     )
+    result["eval_source"] = "ov_eval_style"
+    return result
+
+
+def _epa_eval_kwargs(args: argparse.Namespace) -> dict[str, object]:
+    return {
+        "epa_dt_resample": float(getattr(args, "epa_dt_resample", _DEFAULT_EPA_DT_RESAMPLE)),
+        "epa_offset_min_match_ratio": float(
+            getattr(args, "epa_offset_min_match_ratio", _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO)
+        ),
+        "epa_downsample_hz": float(getattr(args, "epa_downsample_hz", _DEFAULT_EPA_DOWNSAMPLE_HZ)),
+        "epa_quat_interp": str(getattr(args, "epa_quat_interp", _DEFAULT_EPA_QUAT_INTERP)),
+        "epa_no_fallback": bool(getattr(args, "epa_no_fallback", False)),
+    }
+
+
+def _format_source_counts(counts: dict[str, int]) -> str:
+    if not counts:
+        return "none"
+    return ", ".join(f"{name}={counts[name]}" for name in sorted(counts))
+
+
+def _format_source_details(items: list[str]) -> str:
+    if not items:
+        return "none"
+    return ", ".join(items)
 
 
 def _compute_rpe_segments(
@@ -513,6 +569,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         file_est=Path(args.file_est).expanduser(),
         align_mode=str(args.align_mode),
         max_diff=float(args.max_diff),
+        **_epa_eval_kwargs(args),
     )
 
     if eval_res["length_ratio"] > 1.1 or eval_res["length_ratio"] < 0.9:
@@ -602,6 +659,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 file_est=run_file,
                 align_mode=str(args.align_mode),
                 max_diff=float(args.max_diff),
+                **_epa_eval_kwargs(args),
             )
             ate_ori_rmse.append(float(ev["ate3_ori"]["rmse"]))
             ate_pos_rmse.append(float(ev["ate3_pos"]["rmse"]))
@@ -672,6 +730,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     rpe_all: dict[str, dict[float, tuple[list[float], list[float]]]] = {
         a.name: {s: ([], []) for s in segments} for a in algo_dirs
     }
+    source_counts_total: dict[str, int] = {}
+    source_details_total: list[str] = []
 
     print("======================================")
     for algo_dir in algo_dirs:
@@ -693,6 +753,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
             print(f"[COMP]: processing {algo_dir.name} algorithm => {ds} dataset")
             ate_ori_rmse: list[float] = []
             ate_pos_rmse: list[float] = []
+            source_counts_ds: dict[str, int] = {}
+            source_details_ds: list[str] = []
 
             ds_rpe_ori: dict[float, list[float]] = {s: [] for s in segments}
             ds_rpe_pos: dict[float, list[float]] = {s: [] for s in segments}
@@ -703,9 +765,16 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     file_est=run_file,
                     align_mode=str(args.align_mode),
                     max_diff=float(args.max_diff),
+                    **_epa_eval_kwargs(args),
                 )
                 ate_ori_rmse.append(float(ev["ate3_ori"]["rmse"]))
                 ate_pos_rmse.append(float(ev["ate3_pos"]["rmse"]))
+                source = str(ev.get("eval_source", "unknown"))
+                source_counts_ds[source] = source_counts_ds.get(source, 0) + 1
+                source_counts_total[source] = source_counts_total.get(source, 0) + 1
+                if source != "epa_step3":
+                    source_details_ds.append(f"{run_file.name}:{source}")
+                    source_details_total.append(f"{algo_dir.name}/{ds}/{run_file.name}:{source}")
 
                 rpe = _compute_rpe_segments(
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
@@ -730,6 +799,9 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 f"\tATE: mean_ori = {_fmt(ate_ori_stats['mean'])} "
                 f"| mean_pos = {_fmt(ate_pos_stats['mean'])} ({len(run_files)} runs)"
             )
+            print(f"\teval_source: {_format_source_counts(source_counts_ds)}")
+            if source_details_ds:
+                print(f"\tnon_epa_runs: {_format_source_details(source_details_ds)}")
             for seg in segments:
                 o_stats = compute_error_statistics(np.asarray(ds_rpe_ori[seg], dtype=float))
                 p_stats = compute_error_statistics(np.asarray(ds_rpe_pos[seg], dtype=float))
@@ -738,6 +810,11 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     f"| median_pos = {_fmt(p_stats['median'], 4)} ({len(ds_rpe_pos[seg])} samples)"
                 )
 
+    print("============================================")
+    print(f"EVAL SOURCE SUMMARY: {_format_source_counts(source_counts_total)}")
+    if source_details_total:
+        print(f"EVAL SOURCE NON-EPA RUNS: {_format_source_details(source_details_total)}")
+    print("============================================")
     print("============================================")
     print("ATE LATEX TABLE")
     print("============================================")
@@ -826,6 +903,38 @@ def _build_format_converter_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--epa-dt-resample",
+        type=float,
+        default=_DEFAULT_EPA_DT_RESAMPLE,
+        help="EPA Step1 resampling interval used by SE3 compatibility mode.",
+    )
+    p.add_argument(
+        "--epa-offset-min-match-ratio",
+        type=float,
+        default=_DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
+        help="Minimum overlap-aware timestamp match ratio required by EPA Step1.",
+    )
+    p.add_argument(
+        "--epa-downsample-hz",
+        type=float,
+        default=_DEFAULT_EPA_DOWNSAMPLE_HZ,
+        help="EPA Step2/3 solve and metric downsample cap. Use 0 to disable.",
+    )
+    p.add_argument(
+        "--epa-quat-interp",
+        choices=["linear", "slerp"],
+        default=_DEFAULT_EPA_QUAT_INTERP,
+        help="Quaternion interpolation mode for EPA Step2/3 trajectory preparation.",
+    )
+    p.add_argument(
+        "--epa-no-fallback",
+        action="store_true",
+        help="Fail instead of falling back to ov_eval-style SE3 when EPA Step3 evaluation fails.",
+    )
+
+
 def _build_error_singlerun_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OV-Eval compatible error_singlerun in EPA.")
     p.add_argument("align_mode", help="posyaw|posyawsingle|se3|se3single|sim3|none")
@@ -833,6 +942,7 @@ def _build_error_singlerun_parser() -> argparse.ArgumentParser:
     p.add_argument("file_est", help="estimated trajectory")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")
     p.add_argument("--plot", action="store_true", help="reserved in compatibility mode")
+    _add_epa_advanced_args(p)
     return p
 
 
@@ -843,6 +953,7 @@ def _build_error_dataset_parser() -> argparse.ArgumentParser:
     p.add_argument("folder_algorithms", help="algorithm root folder")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")
     p.add_argument("--plot", action="store_true", help="reserved in compatibility mode")
+    _add_epa_advanced_args(p)
     return p
 
 
@@ -852,6 +963,7 @@ def _build_error_comparison_parser() -> argparse.ArgumentParser:
     p.add_argument("folder_groundtruth", help="groundtruth root folder")
     p.add_argument("folder_algorithms", help="algorithm root folder")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")
+    _add_epa_advanced_args(p)
     return p
 
 

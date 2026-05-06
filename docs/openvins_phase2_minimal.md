@@ -20,6 +20,8 @@ Keep `epica` as an external module, but allow OpenVINS-style commands such as:
 - `plot_trajectories`
 
 These command names are forwarded to `python -m epa.ov_eval_compat ...`.
+The shim installer also provides suffix-style aliases for common alignment modes, such as
+`error_comparison_se3`, `error_singlerun_se3`, and `plot_trajectories_sim3`.
 
 ## Quick Start
 
@@ -66,4 +68,26 @@ If you still want `ov_eval`-style commands, install the optional shims:
 ```bash
 bash scripts/openvins/install_ov_eval_epa_shims.sh
 export PATH="$(pwd)/tools/epa_ov_eval_shims:$PATH"
+
+# Both forms are supported:
+error_comparison se3 /path/to/gt /path/to/algorithms
+error_comparison_se3 /path/to/gt /path/to/algorithms
+```
+
+For low-rate, short, or difficult sequences, the `se3` compatibility path exposes EPA Step-3
+debug parameters:
+
+```bash
+error_comparison_se3 /path/to/gt /path/to/algorithms \
+  --epa-dt-resample 0.01 \
+  --epa-offset-min-match-ratio 0.1 \
+  --epa-downsample-hz 20 \
+  --epa-quat-interp slerp
+```
+
+By default, if EPA Step-3 evaluation fails, the compatibility layer falls back to
+ov_eval-style SE3 and prints the EPA parameters used. To fail immediately instead:
+
+```bash
+error_comparison_se3 /path/to/gt /path/to/algorithms --epa-no-fallback
 ```
