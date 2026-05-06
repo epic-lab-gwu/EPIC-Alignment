@@ -9,6 +9,11 @@ from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import compute_ape_evo_style, compute_rpe_evo_style
 from epa.core.math_utils import compute_error_statistics, normalize_quat_array
+from epa.core.steps import (
+    _prepare_solve_eval_trajectories,
+    _run_time_alignment,
+    _solve_step2_step3,
+)
 from epa.metric_cli_common import project_to_plane
 from epa.traj_tool import build_parser as build_traj_parser
 from epa.traj_tool import run as run_traj
@@ -247,7 +252,7 @@ def _apply_similarity(
     return p_new, q_new
 
 
-def _evaluate_pair(
+def _evaluate_pair_ov_style(
     file_gt: Path,
     file_est: Path,
     align_mode: str,
@@ -319,6 +324,117 @@ def _evaluate_pair(
         "ate2_ori": dict(ape2["rotation_angle_deg"]),
         "ate2_pos": dict(ape2["translation_part"]),
     }
+
+
+def _evaluate_pair_epa_step3(
+    file_gt: Path,
+    file_est: Path,
+    max_diff: float,
+) -> dict:
+    t_gt, p_gt, q_gt = _load_pose_file(file_gt)
+    t_est, p_est, q_est = _load_pose_file(file_est)
+
+    len_gt = float(np.sum(np.linalg.norm(np.diff(p_gt, axis=0), axis=1))) if p_gt.shape[0] > 1 else 0.0
+    len_est = float(np.sum(np.linalg.norm(np.diff(p_est, axis=0), axis=1))) if p_est.shape[0] > 1 else 0.0
+    ratio = len_est / (len_gt + 1e-12)
+
+    step1 = _run_time_alignment(
+        t_gt=t_gt,
+        quat_gt=q_gt,
+        t_est=t_est,
+        quat_est=q_est,
+        dt_resample=0.001,
+        offset_search_window_s=0.0,
+        offset_min_match_ratio=0.3,
+        evo_match_max_diff_s=float(max_diff),
+        artificial_offset_s=None,
+    )
+    solve_eval = _prepare_solve_eval_trajectories(
+        t_gt=t_gt,
+        pos_gt=p_gt,
+        quat_gt=q_gt,
+        t_est=t_est,
+        pos_est=p_est,
+        quat_est=q_est,
+        calculated_offset=float(step1["calculated_offset"]),
+        downsample_hz=100.0,
+        quat_interp="linear",
+    )
+    solved = _solve_step2_step3(
+        pr_sync=solve_eval["pr_sync"],
+        qr_sync=solve_eval["qr_sync"],
+        pos_gt_solve=solve_eval["pos_gt_solve"],
+        quat_gt_solve=solve_eval["quat_gt_solve"],
+        pr_solve=solve_eval["pr_solve"],
+        qr_solve=solve_eval["qr_solve"],
+    )
+
+    gt_t = np.asarray(solve_eval["t_gt"], dtype=float)
+    gt_pos = np.asarray(solve_eval["pos_gt"], dtype=float)
+    gt_quat = np.asarray(solve_eval["quat_gt"], dtype=float)
+    est_pos = np.asarray(solved["pr_final"], dtype=float)
+    est_quat = np.asarray(solved["q_step3"], dtype=float)
+
+    ape3 = compute_ape_evo_style(
+        pos_ref=gt_pos,
+        quat_ref=gt_quat,
+        pos_est=est_pos,
+        quat_est=est_quat,
+        include_raw=True,
+    )
+
+    p_gt_xy, q_gt_xy = project_to_plane(gt_pos, gt_quat, "xy")
+    p_est_xy, q_est_xy = project_to_plane(est_pos, est_quat, "xy")
+    ape2 = compute_ape_evo_style(
+        pos_ref=p_gt_xy,
+        quat_ref=q_gt_xy,
+        pos_est=p_est_xy,
+        quat_est=q_est_xy,
+        include_raw=True,
+    )
+
+    return {
+        "matched": int(gt_t.size),
+        "length_ratio": float(ratio),
+        "length_gt": float(len_gt),
+        "length_est": float(len_est),
+        "gt_t": gt_t,
+        "gt_pos": gt_pos,
+        "gt_quat": gt_quat,
+        "est_pos": est_pos,
+        "est_quat": est_quat,
+        "ate3_ori": dict(ape3["rotation_angle_deg"]),
+        "ate3_pos": dict(ape3["translation_part"]),
+        "ate2_ori": dict(ape2["rotation_angle_deg"]),
+        "ate2_pos": dict(ape2["translation_part"]),
+    }
+
+
+def _evaluate_pair(
+    file_gt: Path,
+    file_est: Path,
+    align_mode: str,
+    max_diff: float,
+) -> dict:
+    if str(align_mode).lower() == "se3":
+        try:
+            return _evaluate_pair_epa_step3(
+                file_gt=file_gt,
+                file_est=file_est,
+                max_diff=float(max_diff),
+            )
+        except Exception as exc:
+            print(
+                f"[warn] EPA Step3 evaluation failed for {file_est.name}; "
+                f"falling back to ov_eval-style SE3: {exc}"
+            )
+
+    return _evaluate_pair_ov_style(
+        file_gt=file_gt,
+        file_est=file_est,
+        align_mode=align_mode,
+        max_diff=float(max_diff),
+    )
 
 
 def _compute_rpe_segments(

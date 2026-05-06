@@ -206,7 +206,7 @@ def _plot_stage_alignment_maps(
             errors_m=stage_err,
             title=(
                 f"{stage_titles[stage_name]}\n"
-                f"rmse={float(np.sqrt(np.mean(stage_err**2))):.6f} m"
+                f"ATE translation RMSE={float(np.sqrt(np.mean(stage_err**2))):.6f} m"
             ),
         )
     fig2.tight_layout()
@@ -223,7 +223,10 @@ def _plot_stage_alignment_maps(
         pos_ref=np.asarray(pos_gt, dtype=float),
         pos_est=np.asarray(pr_final, dtype=float),
         errors_m=step3_err_subset,
-        title=f"Step3 Alignment Map\nrmse={float(np.sqrt(np.mean(step3_err_subset**2))):.6f} m",
+        title=(
+            "Step3 Alignment Map\n"
+            f"ATE translation RMSE={float(np.sqrt(np.mean(step3_err_subset**2))):.6f} m"
+        ),
     )
     fig_step3_map.tight_layout()
     fig_step3_map_path = plots_dir / "step3_alignment_map.png"
