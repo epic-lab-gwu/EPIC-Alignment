@@ -10,6 +10,7 @@ outputs/
 site/
 dist/
 configs/
+tools/epa_ov_eval_shims/
 
 # externalized datasets (keep outside repo)
 AlignAnything/

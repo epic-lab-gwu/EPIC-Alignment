@@ -1,9 +1,31 @@
 from pathlib import Path
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation as R
 
-from epa.ov_eval_compat import _evaluate_pair_epa_step3, _evaluate_pair_ov_style
+import epa
+from epa.ov_eval_compat import _format_source_counts
+from epa.ov_eval_compat import (
+    _build_error_comparison_parser,
+    _evaluate_pair,
+    _evaluate_pair_epa_step3,
+    _evaluate_pair_ov_style,
+    _format_source_details,
+)
+
+
+def test_package_version_matches_release() -> None:
+    assert epa.__version__ == "0.1.7"
+
+
+def test_format_source_counts_is_deterministic() -> None:
+    assert _format_source_counts({"ov_eval_style": 1, "epa_step3": 2}) == "epa_step3=2, ov_eval_style=1"
+    assert _format_source_counts({}) == "none"
+    assert _format_source_details(["run1.txt:ov_eval_style", "run2.txt:unknown"]) == (
+        "run1.txt:ov_eval_style, run2.txt:unknown"
+    )
+    assert _format_source_details([]) == "none"
 
 
 def _write_tum(path: Path, t: np.ndarray, pos: np.ndarray, quat: np.ndarray) -> None:
@@ -48,3 +70,50 @@ def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(
     assert float(ov["ate3_ori"]["rmse"]) > 10.0
     assert float(epa["ate3_ori"]["rmse"]) < float(ov["ate3_ori"]["rmse"])
     assert float(epa["ate3_pos"]["rmse"]) < float(ov["ate3_pos"]["rmse"])
+    assert epa["eval_source"] == "epa_step3"
+
+
+def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
+    parser = _build_error_comparison_parser()
+    args = parser.parse_args(
+        [
+            "se3",
+            "/gt",
+            "/algorithms",
+            "--epa-dt-resample",
+            "0.01",
+            "--epa-offset-min-match-ratio",
+            "0.1",
+            "--epa-downsample-hz",
+            "20",
+            "--epa-quat-interp",
+            "slerp",
+            "--epa-no-fallback",
+        ]
+    )
+
+    assert args.epa_dt_resample == 0.01
+    assert args.epa_offset_min_match_ratio == 0.1
+    assert args.epa_downsample_hz == 20
+    assert args.epa_quat_interp == "slerp"
+    assert bool(args.epa_no_fallback)
+
+
+def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Path) -> None:
+    t = np.arange(20, dtype=float) * 0.05
+    pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t.size, 1))
+
+    gt_path = tmp_path / "gt.tum"
+    est_path = tmp_path / "est.tum"
+    _write_tum(gt_path, t, pos, quat)
+    _write_tum(est_path, t, pos, quat)
+
+    with pytest.raises(RuntimeError, match="EPA Step3 evaluation failed"):
+        _evaluate_pair(
+            file_gt=gt_path,
+            file_est=est_path,
+            align_mode="se3",
+            max_diff=0.02,
+            epa_no_fallback=True,
+        )
