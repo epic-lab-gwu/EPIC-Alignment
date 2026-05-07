@@ -14,11 +14,12 @@ from epa.ov_eval_compat import (
     _evaluate_pair_epa_step3,
     _evaluate_pair_ov_style,
     _format_source_details,
+    run_error_comparison,
 )
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.7"
+    assert epa.__version__ == "0.1.8"
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -131,6 +132,12 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
             "35",
             "--epa-success-global-gate-percentile",
             "10",
+            "--epa-success-drift-rpe-1s-m",
+            "3",
+            "--epa-success-drift-ape-slope-mps",
+            "1.5",
+            "--epa-success-drift-ape-jump-m",
+            "7",
         ]
     )
 
@@ -147,6 +154,9 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
     assert args.epa_success_threshold_trim_percentile == 90
     assert args.epa_success_global_gate_m == 35
     assert args.epa_success_global_gate_percentile == 10
+    assert args.epa_success_drift_rpe_1s_m == 3
+    assert args.epa_success_drift_ape_slope_mps == 1.5
+    assert args.epa_success_drift_ape_jump_m == 7
 
 
 def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Path) -> None:
@@ -224,3 +234,66 @@ def test_evaluate_pair_epa_step3_step1_fallback_is_quiet_by_default(
     captured = capsys.readouterr()
     assert "--- STEP 1 FALLBACK ---" not in captured.out
     assert result["eval_source"] == "epa_step3"
+
+
+def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    gt_root = tmp_path / "gt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    gt_root.mkdir()
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_root / "seq.txt", t, gt_pos, quat)
+    (run_dir / "run_epa.txt").write_text("", encoding="utf-8")
+    (run_dir / "run_ov.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**kwargs):
+        run_name = Path(kwargs["file_est"]).name
+        if run_name == "run_epa.txt":
+            est_pos = gt_pos.copy()
+            source = "epa_step3"
+            pos_rmse = 0.0
+        else:
+            est_pos = gt_pos.copy()
+            est_pos[:, 1] = 50.0
+            source = "ov_eval_style"
+            pos_rmse = 50.0
+        return {
+            "ate3_ori": {"rmse": 0.0},
+            "ate3_pos": {"rmse": pos_rmse},
+            "eval_source": source,
+            "gt_t": t,
+            "gt_pos": gt_pos,
+            "gt_quat": quat,
+            "est_pos": est_pos,
+            "est_quat": quat,
+        }
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_comparison_parser().parse_args(
+        [
+            "se3",
+            str(gt_root),
+            str(alg_root),
+            "--epa-success-threshold-mode",
+            "fixed",
+            "--epa-success-threshold-m",
+            "10",
+            "--epa-success-global-gate-m",
+            "30",
+        ]
+    )
+
+    assert run_error_comparison(args) == 0
+    out = capsys.readouterr().out
+
+    assert "eval_source: epa=1, ov_eval=1" in out
+    assert "TOOL SOURCE: epa=1, ov_eval=1" in out
+    assert "EVAL SOURCE NON-EPA RUNS: algo/seq/run_ov.txt:ov_eval_style" in out
+    assert "DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)" in out

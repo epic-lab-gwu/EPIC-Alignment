@@ -210,7 +210,7 @@ FULL TRAJECTORY 1S TIME RPE LATEX TABLE (ROT DEG / TRANS M)
 svo\_mono & 3.350 / 2.223 & 2.907 / 122.646 & 2.222 / 3.059 & 2.826 / 42.643 \\
 ============================================
 ============================================
-DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH, adaptive_knee)
+DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)
 ============================================
  & \textbf{R\_11\_5cp} & \textbf{R\_12\_10cp} & \textbf{R\_13\_15cp} & \textbf{Average} \\hline
 svo\_mono & 53.36 & 0.00 & 71.28 & 41.55 \\
