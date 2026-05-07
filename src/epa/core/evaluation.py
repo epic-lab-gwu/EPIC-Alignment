@@ -548,8 +548,9 @@ def _sample_mask_from_pair_mask(n, pair_ids, pair_mask):
         if keep:
             continue
         i, j = int(pair[0]), int(pair[1])
+        lo = max(0, min(i, j))
         hi = min(int(n) - 1, max(i, j))
-        sample_mask[hi] = False
+        sample_mask[lo : hi + 1] = False
     return sample_mask
 
 
@@ -665,6 +666,10 @@ def compute_success_regions(timestamps, pos_ref, ape_translation_errors, thresho
         while i + 1 < n and fail[i + 1]:
             i += 1
         end = i
+        fail_errors = err[start : end + 1]
+        finite_fail_errors = fail_errors[np.isfinite(fail_errors)]
+        max_error = float(np.max(finite_fail_errors)) if finite_fail_errors.size else float("nan")
+        mean_error = float(np.mean(finite_fail_errors)) if finite_fail_errors.size else float("nan")
         fail_segments.append(
             {
                 "start_index": int(start),
@@ -675,8 +680,8 @@ def compute_success_regions(timestamps, pos_ref, ape_translation_errors, thresho
                 "end_distance_m": float(distances_from_start[end]),
                 "duration_s": float(max(0.0, t[end] - t[start])),
                 "distance_m": float(max(0.0, distances_from_start[end] - distances_from_start[start])),
-                "max_error_m": float(np.nanmax(err[start : end + 1])),
-                "mean_error_m": float(np.nanmean(err[start : end + 1])),
+                "max_error_m": max_error,
+                "mean_error_m": mean_error,
             }
         )
         i += 1

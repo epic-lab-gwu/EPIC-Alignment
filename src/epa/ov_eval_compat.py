@@ -1305,7 +1305,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     print("============================================")
 
     print("============================================")
-    print(f"DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH, {success_threshold_mode})")
+    print("DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)")
     print("============================================")
     for gt in gt_files:
         name = gt.stem.replace("_", "\\_")

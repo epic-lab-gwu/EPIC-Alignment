@@ -860,12 +860,12 @@ def run_pipeline_modular(args, script_dir: Path):
             f"RPE_rot_rmse={rpe_r:.6f} deg, "
             f"RPE_time_1s_trans_rmse={rpe_time_t:.6f}, "
             f"RPE_time_1s_rot_rmse={rpe_time_r:.6f} deg, "
-            f"SR_dist@{success_threshold_m:g}m={sr_dist_pct:.2f}%, "
+            f"SR_valid_dist={sr_dist_pct:.2f}%, "
             f"valid_APE_{ape_pose_relation}_rmse={valid_ape_t:.6f}, "
             f"valid_RPE_{rpe_pose_relation}_rmse={valid_rpe_t:.6f}"
         )
         if verbose:
-            print(f"{stage_name}: pairs={pairs}, time_pairs={time_pairs}")
+            print(f"{stage_name}: pairs={pairs}, time_pairs={time_pairs}, threshold_m={success_threshold_m:g}")
 
     fig2_path, fig_step3_map_path = _plot_stage_alignment_maps(
         plots_dir=plots_dir,
