@@ -214,7 +214,7 @@ Common options:
 
 - `--pose_relation`: metric relation such as `trans_part`, `rot_part`, or `point_distance_error_ratio`
 - `--delta`: separation between pose pairs
-- `--delta_unit`: `f` for frames, `m` for meters, `d` for degrees, `r` for radians
+- `--delta_unit`: `f` for frames, `m` for meters, `d` for degrees, `r` for radians, `s` for seconds
 - `--delta_tol`: relative tolerance used in all-pairs mode for non-frame deltas
 - `--all_pairs`: use all candidate pairs
 - `--pairs_from_reference`: build RPE pairs from the reference instead of the estimate
@@ -247,6 +247,16 @@ epa_rpe tum gt.tum est.tum \
   --pose_relation trans_part \
   --delta 1.0 \
   --delta_unit m \
+  --all_pairs
+```
+
+Time-based RPE example:
+
+```bash
+epa_rpe tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --delta 1.0 \
+  --delta_unit s \
   --all_pairs
 ```
 

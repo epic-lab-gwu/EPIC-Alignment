@@ -15,8 +15,10 @@ from scipy.spatial.transform import Rotation as R
 from .evaluation import (
     compute_ape_evo_style,
     compute_rpe_evo_style,
+    compute_valid_segment_metrics,
     normalize_pose_relation,
     print_metric_block,
+    resolve_success_threshold,
 )
 from .io_utils import (
     load_estimation_trajectory,
@@ -286,6 +288,16 @@ def _compute_pose_metrics_by_stage(
     rpe_delta_tol,
     rpe_all_pairs,
     rpe_pairs_from_reference,
+    success_threshold_mode: str,
+    success_threshold_m: float,
+    success_threshold_min_m: float,
+    success_threshold_max_m: float,
+    success_threshold_trim_percentile: float,
+    success_global_gate_m: float,
+    success_global_gate_percentile: float,
+    success_drift_rpe_1s_m: float,
+    success_drift_ape_slope_mps: float,
+    success_drift_ape_jump_m: float,
     t_max_diff: float,
     t_offset: float,
     t_start,
@@ -293,6 +305,8 @@ def _compute_pose_metrics_by_stage(
 ):
     ape_metrics_by_stage = {}
     rpe_metrics_by_stage = {}
+    rpe_time_1s_by_stage = {}
+    valid_metrics_by_stage = {}
     seconds_from_start = np.asarray(t_gt, dtype=float) - float(t_gt[0])
     distances_from_start = cum_distance(pos_gt)
     ref_eval_pos, ref_eval_quat = project_to_plane(
@@ -330,22 +344,85 @@ def _compute_pose_metrics_by_stage(
             pairs_from_reference=rpe_pairs_from_reference,
             include_raw=True,
         )
+        rpe_time_1s_by_stage[stage_name] = compute_rpe_evo_style(
+            pos_ref=ref_eval_pos,
+            quat_ref=ref_eval_quat,
+            pos_est=est_eval_pos,
+            quat_est=est_eval_quat,
+            delta=1.0,
+            delta_unit="s",
+            rel_delta_tol=0.1,
+            all_pairs=True,
+            pairs_from_reference=True,
+            timestamps=t_gt,
+            include_raw=True,
+        )
         ape_metrics_by_stage[stage_name]["_x_axis"]["seconds_from_start"] = seconds_from_start
         ape_metrics_by_stage[stage_name]["_x_axis"]["distances_from_start"] = distances_from_start
         delta_ids = rpe_metrics_by_stage[stage_name]["_x_axis"]["delta_ids"].astype(int)
         valid = (delta_ids >= 0) & (delta_ids < seconds_from_start.size)
         rpe_metrics_by_stage[stage_name]["_x_axis"]["seconds_from_start"] = seconds_from_start[delta_ids[valid]]
         rpe_metrics_by_stage[stage_name]["_x_axis"]["distances_from_start"] = distances_from_start[delta_ids[valid]]
+        time_delta_ids = rpe_time_1s_by_stage[stage_name]["_x_axis"]["delta_ids"].astype(int)
+        valid_time = (time_delta_ids >= 0) & (time_delta_ids < seconds_from_start.size)
+        rpe_time_1s_by_stage[stage_name]["_x_axis"]["seconds_from_start"] = seconds_from_start[time_delta_ids[valid_time]]
+        rpe_time_1s_by_stage[stage_name]["_x_axis"]["distances_from_start"] = distances_from_start[time_delta_ids[valid_time]]
+        stage_threshold_m, threshold_info = resolve_success_threshold(
+            ape_metrics_by_stage[stage_name]["_error_arrays"]["translation_part"],
+            mode=success_threshold_mode,
+            fixed_threshold_m=float(success_threshold_m),
+            min_threshold_m=float(success_threshold_min_m),
+            max_threshold_m=float(success_threshold_max_m),
+            trim_percentile=float(success_threshold_trim_percentile),
+        )
+        valid_metrics_by_stage[stage_name] = compute_valid_segment_metrics(
+            timestamps=t_gt,
+            pos_ref=ref_eval_pos,
+            ape_block=ape_metrics_by_stage[stage_name],
+            rpe_block=rpe_metrics_by_stage[stage_name],
+            rpe_time_1s_block=rpe_time_1s_by_stage[stage_name],
+            threshold_m=float(stage_threshold_m),
+            threshold_info=threshold_info,
+            global_gate_m=float(success_global_gate_m),
+            global_gate_percentile=float(success_global_gate_percentile),
+            drift_rpe_1s_m=float(success_drift_rpe_1s_m),
+            drift_ape_slope_mps=float(success_drift_ape_slope_mps),
+            drift_ape_jump_m=float(success_drift_ape_jump_m),
+            include_raw=True,
+        )
 
     return {
         "ape": ape_metrics_by_stage,
         "rpe": rpe_metrics_by_stage,
+        "rpe_time_1s": rpe_time_1s_by_stage,
+        "valid_segment": valid_metrics_by_stage,
         "rpe_config": {
             "delta": rpe_delta,
             "delta_unit": rpe_delta_unit,
             "delta_tol": rpe_delta_tol,
             "all_pairs": bool(rpe_all_pairs),
             "pairs_from_reference": bool(rpe_pairs_from_reference),
+        },
+        "rpe_time_1s_config": {
+            "delta": 1.0,
+            "delta_unit": "s",
+            "delta_tol": 0.1,
+            "all_pairs": True,
+            "pairs_from_reference": True,
+        },
+        "valid_segment_config": {
+            "threshold_mode": str(success_threshold_mode),
+            "fixed_threshold_m": float(success_threshold_m),
+            "min_threshold_m": float(success_threshold_min_m),
+            "max_threshold_m": float(success_threshold_max_m),
+            "trim_percentile": float(success_threshold_trim_percentile),
+            "global_gate_m": float(success_global_gate_m),
+            "global_gate_percentile": float(success_global_gate_percentile),
+            "drift_rpe_1s_m": float(success_drift_rpe_1s_m),
+            "drift_ape_slope_mps": float(success_drift_ape_slope_mps),
+            "drift_ape_jump_m": float(success_drift_ape_jump_m),
+            "success_rate_primary": "distance",
+            "fail_definition": "Local drift fail uses 1s RPE and positive APE growth; APE threshold is reported as tolerance metadata.",
         },
         "eval_config": {
             "t_max_diff": float(t_max_diff),
@@ -360,6 +437,7 @@ def _compute_pose_metrics_by_stage(
 
 
 def run_pipeline_modular(args, script_dir: Path):
+    verbose = bool(getattr(args, "verbose", False))
     run_dir = make_output_dir(
         script_dir,
         output_root=getattr(args, "output_root", ""),
@@ -475,19 +553,20 @@ def run_pipeline_modular(args, script_dir: Path):
 
     print(f"Calculated Time Offset: {calculated_offset:.4f} s")
 
-    print_metric_block(
-        "TIME ALIGNMENT METRICS",
-        time_metrics,
-        unit_map={
-            "offset_est_s": "s",
-            "offset_err_ms": "ms",
-            "omega_rmse_before": "rad/s",
-            "omega_rmse_after": "rad/s",
-            "omega_rmse_improve_pct": "%",
-            "evo_t_offset_used_s": "s",
-            "evo_match_max_diff_s": "s",
-        },
-    )
+    if verbose:
+        print_metric_block(
+            "TIME ALIGNMENT METRICS",
+            time_metrics,
+            unit_map={
+                "offset_est_s": "s",
+                "offset_err_ms": "ms",
+                "omega_rmse_before": "rad/s",
+                "omega_rmse_after": "rad/s",
+                "omega_rmse_improve_pct": "%",
+                "evo_t_offset_used_s": "s",
+                "evo_match_max_diff_s": "s",
+            },
+        )
 
     title_offset = f"Known offset: {ARTIFICIAL_OFFSET}s" if args.synthetic else "Unknown offset"
     fig_corr_path, fig1_path = _plot_step1_outputs(
@@ -563,12 +642,18 @@ def run_pipeline_modular(args, script_dir: Path):
     q_step2 = solved["q_step2"]
     q_step3 = solved["q_step3"]
     step3_choice = solved["step3_choice"]
-    print(f"Calculated Extrinsic Rotation Matrix:\n{np.round(R_calc, 4)}")
-    print(f"Calculated Translation: {np.round(t_calc, 4)} m")
+    if verbose:
+        print(f"Calculated Extrinsic Rotation Matrix:\n{np.round(R_calc, 4)}")
+        print(f"Calculated Translation: {np.round(t_calc, 4)} m")
+    else:
+        print(f"Calculated Translation: {np.round(t_calc, 4)} m")
 
     print("\n--- STEP 3: WORLD ALIGNMENT ---")
-    print(f"Calculated World Rotation Matrix:\n{np.round(Rw_calc, 4)}")
-    print(f"Calculated World Translation: {np.round(tw_calc, 4)} m")
+    if verbose:
+        print(f"Calculated World Rotation Matrix:\n{np.round(Rw_calc, 4)}")
+        print(f"Calculated World Translation: {np.round(tw_calc, 4)} m")
+    else:
+        print(f"Calculated World Translation: {np.round(tw_calc, 4)} m")
     print(
         f"Step3 selected_rmse={step3_choice['step3_rmse_selected_m']:.6f} m"
     )
@@ -603,17 +688,18 @@ def run_pipeline_modular(args, script_dir: Path):
         t_calc=t_calc,
     )
 
-    print_metric_block(
-        "STEP 2 RESIDUAL METRICS",
-        step2_metrics,
-        unit_map={
-            "rot_res_mean_deg": "deg",
-            "rot_res_median_deg": "deg",
-            "rot_res_p95_deg": "deg",
-            "trans_eq_rmse_m": "m",
-            "trans_eq_p95_m": "m",
-        },
-    )
+    if verbose:
+        print_metric_block(
+            "STEP 2 RESIDUAL METRICS",
+            step2_metrics,
+            unit_map={
+                "rot_res_mean_deg": "deg",
+                "rot_res_median_deg": "deg",
+                "rot_res_p95_deg": "deg",
+                "trans_eq_rmse_m": "m",
+                "trans_eq_p95_m": "m",
+            },
+        )
 
     traj_eval = _compute_trajectory_metrics(
         pos_gt=pos_gt,
@@ -628,20 +714,21 @@ def run_pipeline_modular(args, script_dir: Path):
     step3_stats = traj_eval["step3_stats"]
     traj_metrics = traj_eval["traj_metrics"]
 
-    print_metric_block(
-        "TRAJECTORY METRICS",
-        traj_metrics,
-        unit_map={
-            "ate_rmse_raw_m": "m",
-            "ate_rmse_step2_m": "m",
-            "ate_rmse_step3_m": "m",
-            "ate_p95_raw_m": "m",
-            "ate_p95_step2_m": "m",
-            "ate_p95_step3_m": "m",
-            "ate_rmse_improve_raw_to_step3_pct": "%",
-            "ate_rmse_improve_step2_to_step3_pct": "%",
-        },
-    )
+    if verbose:
+        print_metric_block(
+            "TRAJECTORY METRICS",
+            traj_metrics,
+            unit_map={
+                "ate_rmse_raw_m": "m",
+                "ate_rmse_step2_m": "m",
+                "ate_rmse_step3_m": "m",
+                "ate_p95_raw_m": "m",
+                "ate_p95_step2_m": "m",
+                "ate_p95_step3_m": "m",
+                "ate_rmse_improve_raw_to_step3_pct": "%",
+                "ate_rmse_improve_step2_to_step3_pct": "%",
+            },
+        )
 
     rigid_check_max_path_ratio = float(getattr(args, "rigid_check_max_path_ratio", 3.0))
     rigid_check_max_bbox_ratio = float(getattr(args, "rigid_check_max_bbox_ratio", 3.0))
@@ -685,18 +772,19 @@ def run_pipeline_modular(args, script_dir: Path):
 
     print("\n--- ALIGNMENT QUALITY ---")
     print(f"quality_label: {quality_label}")
-    print_metric_block(
-        "ALIGNMENT QUALITY METRICS",
-        alignment_quality,
-        unit_map={
-            "step3_rmse_m": "m",
-            "raw_to_step3_improve_pct": "%",
-            "segment_rmse_mean_m": "m",
-            "segment_rmse_std_m": "m",
-            "heading_median_deg": "deg",
-            "heading_p90_deg": "deg",
-        },
-    )
+    if verbose:
+        print_metric_block(
+            "ALIGNMENT QUALITY METRICS",
+            alignment_quality,
+            unit_map={
+                "step3_rmse_m": "m",
+                "raw_to_step3_improve_pct": "%",
+                "segment_rmse_mean_m": "m",
+                "segment_rmse_std_m": "m",
+                "heading_median_deg": "deg",
+                "heading_p90_deg": "deg",
+            },
+        )
 
     print("\n--- USER ALERT ---")
     print(f"alert_level: {alert_level}")
@@ -728,6 +816,16 @@ def run_pipeline_modular(args, script_dir: Path):
         rpe_delta_tol=args.rpe_delta_tol,
         rpe_all_pairs=args.rpe_all_pairs,
         rpe_pairs_from_reference=args.rpe_pairs_from_reference,
+        success_threshold_mode=str(getattr(args, "success_threshold_mode", "adaptive_knee")),
+        success_threshold_m=float(getattr(args, "success_threshold_m", 10.0)),
+        success_threshold_min_m=float(getattr(args, "success_threshold_min_m", 5.0)),
+        success_threshold_max_m=float(getattr(args, "success_threshold_max_m", 30.0)),
+        success_threshold_trim_percentile=float(getattr(args, "success_threshold_trim_percentile", 95.0)),
+        success_global_gate_m=float(getattr(args, "success_global_gate_m", 30.0)),
+        success_global_gate_percentile=float(getattr(args, "success_global_gate_percentile", 5.0)),
+        success_drift_rpe_1s_m=float(getattr(args, "success_drift_rpe_1s_m", 2.0)),
+        success_drift_ape_slope_mps=float(getattr(args, "success_drift_ape_slope_mps", 1.0)),
+        success_drift_ape_jump_m=float(getattr(args, "success_drift_ape_jump_m", 5.0)),
         t_max_diff=float(getattr(args, "t_max_diff", 0.02)),
         t_offset=float(getattr(args, "t_offset", 0.0)),
         t_start=getattr(args, "t_start", None),
@@ -739,20 +837,35 @@ def run_pipeline_modular(args, script_dir: Path):
     print("\n--- METRICS (APE/RPE) ---")
     ape_pose_relation = normalize_pose_relation("ape", getattr(args, "ape_pose_relation", "trans_part"))
     rpe_pose_relation = normalize_pose_relation("rpe", getattr(args, "rpe_pose_relation", "trans_part"))
-    for stage_name in stage_order:
+    display_stage_order = stage_order if verbose else ["step3"]
+    for stage_name in display_stage_order:
         ape_t = pose_metrics["ape"][stage_name][ape_pose_relation]["rmse"]
         ape_r = pose_metrics["ape"][stage_name]["rotation_angle_deg"]["rmse"]
         rpe_t = pose_metrics["rpe"][stage_name][rpe_pose_relation]["rmse"]
         rpe_r = pose_metrics["rpe"][stage_name]["rotation_angle_deg"]["rmse"]
         pairs = pose_metrics["rpe"][stage_name]["pair_count"]
+        rpe_time_t = pose_metrics["rpe_time_1s"][stage_name]["translation_part"]["rmse"]
+        rpe_time_r = pose_metrics["rpe_time_1s"][stage_name]["rotation_angle_deg"]["rmse"]
+        time_pairs = pose_metrics["rpe_time_1s"][stage_name]["pair_count"]
+        success = pose_metrics["valid_segment"][stage_name]["success"]
+        valid_ape_t = pose_metrics["valid_segment"][stage_name]["ape"][ape_pose_relation]["rmse"]
+        valid_rpe_t = pose_metrics["valid_segment"][stage_name]["rpe"][rpe_pose_relation]["rmse"]
+        sr_dist_pct = float(success["success_rate_distance"]) * 100.0
+        success_threshold_m = float(success["threshold"]["threshold_m"])
         print(
             f"{stage_name}: "
             f"APE_{ape_pose_relation}_rmse={ape_t:.6f}, "
             f"APE_rot_rmse={ape_r:.6f} deg, "
             f"RPE_{rpe_pose_relation}_rmse={rpe_t:.6f}, "
             f"RPE_rot_rmse={rpe_r:.6f} deg, "
-            f"pairs={pairs}"
+            f"RPE_time_1s_trans_rmse={rpe_time_t:.6f}, "
+            f"RPE_time_1s_rot_rmse={rpe_time_r:.6f} deg, "
+            f"SR_dist@{success_threshold_m:g}m={sr_dist_pct:.2f}%, "
+            f"valid_APE_{ape_pose_relation}_rmse={valid_ape_t:.6f}, "
+            f"valid_RPE_{rpe_pose_relation}_rmse={valid_rpe_t:.6f}"
         )
+        if verbose:
+            print(f"{stage_name}: pairs={pairs}, time_pairs={time_pairs}")
 
     fig2_path, fig_step3_map_path = _plot_stage_alignment_maps(
         plots_dir=plots_dir,
@@ -857,12 +970,16 @@ def run_pipeline_modular(args, script_dir: Path):
     report_en_path = output_info["report_en_path"]
 
     print("\n--- OUTPUT FILES ---")
-    print(f"Saved figure: {fig_corr_path}")
-    print(f"Saved figure: {fig1_path}")
-    print(f"Saved figure: {fig2_path}")
+    if verbose:
+        print(f"Saved figure: {fig_corr_path}")
+        print(f"Saved figure: {fig1_path}")
+        print(f"Saved figure: {fig2_path}")
+    print(f"Saved outputs: {run_dir}")
+    print(f"Saved plots: {plots_dir}")
     print(f"Saved metrics: {run_dir / 'metrics.json'}")
-    print(f"Saved metrics: {run_dir / 'metrics_summary.csv'}")
-    print(f"Saved report: {report_zh_path}")
-    print(f"Saved report: {report_en_path}")
+    if verbose:
+        print(f"Saved metrics: {run_dir / 'metrics_summary.csv'}")
+        print(f"Saved report: {report_zh_path}")
+        print(f"Saved report: {report_en_path}")
     if bundle_path is not None:
         print(f"Saved results: {bundle_path}")

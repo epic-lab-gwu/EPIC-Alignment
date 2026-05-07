@@ -125,7 +125,7 @@ Multi-case benchmark with `epa_bench`:
 - `epa_runs/`
 - `unresolved_cases.csv` if some GT mappings cannot be resolved
 
-`metrics.json` is compact by default. Use `--save-full-metrics` for full per-sample APE/RPE arrays. Use `--no-downsample` only when you need full-rate solve/evaluation. Benchmark `prepared_tum/` files are removed by default; use `--keep-prepared` when you need them for later case reruns.
+`metrics.json` is compact by default. Default EPA metrics include the configured RPE, 1-second time RPE drift, and drift-valid success-rate metrics. Drift-valid segments are detected from local 1-second RPE and positive APE growth/jump checks, with a global accept gate (`p05 <= 30 m`) to avoid treating globally failed cases as partially valid. Use `--save-full-metrics` for full per-sample APE/RPE arrays. Use `--no-downsample` only when you need full-rate solve/evaluation. Benchmark `prepared_tum/` files are removed by default; use `--keep-prepared` when you need them for later case reruns.
 
 ## Analysis Notebook
 

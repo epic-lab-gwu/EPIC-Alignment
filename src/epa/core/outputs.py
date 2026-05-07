@@ -11,7 +11,7 @@ from .io_utils import (
     write_result_bundle,
     write_run_reports,
 )
-from ..viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots
+from ..viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots, generate_time_rpe_metric_plots
 
 
 def _line_segments_xyz(points_xyz):
@@ -265,6 +265,14 @@ def _generate_and_cleanup_metric_plots(
             ape_relation=plot_rel_ape,
             rpe_relation=plot_rel_rpe,
             x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+        )
+        plot_files.extend(
+            generate_time_rpe_metric_plots(
+                metrics_payload=metrics_payload,
+                out_dir=plots_dir,
+                relation="translation_part",
+                x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+            )
         )
         ape_slug = str(plot_rel_ape).replace("/", "_").replace(" ", "_")
         ape_stage_raw = generate_ape_stage_raw_plot(

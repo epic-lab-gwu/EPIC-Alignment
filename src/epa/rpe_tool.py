@@ -321,9 +321,9 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
     algo.add_argument(
         "-u",
         "--delta_unit",
-        choices=["f", "m", "d", "r"],
+        choices=["f", "m", "d", "r", "s"],
         default=dflt("f"),
-        help="unit of delta: frames/meters/degrees/radians",
+        help="unit of delta: frames/meters/degrees/radians/seconds",
     )
     algo.add_argument("--all_pairs", action="store_true", default=dflt(False), help="use all candidate pairs")
     algo.add_argument(
@@ -547,6 +547,7 @@ def run(args: argparse.Namespace) -> int:
         rel_delta_tol=float(getattr(args, "delta_tol", 0.1)),
         all_pairs=bool(getattr(args, "all_pairs", False)),
         pairs_from_reference=bool(getattr(args, "pairs_from_reference", False)),
+        timestamps=np.asarray(data.t_ref, dtype=float),
         include_raw=True,
     )
     seconds_from_start = np.asarray(data.t_ref, dtype=float) - float(data.t_ref[0])
