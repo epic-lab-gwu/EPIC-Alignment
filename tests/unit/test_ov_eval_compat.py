@@ -8,6 +8,8 @@ import epa
 from epa.ov_eval_compat import _format_source_counts
 from epa.ov_eval_compat import (
     _build_error_comparison_parser,
+    _compute_time_rpe_1s,
+    _drift_rate_percent,
     _evaluate_pair,
     _evaluate_pair_epa_step3,
     _evaluate_pair_ov_style,
@@ -20,12 +22,37 @@ def test_package_version_matches_release() -> None:
 
 
 def test_format_source_counts_is_deterministic() -> None:
-    assert _format_source_counts({"ov_eval_style": 1, "epa_step3": 2}) == "epa_step3=2, ov_eval_style=1"
-    assert _format_source_counts({}) == "none"
+    assert _format_source_counts({"ov_eval_style": 1, "epa_step3": 2}) == "epa=2, ov_eval=1"
+    assert _format_source_counts({}) == "epa=0, ov_eval=0"
+    assert _format_source_counts({"unknown": 1}) == "epa=0, ov_eval=0, unknown=1"
     assert _format_source_details(["run1.txt:ov_eval_style", "run2.txt:unknown"]) == (
         "run1.txt:ov_eval_style, run2.txt:unknown"
     )
     assert _format_source_details([]) == "none"
+
+
+def test_compute_time_rpe_1s_reports_translation_drift() -> None:
+    t = np.arange(0.0, 4.1, 0.5)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    est_pos = np.column_stack([1.1 * t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+
+    out = _compute_time_rpe_1s(
+        gt_t=t,
+        gt_pos=gt_pos,
+        gt_quat=quat,
+        est_pos=est_pos,
+        est_quat=quat,
+    )
+
+    assert int(out["pair_count"]) == 7
+    np.testing.assert_allclose(np.asarray(out["pos_values"], dtype=float), np.full(7, 0.1))
+    np.testing.assert_allclose(float(out["pos_stats"]["rmse"]), 0.1)
+
+
+def test_drift_rate_percent_normalizes_translation_by_segment_length() -> None:
+    np.testing.assert_allclose(_drift_rate_percent([0.4, 0.8], 8.0), 7.5)
+    assert np.isnan(_drift_rate_percent([], 8.0))
 
 
 def _write_tum(path: Path, t: np.ndarray, pos: np.ndarray, quat: np.ndarray) -> None:
@@ -89,6 +116,21 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
             "--epa-quat-interp",
             "slerp",
             "--epa-no-fallback",
+            "--epa-verbose-fallback",
+            "--epa-success-threshold-m",
+            "12.5",
+            "--epa-success-threshold-mode",
+            "adaptive_knee",
+            "--epa-success-threshold-min-m",
+            "2",
+            "--epa-success-threshold-max-m",
+            "40",
+            "--epa-success-threshold-trim-percentile",
+            "90",
+            "--epa-success-global-gate-m",
+            "35",
+            "--epa-success-global-gate-percentile",
+            "10",
         ]
     )
 
@@ -97,6 +139,14 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
     assert args.epa_downsample_hz == 20
     assert args.epa_quat_interp == "slerp"
     assert bool(args.epa_no_fallback)
+    assert bool(args.epa_verbose_fallback)
+    assert args.epa_success_threshold_m == 12.5
+    assert args.epa_success_threshold_mode == "adaptive_knee"
+    assert args.epa_success_threshold_min_m == 2
+    assert args.epa_success_threshold_max_m == 40
+    assert args.epa_success_threshold_trim_percentile == 90
+    assert args.epa_success_global_gate_m == 35
+    assert args.epa_success_global_gate_percentile == 10
 
 
 def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Path) -> None:
@@ -117,3 +167,60 @@ def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Pat
             max_diff=0.02,
             epa_no_fallback=True,
         )
+
+
+def test_evaluate_pair_fallback_is_quiet_by_default(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    t = np.arange(20, dtype=float) * 0.05
+    pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t.size, 1))
+
+    gt_path = tmp_path / "gt.tum"
+    est_path = tmp_path / "est.tum"
+    _write_tum(gt_path, t, pos, quat)
+    _write_tum(est_path, t, pos, quat)
+
+    result = _evaluate_pair(
+        file_gt=gt_path,
+        file_est=est_path,
+        align_mode="se3",
+        max_diff=0.02,
+    )
+
+    captured = capsys.readouterr()
+    assert "[warn] EPA Step3 evaluation failed" not in captured.out
+    assert result["eval_source"] == "ov_eval_style"
+
+
+def test_evaluate_pair_epa_step3_step1_fallback_is_quiet_by_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    n = 400
+    t = np.arange(n, dtype=float) * 0.05
+    yaw = np.linspace(0.0, np.deg2rad(100.0), n)
+    pos_gt = np.column_stack(
+        [
+            2.0 * np.cos(0.2 * t) + 0.4 * t,
+            1.5 * np.sin(0.2 * t),
+            0.2 * np.sin(0.05 * t),
+        ]
+    )
+    quat_gt = R.from_euler("z", yaw).as_quat()
+    pos_est = pos_gt.copy()
+    quat_est = quat_gt.copy()
+
+    gt_path = tmp_path / "gt.tum"
+    est_path = tmp_path / "est.tum"
+    _write_tum(gt_path, t, pos_gt, quat_gt)
+    _write_tum(est_path, t, pos_est, quat_est)
+
+    result = _evaluate_pair(
+        file_gt=gt_path,
+        file_est=est_path,
+        align_mode="se3",
+        max_diff=0.02,
+    )
+
+    captured = capsys.readouterr()
+    assert "--- STEP 1 FALLBACK ---" not in captured.out
+    assert result["eval_source"] == "epa_step3"

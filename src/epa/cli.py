@@ -69,6 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--offset-search-window-s",
         type=float,
         default=0.0,
@@ -171,7 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--rpe-delta-unit",
-        choices=["f", "m", "d", "r"],
+        choices=["f", "m", "d", "r", "s"],
         default="f",
         help=argparse.SUPPRESS,
     )
@@ -189,6 +194,66 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--rpe-pairs-from-reference",
         action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-threshold-m",
+        type=float,
+        default=10.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-threshold-mode",
+        choices=["fixed", "adaptive_knee"],
+        default="adaptive_knee",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-threshold-min-m",
+        type=float,
+        default=5.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-threshold-max-m",
+        type=float,
+        default=30.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-threshold-trim-percentile",
+        type=float,
+        default=95.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-global-gate-m",
+        type=float,
+        default=30.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-global-gate-percentile",
+        type=float,
+        default=5.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-drift-rpe-1s-m",
+        type=float,
+        default=2.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-drift-ape-slope-mps",
+        type=float,
+        default=1.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-drift-ape-jump-m",
+        type=float,
+        default=5.0,
         help=argparse.SUPPRESS,
     )
     parser.add_argument(

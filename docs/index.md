@@ -67,6 +67,7 @@ Advanced utilities such as `epa_config`, `epa_fig`, `epa_plot_summary`, and `epa
 
 - [Quick Start](quickstart.md): run your first example end to end
 - [CLI Reference](cli.md): look up commands and frequently used options
+- [Error Metrics](error_metrics.md): understand ATE, RPE, drift rate, and drift-valid metrics
 - [Benchmark Workflow](benchmark_workflow.md): run batch evaluation and generate summary artifacts
 - [Troubleshooting](troubleshooting.md): resolve common setup and runtime issues
 - [Architecture](architecture.md): understand the pipeline internals and module layout

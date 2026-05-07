@@ -2,7 +2,7 @@ from pathlib import Path
 
 import numpy as np
 
-from epa.viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots
+from epa.viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots, generate_time_rpe_metric_plots
 
 
 def _stats(values):
@@ -62,6 +62,42 @@ def test_generate_metric_plots(tmp_path: Path) -> None:
 
     assert len(produced) >= 10
     assert all(p.suffix == ".png" for p in produced)
+
+
+def test_generate_time_rpe_metric_plots(tmp_path: Path) -> None:
+    payload = {
+        "pose_metrics": {
+            "ape": {
+                "raw": _stage_block([1.0, 2.0, 3.0]),
+                "step2": _stage_block([0.9, 1.8, 2.7]),
+                "step3": _stage_block([0.5, 1.0, 1.5]),
+            },
+            "rpe": {
+                "raw": _stage_block([0.4, 0.5, 0.6]),
+                "step2": _stage_block([0.3, 0.4, 0.5]),
+                "step3": _stage_block([0.2, 0.25, 0.3]),
+            },
+            "rpe_time_1s": {
+                "raw": _stage_block([0.7, 0.8, 0.9]),
+                "step2": _stage_block([0.5, 0.6, 0.7]),
+                "step3": _stage_block([0.2, 0.3, 0.4]),
+            },
+        }
+    }
+    produced = generate_time_rpe_metric_plots(
+        metrics_payload=payload,
+        out_dir=tmp_path,
+        relation="translation_part",
+        x_dimension="seconds",
+    )
+
+    names = {p.name for p in produced}
+    assert "rpe_time_1s_translation_part_raw.png" in names
+    assert "rpe_time_1s_translation_part_box.png" in names
+    assert "rpe_time_1s_translation_part_stats.png" in names
+    assert "rpe_time_1s_translation_part_hist.png" not in names
+    assert "rpe_time_1s_translation_part_map.png" not in names
+    assert "rpe_time_1s_translation_part_violin.png" not in names
 
 
 def test_generate_ape_stage_raw_plot(tmp_path: Path) -> None:

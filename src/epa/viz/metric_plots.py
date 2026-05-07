@@ -395,6 +395,66 @@ def generate_metric_plots(
     return produced
 
 
+def generate_time_rpe_metric_plots(
+    metrics_payload: dict,
+    out_dir: Path,
+    relation: str = "translation_part",
+    x_dimension: str = "seconds",
+    keep_open: bool = False,
+) -> list[Path]:
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    produced: list[Path] = []
+
+    stages = _discover_stages(metrics_payload)
+    slug = _safe_label(relation)
+    unit = RELATION_UNITS.get(relation, "")
+    ylabel = f"1s drift ({unit})" if unit else "1s drift"
+    traces = []
+    stage_stats = []
+    stage_errors = []
+    x_label = "index"
+    for stage in stages:
+        stats, errors, x_axis = _extract_relation(metrics_payload, "rpe_time_1s", stage, relation)
+        x_vals, x_label = _pick_x(x_axis, errors, x_dimension=x_dimension)
+        traces.append((stage, x_vals, errors))
+        stage_stats.append((stage, stats if isinstance(stats, dict) else {}))
+        stage_errors.append((stage, errors))
+
+    raw_path = out_dir / f"rpe_time_1s_{slug}_raw.png"
+    _plot_raw(
+        traces,
+        title=f"1-second time RPE raw values ({relation})",
+        ylabel=ylabel,
+        xlabel=x_label,
+        out_path=raw_path,
+        keep_open=keep_open,
+    )
+    produced.append(raw_path)
+
+    stats_path = out_dir / f"rpe_time_1s_{slug}_stats.png"
+    _plot_stats(
+        stage_stats,
+        title=f"1-second time RPE stats ({relation})",
+        out_path=stats_path,
+        keep_open=keep_open,
+    )
+    produced.append(stats_path)
+
+    box_path = out_dir / f"rpe_time_1s_{slug}_box.png"
+    _plot_box(
+        stage_errors,
+        title=f"1-second time RPE box ({relation})",
+        ylabel=ylabel,
+        out_path=box_path,
+        keep_open=keep_open,
+    )
+    if box_path.exists():
+        produced.append(box_path)
+
+    return produced
+
+
 def generate_ape_stage_raw_plot(
     metrics_payload: dict,
     out_dir: Path,

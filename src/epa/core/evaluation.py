@@ -109,7 +109,48 @@ def rpe_pairs_by_angle(poses, delta, tol=0.0, degrees=False, all_pairs=False):
     return id_pairs
 
 
-def build_rpe_pairs(poses, delta, delta_unit="f", rel_delta_tol=0.1, all_pairs=False):
+def rpe_pairs_by_time(timestamps, delta, tol=0.0, all_pairs=False):
+    stamps = np.asarray(timestamps, dtype=float).reshape(-1)
+    if stamps.size < 2:
+        return []
+    if float(delta) <= 0.0:
+        raise ValueError("RPE delta must be > 0 for seconds unit.")
+    if np.any(np.diff(stamps) <= 0.0):
+        raise ValueError("RPE timestamps must be strictly increasing for seconds unit.")
+
+    tol = float(tol)
+
+    def nearest_after(start_idx: int, target: float) -> int | None:
+        k = int(np.searchsorted(stamps, target, side="left"))
+        candidates = [idx for idx in (k - 1, k, k + 1) if start_idx < idx < stamps.size]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda idx: abs(float(stamps[idx]) - float(target)))
+        if abs(float(stamps[best]) - float(target)) > tol:
+            return None
+        return int(best)
+
+    if all_pairs:
+        id_pairs = []
+        for i in range(stamps.size - 1):
+            j = nearest_after(i, float(stamps[i]) + float(delta))
+            if j is not None:
+                id_pairs.append((int(i), int(j)))
+        return id_pairs
+
+    id_pairs = []
+    i = 0
+    while i < stamps.size - 1:
+        j = nearest_after(i, float(stamps[i]) + float(delta))
+        if j is None:
+            i += 1
+            continue
+        id_pairs.append((int(i), int(j)))
+        i = int(j)
+    return id_pairs
+
+
+def build_rpe_pairs(poses, delta, delta_unit="f", rel_delta_tol=0.1, all_pairs=False, timestamps=None):
     if len(poses) < 2:
         return []
 
@@ -128,6 +169,13 @@ def build_rpe_pairs(poses, delta, delta_unit="f", rel_delta_tol=0.1, all_pairs=F
     if delta_unit == "r":
         tol = float(delta) * rel_delta_tol if all_pairs else 0.0
         return rpe_pairs_by_angle(poses, float(delta), tol=tol, degrees=False, all_pairs=all_pairs)
+    if delta_unit == "s":
+        if timestamps is None:
+            raise ValueError("RPE delta unit seconds ('s') requires timestamps.")
+        if len(timestamps) != len(poses):
+            raise ValueError("RPE timestamps must have the same length as poses for seconds unit.")
+        tol = float(delta) * float(rel_delta_tol)
+        return rpe_pairs_by_time(timestamps, float(delta), tol=tol, all_pairs=all_pairs)
     raise ValueError(f"Unsupported RPE delta unit: {delta_unit}")
 
 
@@ -194,6 +242,7 @@ def compute_rpe_evo_style(
     rel_delta_tol=0.1,
     all_pairs=False,
     pairs_from_reference=False,
+    timestamps=None,
     include_raw=False,
 ):
     if len(pos_ref) != len(pos_est):
@@ -205,7 +254,12 @@ def compute_rpe_evo_style(
     T_est = poses_se3_from_traj(pos_est, quat_est)
     pair_source = T_ref if pairs_from_reference else T_est
     id_pairs = build_rpe_pairs(
-        pair_source, delta=delta, delta_unit=delta_unit, rel_delta_tol=rel_delta_tol, all_pairs=all_pairs
+        pair_source,
+        delta=delta,
+        delta_unit=delta_unit,
+        rel_delta_tol=rel_delta_tol,
+        all_pairs=all_pairs,
+        timestamps=timestamps,
     )
     delta_ids = [int(j) for _, j in id_pairs]
 
@@ -287,6 +341,439 @@ def compute_rpe_evo_style(
         }
         result["_pair_ids"] = np.asarray(id_pairs, dtype=int)
     return result
+
+
+def _empty_metric_block(include_raw=False):
+    empty = compute_error_statistics(np.array([]))
+    result = {
+        "translation_part": empty,
+        "point_distance": empty,
+        "rotation_part": empty,
+        "full_transformation": empty,
+        "rotation_angle_rad": empty,
+        "rotation_angle_deg": empty,
+    }
+    if include_raw:
+        result["_error_arrays"] = {
+            "translation_part": np.array([], dtype=float),
+            "point_distance": np.array([], dtype=float),
+            "rotation_part": np.array([], dtype=float),
+            "full_transformation": np.array([], dtype=float),
+            "rotation_angle_rad": np.array([], dtype=float),
+            "rotation_angle_deg": np.array([], dtype=float),
+        }
+        result["_x_axis"] = {"index": np.array([], dtype=float)}
+    return result
+
+
+def _empty_rpe_block(include_raw=True):
+    empty = compute_error_statistics(np.array([]))
+    result = {
+        "pair_count": 0,
+        "translation_part": empty,
+        "point_distance": empty,
+        "point_distance_error_ratio": empty,
+        "rotation_part": empty,
+        "full_transformation": empty,
+        "rotation_angle_rad": empty,
+        "rotation_angle_deg": empty,
+    }
+    if include_raw:
+        result["_error_arrays"] = {
+            "translation_part": np.array([], dtype=float),
+            "point_distance": np.array([], dtype=float),
+            "point_distance_error_ratio": np.array([], dtype=float),
+            "rotation_part": np.array([], dtype=float),
+            "full_transformation": np.array([], dtype=float),
+            "rotation_angle_rad": np.array([], dtype=float),
+            "rotation_angle_deg": np.array([], dtype=float),
+        }
+        result["_x_axis"] = {"index": np.array([], dtype=float), "delta_ids": np.array([], dtype=float)}
+        result["_pair_ids"] = np.array([], dtype=int).reshape(0, 2)
+    return result
+
+
+def _filter_ape_block(ape_block, valid_sample_mask, include_raw=True):
+    valid = np.asarray(valid_sample_mask, dtype=bool).reshape(-1)
+    arrays = ape_block.get("_error_arrays", {}) if isinstance(ape_block, dict) else {}
+    if not arrays or valid.size == 0:
+        return _empty_metric_block(include_raw=include_raw)
+
+    result = {}
+    filtered_arrays = {}
+    for relation in (
+        "translation_part",
+        "point_distance",
+        "rotation_part",
+        "full_transformation",
+        "rotation_angle_rad",
+        "rotation_angle_deg",
+    ):
+        values = np.asarray(arrays.get(relation, []), dtype=float).reshape(-1)
+        n = min(values.size, valid.size)
+        filtered = values[:n][valid[:n]]
+        result[relation] = compute_error_statistics(filtered)
+        filtered_arrays[relation] = filtered
+    if include_raw:
+        result["_error_arrays"] = filtered_arrays
+        result["_x_axis"] = {"index": np.arange(filtered_arrays["translation_part"].size, dtype=float)}
+    return result
+
+
+def filter_ape_block_by_valid_samples(ape_block, valid_sample_mask, include_raw=True):
+    return _filter_ape_block(ape_block, valid_sample_mask, include_raw=include_raw)
+
+
+def _filter_rpe_block(rpe_block, valid_segment_mask, include_raw=True):
+    valid_segments = np.asarray(valid_segment_mask, dtype=bool).reshape(-1)
+    pair_ids = np.asarray(rpe_block.get("_pair_ids", []), dtype=int).reshape(-1, 2)
+    arrays = rpe_block.get("_error_arrays", {}) if isinstance(rpe_block, dict) else {}
+    if pair_ids.size == 0 or not arrays:
+        return _empty_rpe_block(include_raw=include_raw)
+
+    keep = np.zeros(pair_ids.shape[0], dtype=bool)
+    for idx, (i, j) in enumerate(pair_ids):
+        i_int = int(i)
+        j_int = int(j)
+        if j_int <= i_int:
+            continue
+        if i_int < 0 or j_int - 1 >= valid_segments.size:
+            continue
+        keep[idx] = bool(np.all(valid_segments[i_int:j_int]))
+
+    result = {"pair_count": int(np.count_nonzero(keep))}
+    filtered_arrays = {}
+    for relation in (
+        "translation_part",
+        "point_distance",
+        "point_distance_error_ratio",
+        "rotation_part",
+        "full_transformation",
+        "rotation_angle_rad",
+        "rotation_angle_deg",
+    ):
+        values = np.asarray(arrays.get(relation, []), dtype=float).reshape(-1)
+        n = min(values.size, keep.size)
+        filtered = values[:n][keep[:n]]
+        result[relation] = compute_error_statistics(filtered)
+        filtered_arrays[relation] = filtered
+
+    if include_raw:
+        kept_pairs = pair_ids[keep]
+        result["_error_arrays"] = filtered_arrays
+        result["_x_axis"] = {
+            "index": np.arange(int(np.count_nonzero(keep)), dtype=float),
+            "delta_ids": kept_pairs[:, 1].astype(float) if kept_pairs.size else np.array([], dtype=float),
+        }
+        result["_pair_ids"] = kept_pairs.astype(int).reshape(-1, 2)
+    return result
+
+
+def filter_rpe_block_by_valid_segments(rpe_block, valid_segment_mask, include_raw=True):
+    return _filter_rpe_block(rpe_block, valid_segment_mask, include_raw=include_raw)
+
+
+def estimate_knee_threshold(
+    errors,
+    *,
+    min_threshold_m=1.0,
+    max_threshold_m=100.0,
+    fallback_percentile=95.0,
+    trim_percentile=95.0,
+):
+    values = np.asarray(errors, dtype=float).reshape(-1)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return float("nan")
+    if values.size >= 3 and float(trim_percentile) < 100.0:
+        cap = float(np.percentile(values, float(trim_percentile)))
+        trimmed = values[values <= cap]
+        if trimmed.size >= 3:
+            values = trimmed
+
+    sorted_values = np.sort(values)
+    if sorted_values.size < 3 or float(sorted_values[-1] - sorted_values[0]) <= 1e-12:
+        threshold = float(np.percentile(sorted_values, float(fallback_percentile)))
+    else:
+        x = np.linspace(0.0, 1.0, sorted_values.size)
+        y = (sorted_values - sorted_values[0]) / (sorted_values[-1] - sorted_values[0])
+        line = x
+        knee_idx = int(np.argmax(line - y))
+        threshold_idx = min(knee_idx + 1, sorted_values.size - 1)
+        threshold = float(sorted_values[threshold_idx])
+        if knee_idx <= 0 or knee_idx >= sorted_values.size - 1:
+            threshold = float(np.percentile(sorted_values, float(fallback_percentile)))
+
+    return float(np.clip(threshold, float(min_threshold_m), float(max_threshold_m)))
+
+
+def resolve_success_threshold(
+    errors,
+    *,
+    mode="fixed",
+    fixed_threshold_m=10.0,
+    min_threshold_m=1.0,
+    max_threshold_m=100.0,
+    trim_percentile=95.0,
+):
+    mode_norm = str(mode).lower()
+    if mode_norm == "fixed":
+        return float(fixed_threshold_m), {"mode": "fixed", "threshold_m": float(fixed_threshold_m)}
+    if mode_norm in {"adaptive", "knee", "adaptive_knee"}:
+        threshold = estimate_knee_threshold(
+            errors,
+            min_threshold_m=float(min_threshold_m),
+            max_threshold_m=float(max_threshold_m),
+            trim_percentile=float(trim_percentile),
+        )
+        return threshold, {
+            "mode": "adaptive_knee",
+            "threshold_m": float(threshold),
+            "min_threshold_m": float(min_threshold_m),
+            "max_threshold_m": float(max_threshold_m),
+            "trim_percentile": float(trim_percentile),
+        }
+    raise ValueError(f"Unsupported success threshold mode: {mode}")
+
+
+def _sample_mask_from_pair_mask(n, pair_ids, pair_mask):
+    sample_mask = np.ones(int(n), dtype=bool)
+    pairs = np.asarray(pair_ids, dtype=int)
+    keep_pair = np.asarray(pair_mask, dtype=bool).reshape(-1)
+    if pairs.size == 0:
+        return sample_mask
+    pairs = pairs.reshape(-1, 2)
+    m = min(pairs.shape[0], keep_pair.size)
+    for pair, keep in zip(pairs[:m], keep_pair[:m]):
+        if keep:
+            continue
+        i, j = int(pair[0]), int(pair[1])
+        hi = min(int(n) - 1, max(i, j))
+        sample_mask[hi] = False
+    return sample_mask
+
+
+def compute_drift_regions(
+    timestamps,
+    pos_ref,
+    ape_translation_errors,
+    rpe_time_1s_block,
+    *,
+    drift_rpe_1s_m=2.0,
+    drift_ape_slope_mps=1.0,
+    drift_ape_jump_m=5.0,
+):
+    t = np.asarray(timestamps, dtype=float).reshape(-1)
+    pos = np.asarray(pos_ref, dtype=float)
+    ape = np.asarray(ape_translation_errors, dtype=float).reshape(-1)
+    n = min(t.size, pos.shape[0], ape.size)
+    if n == 0:
+        return compute_success_regions(t, pos, ape, valid_sample_mask=np.array([], dtype=bool))
+
+    t = t[:n]
+    pos = pos[:n]
+    ape = ape[:n]
+    valid_sample = np.isfinite(ape)
+
+    pair_ids = np.asarray(rpe_time_1s_block.get("_pair_ids", np.empty((0, 2), dtype=int)), dtype=int)
+    rpe_1s = np.asarray(
+        rpe_time_1s_block.get("_error_arrays", {}).get("translation_part", []),
+        dtype=float,
+    ).reshape(-1)
+    if pair_ids.size > 0 and rpe_1s.size > 0:
+        pair_ids = pair_ids.reshape(-1, 2)
+        m = min(pair_ids.shape[0], rpe_1s.size)
+        pair_ok = np.isfinite(rpe_1s[:m]) & (rpe_1s[:m] <= float(drift_rpe_1s_m))
+        valid_sample &= _sample_mask_from_pair_mask(n, pair_ids[:m], pair_ok)
+
+    if n > 1:
+        dt = np.diff(t)
+        dape = np.diff(ape)
+        slope = np.full(dape.size, np.nan, dtype=float)
+        positive = dt > 0.0
+        slope[positive] = dape[positive] / dt[positive]
+        drift_step = (
+            np.isfinite(slope)
+            & (slope > float(drift_ape_slope_mps))
+            & np.isfinite(dape)
+            & (dape > float(drift_ape_jump_m))
+        )
+        drift_sample = np.zeros(n, dtype=bool)
+        drift_sample[1:] |= drift_step
+        for idx in np.flatnonzero(drift_step):
+            if not np.isfinite(ape[idx]):
+                continue
+            j = int(idx) + 1
+            while j < n and np.isfinite(ape[j]) and ape[j] > ape[idx] + float(drift_ape_jump_m):
+                drift_sample[j] = True
+                j += 1
+        valid_sample &= ~drift_sample
+
+    return compute_success_regions(t, pos, ape, valid_sample_mask=valid_sample)
+
+
+def compute_success_regions(timestamps, pos_ref, ape_translation_errors, threshold_m=10.0, valid_sample_mask=None):
+    t = np.asarray(timestamps, dtype=float).reshape(-1)
+    pos = np.asarray(pos_ref, dtype=float)
+    err = np.asarray(ape_translation_errors, dtype=float).reshape(-1)
+    n = min(t.size, pos.shape[0], err.size)
+    if n == 0:
+        return {
+            "threshold_m": float(threshold_m),
+            "valid_sample_mask": np.array([], dtype=bool),
+            "valid_segment_mask": np.array([], dtype=bool),
+            "fail_segments": [],
+            "success_rate_distance": np.nan,
+            "success_rate_time": np.nan,
+            "valid_distance_m": 0.0,
+            "total_distance_m": 0.0,
+            "valid_time_s": 0.0,
+            "total_time_s": 0.0,
+            "valid_sample_count": 0,
+            "total_sample_count": 0,
+            "fail_segment_count": 0,
+        }
+
+    t = t[:n]
+    pos = pos[:n]
+    err = err[:n]
+    if valid_sample_mask is None:
+        valid_sample = np.isfinite(err) & (err <= float(threshold_m))
+    else:
+        valid_sample = np.asarray(valid_sample_mask, dtype=bool).reshape(-1)[:n] & np.isfinite(err)
+    valid_segment = valid_sample[:-1] & valid_sample[1:] if n > 1 else np.array([], dtype=bool)
+    seg_dist = np.linalg.norm(np.diff(pos, axis=0), axis=1) if n > 1 else np.array([], dtype=float)
+    seg_dt = np.diff(t) if n > 1 else np.array([], dtype=float)
+    positive_dt = np.where(seg_dt > 0.0, seg_dt, 0.0)
+
+    total_distance = float(np.sum(seg_dist))
+    valid_distance = float(np.sum(seg_dist[valid_segment])) if valid_segment.size else 0.0
+    total_time = float(np.sum(positive_dt))
+    valid_time = float(np.sum(positive_dt[valid_segment])) if valid_segment.size else 0.0
+
+    fail_segments = []
+    fail = ~valid_sample
+    i = 0
+    distances_from_start = np.zeros(n, dtype=float)
+    if n > 1:
+        distances_from_start[1:] = np.cumsum(seg_dist)
+    while i < n:
+        if not fail[i]:
+            i += 1
+            continue
+        start = i
+        while i + 1 < n and fail[i + 1]:
+            i += 1
+        end = i
+        fail_segments.append(
+            {
+                "start_index": int(start),
+                "end_index": int(end),
+                "start_time_s": float(t[start] - t[0]),
+                "end_time_s": float(t[end] - t[0]),
+                "start_distance_m": float(distances_from_start[start]),
+                "end_distance_m": float(distances_from_start[end]),
+                "duration_s": float(max(0.0, t[end] - t[start])),
+                "distance_m": float(max(0.0, distances_from_start[end] - distances_from_start[start])),
+                "max_error_m": float(np.nanmax(err[start : end + 1])),
+                "mean_error_m": float(np.nanmean(err[start : end + 1])),
+            }
+        )
+        i += 1
+
+    return {
+        "threshold_m": float(threshold_m),
+        "valid_sample_mask": valid_sample,
+        "valid_segment_mask": valid_segment,
+        "fail_segments": fail_segments,
+        "success_rate_distance": valid_distance / total_distance if total_distance > 0.0 else np.nan,
+        "success_rate_time": valid_time / total_time if total_time > 0.0 else np.nan,
+        "valid_distance_m": valid_distance,
+        "total_distance_m": total_distance,
+        "valid_time_s": valid_time,
+        "total_time_s": total_time,
+        "valid_sample_count": int(np.count_nonzero(valid_sample)),
+        "total_sample_count": int(n),
+        "fail_segment_count": int(len(fail_segments)),
+    }
+
+
+def compute_valid_segment_metrics(
+    *,
+    timestamps,
+    pos_ref,
+    ape_block,
+    rpe_block,
+    rpe_time_1s_block,
+    threshold_m=10.0,
+    threshold_info=None,
+    global_gate_m=30.0,
+    global_gate_percentile=5.0,
+    drift_rpe_1s_m=2.0,
+    drift_ape_slope_mps=1.0,
+    drift_ape_jump_m=5.0,
+    include_raw=True,
+    include_masks=False,
+):
+    ape_errors = np.asarray(ape_block.get("_error_arrays", {}).get("translation_part", []), dtype=float)
+    finite_errors = ape_errors[np.isfinite(ape_errors)]
+    gate_value = float(np.percentile(finite_errors, float(global_gate_percentile))) if finite_errors.size else np.nan
+    globally_failed = bool(not np.isfinite(gate_value) or gate_value > float(global_gate_m))
+    regions = compute_drift_regions(
+        timestamps=timestamps,
+        pos_ref=pos_ref,
+        ape_translation_errors=ape_errors,
+        rpe_time_1s_block=rpe_time_1s_block,
+        drift_rpe_1s_m=float(drift_rpe_1s_m),
+        drift_ape_slope_mps=float(drift_ape_slope_mps),
+        drift_ape_jump_m=float(drift_ape_jump_m),
+    )
+    valid_sample = np.asarray(regions["valid_sample_mask"], dtype=bool)
+    valid_segment = np.asarray(regions["valid_segment_mask"], dtype=bool)
+    valid_metric_sample = np.zeros(valid_sample.size, dtype=bool)
+    if valid_segment.size > 0:
+        valid_metric_sample[:-1] |= valid_segment
+        valid_metric_sample[1:] |= valid_segment
+    success = {
+        key: value
+        for key, value in regions.items()
+        if key not in {"valid_sample_mask", "valid_segment_mask"}
+    }
+    success["case_status"] = "globally_failed" if globally_failed else "valid_segment"
+    success["global_gate_m"] = float(global_gate_m)
+    success["global_gate_percentile"] = float(global_gate_percentile)
+    success["global_gate_value_m"] = float(gate_value)
+    success["drift_rpe_1s_m"] = float(drift_rpe_1s_m)
+    success["drift_ape_slope_mps"] = float(drift_ape_slope_mps)
+    success["drift_ape_jump_m"] = float(drift_ape_jump_m)
+    if threshold_info is not None:
+        success["threshold"] = threshold_info
+    if globally_failed:
+        success["success_rate_distance"] = 0.0
+        success["success_rate_time"] = 0.0
+        success["valid_distance_m"] = 0.0
+        success["valid_time_s"] = 0.0
+        success["valid_sample_count"] = 0
+        if include_masks:
+            success["valid_sample_mask"] = np.zeros(valid_sample.size, dtype=bool)
+            success["valid_metric_sample_mask"] = np.zeros(valid_sample.size, dtype=bool)
+            success["valid_segment_mask"] = np.zeros(valid_segment.size, dtype=bool)
+        return {
+            "success": success,
+            "ape": _empty_metric_block(include_raw=include_raw),
+            "rpe": _empty_rpe_block(include_raw=include_raw),
+            "rpe_time_1s": _empty_rpe_block(include_raw=include_raw),
+        }
+    if include_masks:
+        success["valid_sample_mask"] = valid_sample
+        success["valid_metric_sample_mask"] = valid_metric_sample
+        success["valid_segment_mask"] = valid_segment
+    return {
+        "success": success,
+        "ape": _filter_ape_block(ape_block, valid_metric_sample, include_raw=include_raw),
+        "rpe": _filter_rpe_block(rpe_block, valid_segment, include_raw=include_raw),
+        "rpe_time_1s": _filter_rpe_block(rpe_time_1s_block, valid_segment, include_raw=include_raw),
+    }
 
 
 def print_metric_block(title, metrics, unit_map=None):
