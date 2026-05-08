@@ -4,8 +4,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import (
-    compute_ape_evo_style,
-    compute_rpe_evo_style,
+    compute_ape,
+    compute_rpe,
     compute_valid_segment_metrics,
 )
 from epa.ov_eval_compat import _drift_rate_percent
@@ -24,8 +24,8 @@ def test_ground_truth_identity_metrics_are_zero() -> None:
     pos = _line_traj(t)
     quat = _quat_identity(t.size)
 
-    ape = compute_ape_evo_style(pos, quat, pos, quat, include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos, quat, pos, quat, include_raw=True)
+    rpe_time = compute_rpe(
         pos,
         quat,
         pos,
@@ -58,8 +58,8 @@ def test_ground_truth_scale_drift_metrics_match_closed_form_values() -> None:
     pos_est = _line_traj(t, scale=1.1)
     quat = _quat_identity(t.size)
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -71,7 +71,7 @@ def test_ground_truth_scale_drift_metrics_match_closed_form_values() -> None:
         pairs_from_reference=True,
         include_raw=True,
     )
-    rpe_dist_ref = compute_rpe_evo_style(
+    rpe_dist_ref = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -83,7 +83,7 @@ def test_ground_truth_scale_drift_metrics_match_closed_form_values() -> None:
         pairs_from_reference=True,
         include_raw=True,
     )
-    rpe_dist_est = compute_rpe_evo_style(
+    rpe_dist_est = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -110,8 +110,8 @@ def test_ground_truth_pure_rotation_metrics_match_closed_form_values() -> None:
     quat_ref = _quat_identity(t.size)
     quat_est = R.from_euler("z", 10.0 * t, degrees=True).as_quat()
 
-    ape = compute_ape_evo_style(pos, quat_ref, pos, quat_est, include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos, quat_ref, pos, quat_est, include_raw=True)
+    rpe_time = compute_rpe(
         pos,
         quat_ref,
         pos,
@@ -136,8 +136,8 @@ def test_ground_truth_stable_bias_is_not_local_drift_when_global_gate_allows_it(
     pos_est = _line_traj(t, bias_y=6.0)
     quat = _quat_identity(t.size)
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -183,8 +183,8 @@ def test_ground_truth_local_jump_invalidates_drift_valid_metrics() -> None:
     pos_est[10:, 1] = 10.0
     quat = _quat_identity(t.size)
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -218,9 +218,9 @@ def test_ground_truth_multiple_failures_preserve_recovered_segments() -> None:
     pos = _line_traj(t)
     quat = _quat_identity(t.size)
 
-    ape = compute_ape_evo_style(pos, quat, pos, quat, include_raw=True)
-    rpe_frame = compute_rpe_evo_style(pos, quat, pos, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos, quat, pos, quat, include_raw=True)
+    rpe_frame = compute_rpe(pos, quat, pos, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos,
         quat,
         pos,

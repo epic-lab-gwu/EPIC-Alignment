@@ -17,7 +17,7 @@ def _write_tum(path: Path, x_offset: float = 0.0, t_offset: float = 0.0) -> None
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_ape_rpe_default_plot_mode_aligns_with_evo() -> None:
+def test_ape_rpe_default_plot_mode_is_xyz() -> None:
     ape_args = ape_tool._build_parser().parse_args(["tum", "ref.tum", "est.tum"])
     rpe_args = rpe_tool._build_parser().parse_args(["tum", "ref.tum", "est.tum"])
     assert ape_args.plot_mode == "xyz"

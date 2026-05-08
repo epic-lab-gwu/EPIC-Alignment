@@ -10,8 +10,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import (
-    compute_ape_evo_style,
-    compute_rpe_evo_style,
+    compute_ape,
+    compute_rpe,
     compute_valid_segment_metrics,
     filter_rpe_block_by_valid_segments,
     resolve_success_threshold,
@@ -303,7 +303,7 @@ def _evaluate_pair_ov_style(
         t_fit=t_fit,
     )
 
-    ape3 = compute_ape_evo_style(
+    ape3 = compute_ape(
         pos_ref=p_gt_m,
         quat_ref=q_gt_m,
         pos_est=p_est_aligned,
@@ -313,7 +313,7 @@ def _evaluate_pair_ov_style(
 
     p_gt_xy, q_gt_xy = project_to_plane(p_gt_m, q_gt_m, "xy")
     p_est_xy, q_est_xy = project_to_plane(p_est_aligned, q_est_aligned, "xy")
-    ape2 = compute_ape_evo_style(
+    ape2 = compute_ape(
         pos_ref=p_gt_xy,
         quat_ref=q_gt_xy,
         pos_est=p_est_xy,
@@ -407,7 +407,7 @@ def _evaluate_pair_epa_step3(
     est_pos = np.asarray(solved["pr_final"], dtype=float)
     est_quat = np.asarray(solved["q_step3"], dtype=float)
 
-    ape3 = compute_ape_evo_style(
+    ape3 = compute_ape(
         pos_ref=gt_pos,
         quat_ref=gt_quat,
         pos_est=est_pos,
@@ -417,7 +417,7 @@ def _evaluate_pair_epa_step3(
 
     p_gt_xy, q_gt_xy = project_to_plane(gt_pos, gt_quat, "xy")
     p_est_xy, q_est_xy = project_to_plane(est_pos, est_quat, "xy")
-    ape2 = compute_ape_evo_style(
+    ape2 = compute_ape(
         pos_ref=p_gt_xy,
         quat_ref=q_gt_xy,
         pos_est=p_est_xy,
@@ -542,7 +542,7 @@ def _compute_rpe_segments(
     out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
     for seg in segments_m:
         tol_rel = min(1.0, 0.5 / float(seg)) if float(seg) > 0 else 0.1
-        blk = compute_rpe_evo_style(
+        blk = compute_rpe(
             pos_ref=gt_pos,
             quat_ref=gt_quat,
             pos_est=est_pos,
@@ -572,7 +572,7 @@ def _compute_time_rpe_1s(
     est_pos: np.ndarray,
     est_quat: np.ndarray,
 ) -> dict[str, np.ndarray | dict[str, float] | int]:
-    blk = compute_rpe_evo_style(
+    blk = compute_rpe(
         pos_ref=gt_pos,
         quat_ref=gt_quat,
         pos_est=est_pos,
@@ -613,14 +613,14 @@ def _compute_valid_segment_summary(
     drift_ape_slope_mps: float = 1.0,
     drift_ape_jump_m: float = 5.0,
 ) -> dict:
-    ape = compute_ape_evo_style(
+    ape = compute_ape(
         pos_ref=gt_pos,
         quat_ref=gt_quat,
         pos_est=est_pos,
         quat_est=est_quat,
         include_raw=True,
     )
-    rpe = compute_rpe_evo_style(
+    rpe = compute_rpe(
         pos_ref=gt_pos,
         quat_ref=gt_quat,
         pos_est=est_pos,
@@ -629,7 +629,7 @@ def _compute_valid_segment_summary(
         delta_unit="f",
         include_raw=True,
     )
-    rpe_time = compute_rpe_evo_style(
+    rpe_time = compute_rpe(
         pos_ref=gt_pos,
         quat_ref=gt_quat,
         pos_est=est_pos,
@@ -680,7 +680,7 @@ def _compute_valid_rpe_segments(
     out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
     for seg in segments_m:
         tol_rel = min(1.0, 0.5 / float(seg)) if float(seg) > 0 else 0.1
-        blk = compute_rpe_evo_style(
+        blk = compute_rpe(
             pos_ref=gt_pos,
             quat_ref=gt_quat,
             pos_est=est_pos,
