@@ -401,7 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
         "-p",
         "--plot",
         action="store_true",
-        help="Generate aggregate plots (evo-style: in TTY sessions also opens interactive window).",
+        help="Generate aggregate plots (in TTY sessions also opens interactive window).",
     )
     p.add_argument("--out-dir", default="", help="Output directory for generated files.")
     p.add_argument("--save-plot", "--save_plot", default="", help="Path prefix (file or dir) to export plots.")

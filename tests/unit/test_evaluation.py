@@ -6,8 +6,8 @@ from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import (
     build_rpe_pairs,
-    compute_ape_evo_style,
-    compute_rpe_evo_style,
+    compute_ape,
+    compute_rpe,
     compute_success_regions,
     compute_valid_segment_metrics,
     estimate_knee_threshold,
@@ -25,7 +25,7 @@ def _identity_traj(n: int = 6) -> tuple[np.ndarray, np.ndarray]:
 
 def test_compute_ape_zero_for_identical_trajectories() -> None:
     pos, quat = _identity_traj()
-    metrics = compute_ape_evo_style(pos, quat, pos, quat)
+    metrics = compute_ape(pos, quat, pos, quat)
 
     assert metrics["translation_part"]["rmse"] == 0.0
     assert metrics["rotation_angle_deg"]["rmse"] == 0.0
@@ -33,7 +33,7 @@ def test_compute_ape_zero_for_identical_trajectories() -> None:
 
 def test_compute_rpe_zero_for_identical_trajectories() -> None:
     pos, quat = _identity_traj()
-    metrics = compute_rpe_evo_style(pos, quat, pos, quat, delta=1, delta_unit="f")
+    metrics = compute_rpe(pos, quat, pos, quat, delta=1, delta_unit="f")
 
     assert metrics["pair_count"] == 5
     assert metrics["translation_part"]["rmse"] == 0.0
@@ -54,7 +54,7 @@ def test_compute_rpe_seconds_unit_uses_time_pairs() -> None:
     pos_est = np.column_stack([1.1 * t, np.zeros_like(t), np.zeros_like(t)])
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    metrics = compute_rpe_evo_style(
+    metrics = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -78,7 +78,7 @@ def test_compute_rpe_seconds_unit_handles_nonuniform_timestamps() -> None:
     pos_est = np.column_stack([1.1 * t, np.zeros_like(t), np.zeros_like(t)])
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    metrics = compute_rpe_evo_style(
+    metrics = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -107,27 +107,27 @@ def test_compute_rpe_seconds_unit_rejects_duplicate_or_nonmonotonic_timestamps(t
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (timestamps.size, 1))
 
     with pytest.raises(ValueError, match="strictly increasing"):
-        compute_rpe_evo_style(pos, quat, pos, quat, delta=1.0, delta_unit="s", timestamps=timestamps)
+        compute_rpe(pos, quat, pos, quat, delta=1.0, delta_unit="s", timestamps=timestamps)
 
 
 def test_compute_rpe_seconds_unit_requires_timestamps() -> None:
     pos, quat = _identity_traj()
 
     with pytest.raises(ValueError, match="requires timestamps"):
-        compute_rpe_evo_style(pos, quat, pos, quat, delta=1.0, delta_unit="s")
+        compute_rpe(pos, quat, pos, quat, delta=1.0, delta_unit="s")
 
 
 def test_compute_rpe_seconds_unit_checks_timestamp_length() -> None:
     pos, quat = _identity_traj()
 
     with pytest.raises(ValueError, match="same length"):
-        compute_rpe_evo_style(pos, quat, pos, quat, delta=1.0, delta_unit="s", timestamps=np.array([0.0, 1.0]))
+        compute_rpe(pos, quat, pos, quat, delta=1.0, delta_unit="s", timestamps=np.array([0.0, 1.0]))
 
 
 def test_compute_metrics_can_include_raw_arrays() -> None:
     pos, quat = _identity_traj()
-    ape = compute_ape_evo_style(pos, quat, pos, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos, quat, pos, quat, delta=1, include_raw=True)
+    ape = compute_ape(pos, quat, pos, quat, include_raw=True)
+    rpe = compute_rpe(pos, quat, pos, quat, delta=1, include_raw=True)
 
     assert "_error_arrays" in ape
     assert ape["_error_arrays"]["translation_part"].shape[0] == pos.shape[0]
@@ -141,7 +141,7 @@ def test_rotation_rpe_has_known_ground_truth_for_constant_yaw_rate() -> None:
     quat_ref = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
     quat_est = R.from_euler("z", 10.0 * t, degrees=True).as_quat()
 
-    metrics = compute_rpe_evo_style(
+    metrics = compute_rpe(
         pos,
         quat_ref,
         pos,
@@ -162,8 +162,8 @@ def test_short_trajectory_has_no_long_distance_or_time_rpe_pairs() -> None:
     pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    rpe_dist = compute_rpe_evo_style(pos, quat, pos, quat, delta=8.0, delta_unit="m", all_pairs=True)
-    rpe_time = compute_rpe_evo_style(pos, quat, pos, quat, delta=1.0, delta_unit="s", timestamps=t, all_pairs=True)
+    rpe_dist = compute_rpe(pos, quat, pos, quat, delta=8.0, delta_unit="m", all_pairs=True)
+    rpe_time = compute_rpe(pos, quat, pos, quat, delta=1.0, delta_unit="s", timestamps=t, all_pairs=True)
 
     assert rpe_dist["pair_count"] == 0
     assert rpe_time["pair_count"] == 0
@@ -287,9 +287,9 @@ def test_compute_valid_segment_metrics_filters_ape_and_rpe_pairs() -> None:
     pos_est[3:, 1] = 12.0
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -327,9 +327,9 @@ def test_compute_valid_segment_metrics_drops_isolated_valid_samples() -> None:
     pos_est[[0, 2], 1] = 12.0
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -363,9 +363,9 @@ def test_compute_valid_segment_metrics_does_not_fail_stable_bias_as_drift() -> N
     pos_est[:, 1] = 6.0
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -400,9 +400,9 @@ def test_compute_valid_segment_metrics_invalidates_full_bad_time_rpe_interval() 
     pos_est[10:, 1] = 10.0
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -440,9 +440,9 @@ def test_compute_valid_segment_metrics_preserves_recovered_segment_between_failu
     pos_est = pos_ref.copy()
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -485,9 +485,9 @@ def test_compute_valid_segment_metrics_global_gate_marks_failed_case() -> None:
     pos_est[:, 1] = 50.0
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
-    ape = compute_ape_evo_style(pos_ref, quat, pos_est, quat, include_raw=True)
-    rpe = compute_rpe_evo_style(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
-    rpe_time = compute_rpe_evo_style(
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
         pos_ref,
         quat,
         pos_est,
@@ -527,7 +527,7 @@ def test_rpe_point_distance_ratio_keeps_pair_aligned_raw_arrays() -> None:
     )
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (pos.shape[0], 1))
 
-    rpe = compute_rpe_evo_style(
+    rpe = compute_rpe(
         pos,
         quat,
         pos,
@@ -543,7 +543,7 @@ def test_rpe_point_distance_ratio_keeps_pair_aligned_raw_arrays() -> None:
     assert ratio[1] == 0.0
 
 
-def test_normalize_pose_relation_accepts_evo_aliases() -> None:
+def test_normalize_pose_relation_accepts_common_aliases() -> None:
     assert normalize_pose_relation("ape", "trans_part") == "translation_part"
     assert normalize_pose_relation("rpe", "angle_deg") == "rotation_angle_deg"
     assert normalize_pose_relation("rpe", "point_distance_error_ratio") == "point_distance_error_ratio"

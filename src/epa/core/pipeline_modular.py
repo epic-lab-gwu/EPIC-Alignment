@@ -13,8 +13,8 @@ from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation as R
 
 from .evaluation import (
-    compute_ape_evo_style,
-    compute_rpe_evo_style,
+    compute_ape,
+    compute_rpe,
     compute_valid_segment_metrics,
     normalize_pose_relation,
     print_metric_block,
@@ -325,14 +325,14 @@ def _compute_pose_metrics_by_stage(
         est_eval_pos, est_eval_quat = project_to_plane(
             eval_pos, eval_quat, plane=eval_project_to_plane
         )
-        ape_metrics_by_stage[stage_name] = compute_ape_evo_style(
+        ape_metrics_by_stage[stage_name] = compute_ape(
             pos_ref=ref_eval_pos,
             quat_ref=ref_eval_quat,
             pos_est=est_eval_pos,
             quat_est=est_eval_quat,
             include_raw=True,
         )
-        rpe_metrics_by_stage[stage_name] = compute_rpe_evo_style(
+        rpe_metrics_by_stage[stage_name] = compute_rpe(
             pos_ref=ref_eval_pos,
             quat_ref=ref_eval_quat,
             pos_est=est_eval_pos,
@@ -344,7 +344,7 @@ def _compute_pose_metrics_by_stage(
             pairs_from_reference=rpe_pairs_from_reference,
             include_raw=True,
         )
-        rpe_time_1s_by_stage[stage_name] = compute_rpe_evo_style(
+        rpe_time_1s_by_stage[stage_name] = compute_rpe(
             pos_ref=ref_eval_pos,
             quat_ref=ref_eval_quat,
             pos_est=est_eval_pos,

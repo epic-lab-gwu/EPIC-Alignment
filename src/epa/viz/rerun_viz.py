@@ -638,7 +638,7 @@ def log_alignment_to_rerun(
             # Keep logging robust even if blueprint APIs change.
             pass
 
-        # evo-style time-indexed replay streams.
+        # Time-indexed replay streams.
         replay_step = max(1, int(motion_stride))
         t_replay = t_full[::replay_step]
         gt_replay = gt[::replay_step]
@@ -667,7 +667,7 @@ def log_alignment_to_rerun(
             else None
         )
 
-        # evo-like playback: trajectory grows by time; a moving pose marker indicates current frame.
+        # Playback: trajectory grows by time; a moving pose marker indicates current frame.
         _send_timed_transforms(
             rr,
             entity_path="epa/replay/gt/pose",
@@ -733,7 +733,7 @@ def log_alignment_to_rerun(
             static_color_rgba=[150, 150, 150, 170],
         )
 
-        # evo-like visual style: same mapping idea as evo_ape/evo_rpe in rerun:
+        # Error-mapped visual style:
         # map per-pose error values through the configured trajectory colormap (jet by default).
         if step3_error_m is not None:
             err_replay = np.asarray(step3_error_m, dtype=float).reshape(-1)[::replay_step]
@@ -762,7 +762,7 @@ def log_alignment_to_rerun(
             colors_u32=step3_seg_colors,
         )
 
-        # Error time-series (evo-like metrics viewer section).
+        # Error time-series for the metrics viewer section.
         if raw_error_m is not None:
             _send_scalar_series(
                 rr,
@@ -899,7 +899,7 @@ def log_alignment_to_rerun(
             "enabled": "true",
             "status": "ok",
             "message": (
-                "Rerun logged (not persisted to .rrd, evo-style) "
+                "Rerun logged (not persisted to .rrd) "
                 f"(timeline={timeline_name}, replay_step={replay_step}, replay_poses={len(t_replay)})"
             ),
         }

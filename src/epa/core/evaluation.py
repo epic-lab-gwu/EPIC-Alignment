@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -192,7 +194,7 @@ def normalize_pose_relation(metric_kind, relation):
     raise ValueError(f"Unsupported {metric_kind.upper()} pose relation: {relation}. Supported: {supported}")
 
 
-def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est, include_raw=False):
+def compute_ape(pos_ref, quat_ref, pos_est, quat_est, include_raw=False):
     if len(pos_ref) != len(pos_est):
         raise ValueError("APE requires trajectories with the same number of poses.")
 
@@ -232,7 +234,7 @@ def compute_ape_evo_style(pos_ref, quat_ref, pos_est, quat_est, include_raw=Fals
     return result
 
 
-def compute_rpe_evo_style(
+def compute_rpe(
     pos_ref,
     quat_ref,
     pos_est,
@@ -341,7 +343,6 @@ def compute_rpe_evo_style(
         }
         result["_pair_ids"] = np.asarray(id_pairs, dtype=int)
     return result
-
 
 def _empty_metric_block(include_raw=False):
     empty = compute_error_statistics(np.array([]))

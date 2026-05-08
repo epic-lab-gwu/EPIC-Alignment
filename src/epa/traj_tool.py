@@ -890,7 +890,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--plot",
         action="store_true",
-        help="Generate trajectory plots (evo-style: in TTY sessions also opens interactive window).",
+        help="Generate trajectory plots (in TTY sessions also opens interactive window).",
     )
     p.add_argument(
         "--plot-interactive",
@@ -965,7 +965,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run(args: argparse.Namespace) -> int:
-    # Support evo-style subcommand invocation:
+    # Support format-first subcommand invocation:
     #   epa_traj tum a.tum b.tum ...
     # while keeping current --format based usage.
     if bool(getattr(args, "trajectories", None)) and str(getattr(args, "format", "auto")) == "auto":
