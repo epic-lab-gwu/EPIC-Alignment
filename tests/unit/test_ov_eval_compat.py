@@ -128,8 +128,16 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
             "40",
             "--epa-success-threshold-trim-percentile",
             "90",
+            "--epa-success-global-gate-mode",
+            "scale_aware",
             "--epa-success-global-gate-m",
             "35",
+            "--epa-success-global-gate-path-ratio",
+            "0.07",
+            "--epa-success-global-gate-min-m",
+            "3",
+            "--epa-success-global-gate-max-m",
+            "120",
             "--epa-success-global-gate-percentile",
             "10",
             "--epa-success-drift-rpe-1s-m",
@@ -152,7 +160,11 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
     assert args.epa_success_threshold_min_m == 2
     assert args.epa_success_threshold_max_m == 40
     assert args.epa_success_threshold_trim_percentile == 90
+    assert args.epa_success_global_gate_mode == "scale_aware"
     assert args.epa_success_global_gate_m == 35
+    assert args.epa_success_global_gate_path_ratio == 0.07
+    assert args.epa_success_global_gate_min_m == 3
+    assert args.epa_success_global_gate_max_m == 120
     assert args.epa_success_global_gate_percentile == 10
     assert args.epa_success_drift_rpe_1s_m == 3
     assert args.epa_success_drift_ape_slope_mps == 1.5

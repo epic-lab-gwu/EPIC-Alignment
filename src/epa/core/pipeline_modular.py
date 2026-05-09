@@ -293,7 +293,11 @@ def _compute_pose_metrics_by_stage(
     success_threshold_min_m: float,
     success_threshold_max_m: float,
     success_threshold_trim_percentile: float,
+    success_global_gate_mode: str,
     success_global_gate_m: float,
+    success_global_gate_path_ratio: float,
+    success_global_gate_min_m: float,
+    success_global_gate_max_m: float,
     success_global_gate_percentile: float,
     success_drift_rpe_1s_m: float,
     success_drift_ape_slope_mps: float,
@@ -383,7 +387,11 @@ def _compute_pose_metrics_by_stage(
             rpe_time_1s_block=rpe_time_1s_by_stage[stage_name],
             threshold_m=float(stage_threshold_m),
             threshold_info=threshold_info,
+            global_gate_mode=str(success_global_gate_mode),
             global_gate_m=float(success_global_gate_m),
+            global_gate_path_ratio=float(success_global_gate_path_ratio),
+            global_gate_min_m=float(success_global_gate_min_m),
+            global_gate_max_m=float(success_global_gate_max_m),
             global_gate_percentile=float(success_global_gate_percentile),
             drift_rpe_1s_m=float(success_drift_rpe_1s_m),
             drift_ape_slope_mps=float(success_drift_ape_slope_mps),
@@ -416,7 +424,11 @@ def _compute_pose_metrics_by_stage(
             "min_threshold_m": float(success_threshold_min_m),
             "max_threshold_m": float(success_threshold_max_m),
             "trim_percentile": float(success_threshold_trim_percentile),
+            "global_gate_mode": str(success_global_gate_mode),
             "global_gate_m": float(success_global_gate_m),
+            "global_gate_path_ratio": float(success_global_gate_path_ratio),
+            "global_gate_min_m": float(success_global_gate_min_m),
+            "global_gate_max_m": float(success_global_gate_max_m),
             "global_gate_percentile": float(success_global_gate_percentile),
             "drift_rpe_1s_m": float(success_drift_rpe_1s_m),
             "drift_ape_slope_mps": float(success_drift_ape_slope_mps),
@@ -821,7 +833,11 @@ def run_pipeline_modular(args, script_dir: Path):
         success_threshold_min_m=float(getattr(args, "success_threshold_min_m", 5.0)),
         success_threshold_max_m=float(getattr(args, "success_threshold_max_m", 30.0)),
         success_threshold_trim_percentile=float(getattr(args, "success_threshold_trim_percentile", 95.0)),
+        success_global_gate_mode=str(getattr(args, "success_global_gate_mode", "fixed")),
         success_global_gate_m=float(getattr(args, "success_global_gate_m", 30.0)),
+        success_global_gate_path_ratio=float(getattr(args, "success_global_gate_path_ratio", 0.05)),
+        success_global_gate_min_m=float(getattr(args, "success_global_gate_min_m", 2.0)),
+        success_global_gate_max_m=float(getattr(args, "success_global_gate_max_m", 100.0)),
         success_global_gate_percentile=float(getattr(args, "success_global_gate_percentile", 5.0)),
         success_drift_rpe_1s_m=float(getattr(args, "success_drift_rpe_1s_m", 2.0)),
         success_drift_ape_slope_mps=float(getattr(args, "success_drift_ape_slope_mps", 1.0)),
@@ -852,6 +868,16 @@ def run_pipeline_modular(args, script_dir: Path):
         valid_rpe_t = pose_metrics["valid_segment"][stage_name]["rpe"][rpe_pose_relation]["rmse"]
         sr_dist_pct = float(success["success_rate_distance"]) * 100.0
         success_threshold_m = float(success["threshold"]["threshold_m"])
+        success_threshold_mode = str(success["threshold"].get("mode", "unknown"))
+        global_gate_m = float(success["global_gate_m"])
+        global_gate_mode = str(success["global_gate_mode"])
+        path_length_m = float(success["global_gate_path_length_m"])
+        duration_s = float(success["total_time_s"])
+        print(
+            f"{stage_name}: SR config: GT path={path_length_m:.2f}m, "
+            f"time={duration_s:.2f}s, threshold={success_threshold_m:.2f}m({success_threshold_mode}), "
+            f"gate={global_gate_m:.2f}m({global_gate_mode})"
+        )
         print(
             f"{stage_name}: "
             f"APE_{ape_pose_relation}_rmse={ape_t:.6f}, "
