@@ -1,6 +1,6 @@
-
-# 如果还有 __version__[build-system]
-nano src/epa/__init__.pyrequires = ["setuptools>=68", "wheel"] build-backend = "setuptools.build_meta"
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "epica"
