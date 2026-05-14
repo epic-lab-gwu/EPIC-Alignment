@@ -537,47 +537,6 @@ def resolve_success_threshold(
     raise ValueError(f"Unsupported success threshold mode: {mode}")
 
 
-def compute_path_length(pos_ref) -> float:
-    pos = np.asarray(pos_ref, dtype=float)
-    if pos.ndim != 2 or pos.shape[0] < 2:
-        return 0.0
-    return float(np.sum(np.linalg.norm(np.diff(pos, axis=0), axis=1)))
-
-
-def resolve_global_gate(
-    pos_ref,
-    *,
-    mode="fixed",
-    fixed_m=30.0,
-    path_ratio=0.05,
-    min_m=2.0,
-    max_m=100.0,
-):
-    path_length_m = compute_path_length(pos_ref)
-    mode_norm = str(mode).lower()
-    if mode_norm == "fixed":
-        gate_m = float(fixed_m)
-        return gate_m, {
-            "mode": "fixed",
-            "effective_m": gate_m,
-            "fixed_m": float(fixed_m),
-            "path_length_m": path_length_m,
-        }
-    if mode_norm in {"scale_aware", "scale-aware", "relative"}:
-        raw_m = path_length_m * float(path_ratio)
-        gate_m = float(np.clip(raw_m, float(min_m), float(max_m)))
-        return gate_m, {
-            "mode": "scale_aware",
-            "effective_m": gate_m,
-            "path_length_m": path_length_m,
-            "path_ratio": float(path_ratio),
-            "raw_m": float(raw_m),
-            "min_m": float(min_m),
-            "max_m": float(max_m),
-        }
-    raise ValueError(f"Unsupported global gate mode: {mode}")
-
-
 def _sample_mask_from_pair_mask(n, pair_ids, pair_mask):
     sample_mask = np.ones(int(n), dtype=bool)
     pairs = np.asarray(pair_ids, dtype=int)
@@ -754,11 +713,7 @@ def compute_valid_segment_metrics(
     rpe_time_1s_block,
     threshold_m=10.0,
     threshold_info=None,
-    global_gate_mode="fixed",
     global_gate_m=30.0,
-    global_gate_path_ratio=0.05,
-    global_gate_min_m=2.0,
-    global_gate_max_m=100.0,
     global_gate_percentile=5.0,
     drift_rpe_1s_m=2.0,
     drift_ape_slope_mps=1.0,
@@ -769,15 +724,7 @@ def compute_valid_segment_metrics(
     ape_errors = np.asarray(ape_block.get("_error_arrays", {}).get("translation_part", []), dtype=float)
     finite_errors = ape_errors[np.isfinite(ape_errors)]
     gate_value = float(np.percentile(finite_errors, float(global_gate_percentile))) if finite_errors.size else np.nan
-    effective_gate_m, gate_info = resolve_global_gate(
-        pos_ref,
-        mode=global_gate_mode,
-        fixed_m=float(global_gate_m),
-        path_ratio=float(global_gate_path_ratio),
-        min_m=float(global_gate_min_m),
-        max_m=float(global_gate_max_m),
-    )
-    globally_failed = bool(not np.isfinite(gate_value) or gate_value > float(effective_gate_m))
+    globally_failed = bool(not np.isfinite(gate_value) or gate_value > float(global_gate_m))
     regions = compute_drift_regions(
         timestamps=timestamps,
         pos_ref=pos_ref,
@@ -799,11 +746,7 @@ def compute_valid_segment_metrics(
         if key not in {"valid_sample_mask", "valid_segment_mask"}
     }
     success["case_status"] = "globally_failed" if globally_failed else "valid_segment"
-    success["global_gate_m"] = float(effective_gate_m)
-    success["global_gate_info"] = gate_info
-    success["global_gate_mode"] = str(gate_info["mode"])
-    success["global_gate_fixed_m"] = float(global_gate_m)
-    success["global_gate_path_length_m"] = float(gate_info["path_length_m"])
+    success["global_gate_m"] = float(global_gate_m)
     success["global_gate_percentile"] = float(global_gate_percentile)
     success["global_gate_value_m"] = float(gate_value)
     success["drift_rpe_1s_m"] = float(drift_rpe_1s_m)
