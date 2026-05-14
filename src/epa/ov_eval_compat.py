@@ -19,7 +19,6 @@ from epa.core.evaluation import (
 )
 from epa.core.math_utils import compute_error_statistics, normalize_quat_array
 from epa.core.steps import (
-    _prepare_solve_eval_trajectories,
     _run_time_alignment,
     _solve_step2_step3,
 )
@@ -382,29 +381,28 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
-    solve_eval = _prepare_solve_eval_trajectories(
-        t_gt=t_gt,
-        pos_gt=p_gt,
-        quat_gt=q_gt,
+    t_est_m, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, _ = _associate_est_gt(
         t_est=t_est,
-        pos_est=p_est,
-        quat_est=q_est,
-        calculated_offset=float(step1["calculated_offset"]),
-        downsample_hz=float(downsample_hz),
-        quat_interp=str(quat_interp),
+        p_est=p_est,
+        q_est=q_est,
+        t_gt=t_gt,
+        p_gt=p_gt,
+        q_gt=q_gt,
+        max_diff=float(max_diff),
+        offset=-float(step1["calculated_offset"]),
     )
     solved = _solve_step2_step3(
-        pr_sync=solve_eval["pr_sync"],
-        qr_sync=solve_eval["qr_sync"],
-        pos_gt_solve=solve_eval["pos_gt_solve"],
-        quat_gt_solve=solve_eval["quat_gt_solve"],
-        pr_solve=solve_eval["pr_solve"],
-        qr_solve=solve_eval["qr_solve"],
+        pr_sync=p_est_m,
+        qr_sync=q_est_m,
+        pos_gt_solve=p_gt_m,
+        quat_gt_solve=q_gt_m,
+        pr_solve=p_est_m,
+        qr_solve=q_est_m,
     )
 
-    gt_t = np.asarray(solve_eval["t_gt"], dtype=float)
-    gt_pos = np.asarray(solve_eval["pos_gt"], dtype=float)
-    gt_quat = np.asarray(solve_eval["quat_gt"], dtype=float)
+    gt_t = np.asarray(t_gt_m, dtype=float)
+    gt_pos = np.asarray(p_gt_m, dtype=float)
+    gt_quat = np.asarray(q_gt_m, dtype=float)
     est_pos = np.asarray(solved["pr_final"], dtype=float)
     est_quat = np.asarray(solved["q_step3"], dtype=float)
 

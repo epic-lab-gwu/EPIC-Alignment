@@ -899,6 +899,7 @@ def run_pipeline_modular(args, script_dir: Path):
         pr_sync=pr_sync,
         pr_corrected=pr_corrected,
         pr_final=pr_final,
+        valid_segment_mask=pose_metrics["valid_segment"]["step3"]["success"].get("valid_segment_mask"),
     )
 
     rerun_info = {
