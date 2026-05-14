@@ -8,6 +8,7 @@ from epa.core.evaluation import (
     build_rpe_pairs,
     compute_ape,
     compute_rpe,
+    resolve_global_gate,
     compute_success_regions,
     compute_valid_segment_metrics,
     estimate_knee_threshold,
@@ -514,6 +515,79 @@ def test_compute_valid_segment_metrics_global_gate_marks_failed_case() -> None:
     assert metrics["success"]["case_status"] == "globally_failed"
     assert metrics["success"]["success_rate_distance"] == 0.0
     assert metrics["ape"]["_error_arrays"]["translation_part"].size == 0
+
+
+def test_resolve_global_gate_supports_fixed_and_scale_aware_modes() -> None:
+    t = np.linspace(0.0, 1000.0, 1001)
+    pos_ref = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+
+    fixed_gate, fixed_info = resolve_global_gate(pos_ref, mode="fixed", fixed_m=30.0)
+    scale_gate, scale_info = resolve_global_gate(
+        pos_ref,
+        mode="scale_aware",
+        path_ratio=0.05,
+        min_m=2.0,
+        max_m=100.0,
+    )
+
+    assert fixed_gate == 30.0
+    assert fixed_info["mode"] == "fixed"
+    assert scale_gate == 50.0
+    assert scale_info["mode"] == "scale_aware"
+    assert scale_info["path_length_m"] == 1000.0
+
+
+def test_compute_valid_segment_metrics_scale_aware_global_gate_uses_path_length() -> None:
+    t = np.linspace(0.0, 1000.0, 1001)
+    pos_ref = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    pos_est = pos_ref.copy()
+    pos_est[:, 1] = 40.0
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(
+        pos_ref,
+        quat,
+        pos_est,
+        quat,
+        delta=1.0,
+        delta_unit="s",
+        timestamps=t,
+        all_pairs=True,
+        include_raw=True,
+    )
+
+    fixed = compute_valid_segment_metrics(
+        timestamps=t,
+        pos_ref=pos_ref,
+        ape_block=ape,
+        rpe_block=rpe,
+        rpe_time_1s_block=rpe_time,
+        threshold_m=100.0,
+        global_gate_mode="fixed",
+        global_gate_m=30.0,
+        global_gate_percentile=5.0,
+        include_raw=True,
+    )
+    scale_aware = compute_valid_segment_metrics(
+        timestamps=t,
+        pos_ref=pos_ref,
+        ape_block=ape,
+        rpe_block=rpe,
+        rpe_time_1s_block=rpe_time,
+        threshold_m=100.0,
+        global_gate_mode="scale_aware",
+        global_gate_path_ratio=0.05,
+        global_gate_min_m=2.0,
+        global_gate_max_m=100.0,
+        global_gate_percentile=5.0,
+        include_raw=True,
+    )
+
+    assert fixed["success"]["case_status"] == "globally_failed"
+    assert scale_aware["success"]["case_status"] == "valid_segment"
+    assert scale_aware["success"]["global_gate_m"] == 50.0
 
 
 def test_rpe_point_distance_ratio_keeps_pair_aligned_raw_arrays() -> None:

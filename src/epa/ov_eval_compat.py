@@ -11,6 +11,7 @@ from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import (
     compute_ape,
+    compute_path_length,
     compute_rpe,
     compute_valid_segment_metrics,
     filter_rpe_block_by_valid_segments,
@@ -18,7 +19,6 @@ from epa.core.evaluation import (
 )
 from epa.core.math_utils import compute_error_statistics, normalize_quat_array
 from epa.core.steps import (
-    _prepare_solve_eval_trajectories,
     _run_time_alignment,
     _solve_step2_step3,
 )
@@ -381,29 +381,28 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
-    solve_eval = _prepare_solve_eval_trajectories(
-        t_gt=t_gt,
-        pos_gt=p_gt,
-        quat_gt=q_gt,
+    t_est_m, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, _ = _associate_est_gt(
         t_est=t_est,
-        pos_est=p_est,
-        quat_est=q_est,
-        calculated_offset=float(step1["calculated_offset"]),
-        downsample_hz=float(downsample_hz),
-        quat_interp=str(quat_interp),
+        p_est=p_est,
+        q_est=q_est,
+        t_gt=t_gt,
+        p_gt=p_gt,
+        q_gt=q_gt,
+        max_diff=float(max_diff),
+        offset=-float(step1["calculated_offset"]),
     )
     solved = _solve_step2_step3(
-        pr_sync=solve_eval["pr_sync"],
-        qr_sync=solve_eval["qr_sync"],
-        pos_gt_solve=solve_eval["pos_gt_solve"],
-        quat_gt_solve=solve_eval["quat_gt_solve"],
-        pr_solve=solve_eval["pr_solve"],
-        qr_solve=solve_eval["qr_solve"],
+        pr_sync=p_est_m,
+        qr_sync=q_est_m,
+        pos_gt_solve=p_gt_m,
+        quat_gt_solve=q_gt_m,
+        pr_solve=p_est_m,
+        qr_solve=q_est_m,
     )
 
-    gt_t = np.asarray(solve_eval["t_gt"], dtype=float)
-    gt_pos = np.asarray(solve_eval["pos_gt"], dtype=float)
-    gt_quat = np.asarray(solve_eval["quat_gt"], dtype=float)
+    gt_t = np.asarray(t_gt_m, dtype=float)
+    gt_pos = np.asarray(p_gt_m, dtype=float)
+    gt_quat = np.asarray(q_gt_m, dtype=float)
     est_pos = np.asarray(solved["pr_final"], dtype=float)
     est_quat = np.asarray(solved["q_step3"], dtype=float)
 
@@ -607,7 +606,11 @@ def _compute_valid_segment_summary(
     threshold_min_m: float = 5.0,
     threshold_max_m: float = 30.0,
     threshold_trim_percentile: float = 95.0,
+    global_gate_mode: str = "fixed",
     global_gate_m: float = 30.0,
+    global_gate_path_ratio: float = 0.05,
+    global_gate_min_m: float = 2.0,
+    global_gate_max_m: float = 100.0,
     global_gate_percentile: float = 5.0,
     drift_rpe_1s_m: float = 2.0,
     drift_ape_slope_mps: float = 1.0,
@@ -658,7 +661,11 @@ def _compute_valid_segment_summary(
         rpe_time_1s_block=rpe_time,
         threshold_m=float(resolved_threshold_m),
         threshold_info=threshold_info,
+        global_gate_mode=str(global_gate_mode),
         global_gate_m=float(global_gate_m),
+        global_gate_path_ratio=float(global_gate_path_ratio),
+        global_gate_min_m=float(global_gate_min_m),
+        global_gate_max_m=float(global_gate_max_m),
         global_gate_percentile=float(global_gate_percentile),
         drift_rpe_1s_m=float(drift_rpe_1s_m),
         drift_ape_slope_mps=float(drift_ape_slope_mps),
@@ -708,6 +715,23 @@ def _compute_valid_rpe_segments(
     return out
 
 
+def _fmt_sr_config(valid: dict, gt_t: np.ndarray, gt_pos: np.ndarray) -> str:
+    success = valid["success"]
+    threshold = success.get("threshold", {})
+    threshold_m = float(threshold.get("threshold_m", success.get("threshold_m", np.nan)))
+    threshold_mode = str(threshold.get("mode", "unknown"))
+    gate_m = float(success.get("global_gate_m", np.nan))
+    gate_mode = str(success.get("global_gate_mode", "unknown"))
+    gt_t = np.asarray(gt_t, dtype=float).reshape(-1)
+    duration_s = float(gt_t[-1] - gt_t[0]) if gt_t.size > 1 else 0.0
+    path_m = float(success.get("global_gate_path_length_m", compute_path_length(gt_pos)))
+    return (
+        f"SR config: GT path={_fmt(path_m, 2)}m | time={_fmt(duration_s, 2)}s | "
+        f"threshold={_fmt(threshold_m, 2)}m({threshold_mode}) | "
+        f"gate={_fmt(gate_m, 2)}m({gate_mode})"
+    )
+
+
 def run_format_converter(args: argparse.Namespace) -> int:
     src = Path(args.path).expanduser()
     if not src.exists():
@@ -751,7 +775,11 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
     success_threshold_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
     success_threshold_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
     success_threshold_trim_percentile = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
+    success_global_gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
     success_global_gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
+    success_global_gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
+    success_global_gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
+    success_global_gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
     success_global_gate_percentile = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
     success_drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
     success_drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
@@ -808,7 +836,11 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         threshold_min_m=success_threshold_min_m,
         threshold_max_m=success_threshold_max_m,
         threshold_trim_percentile=success_threshold_trim_percentile,
+        global_gate_mode=success_global_gate_mode,
         global_gate_m=success_global_gate_m,
+        global_gate_path_ratio=success_global_gate_path_ratio,
+        global_gate_min_m=success_global_gate_min_m,
+        global_gate_max_m=success_global_gate_max_m,
         global_gate_percentile=success_global_gate_percentile,
         drift_rpe_1s_m=success_drift_rpe_1s_m,
         drift_ape_slope_mps=success_drift_ape_slope_mps,
@@ -836,6 +868,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
     )
     success = valid["success"]
     resolved_threshold_m = float(success["threshold"]["threshold_m"])
+    print(_fmt_sr_config(valid, np.asarray(eval_res["gt_t"], dtype=float), np.asarray(eval_res["gt_pos"], dtype=float)))
     print(
         f"SR@{_fmt(resolved_threshold_m, 1)}m - distance = "
         f"{_fmt(float(success['success_rate_distance']) * 100.0, 2)}% "
@@ -858,7 +891,11 @@ def run_error_dataset(args: argparse.Namespace) -> int:
     success_threshold_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
     success_threshold_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
     success_threshold_trim_percentile = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
+    success_global_gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
     success_global_gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
+    success_global_gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
+    success_global_gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
+    success_global_gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
     success_global_gate_percentile = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
     success_drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
     success_drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
@@ -940,7 +977,11 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 threshold_min_m=success_threshold_min_m,
                 threshold_max_m=success_threshold_max_m,
                 threshold_trim_percentile=success_threshold_trim_percentile,
+                global_gate_mode=success_global_gate_mode,
                 global_gate_m=success_global_gate_m,
+                global_gate_path_ratio=success_global_gate_path_ratio,
+                global_gate_min_m=success_global_gate_min_m,
+                global_gate_max_m=success_global_gate_max_m,
                 global_gate_percentile=success_global_gate_percentile,
                 drift_rpe_1s_m=success_drift_rpe_1s_m,
                 drift_ape_slope_mps=success_drift_ape_slope_mps,
@@ -1001,7 +1042,11 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     success_threshold_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
     success_threshold_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
     success_threshold_trim_percentile = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
+    success_global_gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
     success_global_gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
+    success_global_gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
+    success_global_gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
+    success_global_gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
     success_global_gate_percentile = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
     success_drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
     success_drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
@@ -1121,7 +1166,11 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     threshold_min_m=success_threshold_min_m,
                     threshold_max_m=success_threshold_max_m,
                     threshold_trim_percentile=success_threshold_trim_percentile,
+                    global_gate_mode=success_global_gate_mode,
                     global_gate_m=success_global_gate_m,
+                    global_gate_path_ratio=success_global_gate_path_ratio,
+                    global_gate_min_m=success_global_gate_min_m,
+                    global_gate_max_m=success_global_gate_max_m,
                     global_gate_percentile=success_global_gate_percentile,
                     drift_rpe_1s_m=success_drift_rpe_1s_m,
                     drift_ape_slope_mps=success_drift_ape_slope_mps,
@@ -1197,6 +1246,14 @@ def run_error_comparison(args: argparse.Namespace) -> int:
             print(
                 f"\tRPE time 1s - mean_ori = {_fmt(time_ori_stats['mean'])} "
                 f"| mean_pos = {_fmt(time_pos_stats['mean'])} ({len(ds_time_rpe_pos)} samples)"
+            )
+            print(
+                "\t"
+                + _fmt_sr_config(
+                    valid,
+                    np.asarray(ev["gt_t"], dtype=float),
+                    np.asarray(ev["gt_pos"], dtype=float),
+                )
             )
             print(
                 f"\tSR - distance = {_fmt(sr_dist_stats['mean'] * 100.0, 2)}% "
@@ -1532,10 +1589,34 @@ def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
         help="Upper percentile retained before adaptive knee threshold estimation.",
     )
     p.add_argument(
+        "--epa-success-global-gate-mode",
+        choices=["fixed", "scale_aware"],
+        default="fixed",
+        help="How to choose the global accept gate per case.",
+    )
+    p.add_argument(
         "--epa-success-global-gate-m",
         type=float,
         default=30.0,
         help="Global accept gate in meters; cases with low-percentile APE above this are globally failed.",
+    )
+    p.add_argument(
+        "--epa-success-global-gate-path-ratio",
+        type=float,
+        default=0.05,
+        help="GT path-length ratio used by scale-aware global gate mode.",
+    )
+    p.add_argument(
+        "--epa-success-global-gate-min-m",
+        type=float,
+        default=2.0,
+        help="Minimum gate used by scale-aware global gate mode.",
+    )
+    p.add_argument(
+        "--epa-success-global-gate-max-m",
+        type=float,
+        default=100.0,
+        help="Maximum gate used by scale-aware global gate mode.",
     )
     p.add_argument(
         "--epa-success-global-gate-percentile",

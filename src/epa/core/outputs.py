@@ -46,6 +46,7 @@ def _plot_alignment_map(
     pos_est,
     errors_m,
     title: str,
+    valid_segment_mask=None,
 ):
     pref = np.asarray(pos_ref, dtype=float)
     pest = np.asarray(pos_est, dtype=float)
@@ -81,6 +82,23 @@ def _plot_alignment_map(
         alpha=0.95,
         linewidths=0.0,
     )
+
+    if valid_segment_mask is not None:
+        valid_segments = np.asarray(valid_segment_mask, dtype=bool).reshape(-1)
+        segments = _line_segments_xyz(pest)
+        n_segments = min(segments.shape[0], valid_segments.size)
+        if n_segments > 0:
+            fail_segments = segments[:n_segments][~valid_segments[:n_segments]]
+            if fail_segments.size > 0:
+                fail_coll = Line3DCollection(
+                    fail_segments,
+                    colors="#e74c3c",
+                    linewidth=3.0,
+                    alpha=0.9,
+                    label="fail segment",
+                )
+                ax.add_collection3d(fail_coll)
+
     ax.set_xlabel("x (m)")
     ax.set_ylabel("y (m)")
     ax.set_zlabel("z (m)")
@@ -179,6 +197,7 @@ def _plot_stage_alignment_maps(
     pr_sync,
     pr_corrected,
     pr_final,
+    valid_segment_mask=None,
 ):
     stage_order = ["raw", "step2", "step3"]
     stage_titles = {
@@ -208,6 +227,7 @@ def _plot_stage_alignment_maps(
                 f"{stage_titles[stage_name]}\n"
                 f"ATE translation RMSE={float(np.sqrt(np.mean(stage_err**2))):.6f} m"
             ),
+            valid_segment_mask=valid_segment_mask if stage_name == "step3" else None,
         )
     fig2.tight_layout()
     fig2_path = plots_dir / "step23_trajectory_alignment_3d.png"
@@ -227,6 +247,7 @@ def _plot_stage_alignment_maps(
             "Step3 Alignment Map\n"
             f"ATE translation RMSE={float(np.sqrt(np.mean(step3_err_subset**2))):.6f} m"
         ),
+        valid_segment_mask=valid_segment_mask,
     )
     fig_step3_map.tight_layout()
     fig_step3_map_path = plots_dir / "step3_alignment_map.png"
