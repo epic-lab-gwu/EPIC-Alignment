@@ -19,7 +19,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.8"
+    assert epa.__version__ == "0.1.9"
 
 
 def test_format_source_counts_is_deterministic() -> None:
