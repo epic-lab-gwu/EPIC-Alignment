@@ -83,40 +83,6 @@ def _pick_x(x_axis: dict[str, np.ndarray], errors: np.ndarray, x_dimension: str)
     return x[:n], label
 
 
-def _fail_spans_from_success(success: dict, xlabel: str) -> list[tuple[float, float]]:
-    if not isinstance(success, dict):
-        return []
-    fail_segments = success.get("fail_segments", [])
-    if not isinstance(fail_segments, list):
-        return []
-    if str(xlabel).strip() == "d (m)":
-        start_key, end_key = "start_distance_m", "end_distance_m"
-    elif str(xlabel).strip() == "t (s)":
-        start_key, end_key = "start_time_s", "end_time_s"
-    else:
-        start_key, end_key = "start_index", "end_index"
-
-    spans = []
-    for segment in fail_segments:
-        if not isinstance(segment, dict):
-            continue
-        start = float(segment.get(start_key, np.nan))
-        end = float(segment.get(end_key, np.nan))
-        if not np.isfinite(start) or not np.isfinite(end):
-            continue
-        lo, hi = sorted((start, end))
-        spans.append((lo, hi))
-    return spans
-
-
-def _step3_fail_spans(metrics_payload: dict, xlabel: str) -> list[tuple[float, float]]:
-    pose_metrics = metrics_payload.get("pose_metrics", {}) if isinstance(metrics_payload, dict) else {}
-    valid = pose_metrics.get("valid_segment", {}) if isinstance(pose_metrics, dict) else {}
-    step3 = valid.get("step3", {}) if isinstance(valid, dict) else {}
-    success = step3.get("success", {}) if isinstance(step3, dict) else {}
-    return _fail_spans_from_success(success, xlabel)
-
-
 def _pose_relation_title_label(relation: str) -> str:
     mapping = {
         "translation_part": "translation part",
@@ -148,7 +114,6 @@ def _plot_raw_with_stats(
     xlabel: str,
     line_label: str,
     out_path: Path,
-    fail_spans: list[tuple[float, float]] | None = None,
     keep_open: bool = False,
 ) -> None:
     n = min(x_vals.size, errors.size)
@@ -159,16 +124,6 @@ def _plot_raw_with_stats(
     y = np.asarray(errors[:n], dtype=float)
     fig = plt.figure(figsize=(11, 6.0))
     ax = fig.add_subplot(111)
-    if fail_spans:
-        for idx, (start, end) in enumerate(fail_spans):
-            ax.axvspan(
-                start,
-                end,
-                color="#e74c3c",
-                alpha=0.14,
-                linewidth=0.0,
-                label="fail segment" if idx == 0 else None,
-            )
     ax.plot(x, y, linewidth=1.4, color="gray", label=line_label)
 
     mean_v = float(stats.get("mean", np.nan))
@@ -203,7 +158,7 @@ def _plot_raw_with_stats(
     handles, labels = ax.get_legend_handles_labels()
     ordered_handles = []
     ordered_labels = []
-    for name in ("fail segment", line_label, "rmse", "median", "mean", "std"):
+    for name in (line_label, "rmse", "median", "mean", "std"):
         if name in labels:
             idx = labels.index(name)
             ordered_handles.append(handles[idx])
@@ -225,33 +180,21 @@ def _plot_raw(
     ylabel: str,
     xlabel: str,
     out_path: Path,
-    fail_spans: list[tuple[float, float]] | None = None,
     keep_open: bool = False,
 ) -> None:
-    fig = plt.figure(figsize=(11, 4.8))
-    ax = fig.add_subplot(111)
-    if fail_spans:
-        for idx, (start, end) in enumerate(fail_spans):
-            ax.axvspan(
-                start,
-                end,
-                color="#e74c3c",
-                alpha=0.14,
-                linewidth=0.0,
-                label="fail segment" if idx == 0 else None,
-            )
+    plt.figure(figsize=(11, 4.8))
     for label, xvals, errs in traces:
         n = min(xvals.size, errs.size)
         if n == 0:
             continue
-        ax.plot(xvals[:n], errs[:n], label=label, linewidth=1.4)
-    ax.set_title(title)
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel(ylabel)
-    ax.grid(True, linestyle=":", alpha=0.5)
-    ax.legend(loc="best")
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=180, bbox_inches="tight")
+        plt.plot(xvals[:n], errs[:n], label=label, linewidth=1.4)
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.grid(True, linestyle=":", alpha=0.5)
+    plt.legend(loc="best")
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=180, bbox_inches="tight")
     if not keep_open:
         plt.close()
 
@@ -398,14 +341,12 @@ def generate_metric_plots(
             stage_errors.append((stage, errors))
 
         raw_path = out_dir / f"{metric_kind}_{slug}_raw.png"
-        fail_spans = _step3_fail_spans(metrics_payload, x_label) if metric_kind == "ape" else None
         _plot_raw(
             traces,
             title=f"{metric_kind.upper()} raw values ({relation})",
             ylabel=ylabel,
             xlabel=x_label,
             out_path=raw_path,
-            fail_spans=fail_spans,
             keep_open=keep_open,
         )
         produced.append(raw_path)
@@ -487,7 +428,6 @@ def generate_time_rpe_metric_plots(
         ylabel=ylabel,
         xlabel=x_label,
         out_path=raw_path,
-        fail_spans=_step3_fail_spans(metrics_payload, x_label),
         keep_open=keep_open,
     )
     produced.append(raw_path)
@@ -554,7 +494,6 @@ def generate_ape_stage_raw_plot(
         xlabel=x_label,
         line_label=line_label,
         out_path=out_path,
-        fail_spans=_step3_fail_spans(metrics_payload, x_label),
         keep_open=keep_open,
     )
     return out_path if out_path.exists() else None

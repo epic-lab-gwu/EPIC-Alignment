@@ -155,27 +155,6 @@ python -m epa.ov_eval_compat error_comparison se3 \
   --epa-success-global-gate-percentile 5
 ```
 
-Try a scale-aware global failed-case gate:
-
-```bash
-python -m epa.ov_eval_compat error_comparison se3 \
-  /path/to/gt_folder \
-  /path/to/algorithm_pose_folder \
-  --epa-success-global-gate-mode scale_aware
-```
-
-Scale-aware mode computes the effective gate as:
-
-```text
-clamp(GT path length * 0.05, 2 m, 100 m)
-```
-
-This can be useful when a fixed `30 m` gate is too strict for long trajectories
-or too loose for short trajectories. The default remains `fixed` for backwards
-comparability. The terminal output includes an `SR config` line showing the GT
-path length, duration, adaptive threshold, and effective global gate used for
-each case.
-
 Adjust local drift detection:
 
 ```bash
