@@ -1,10 +1,10 @@
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+
+# 如果还有 __version__[build-system]
+nano src/epa/__init__.pyrequires = ["setuptools>=68", "wheel"] build-backend = "setuptools.build_meta"
 
 [project]
 name = "epica"
-version = "0.1.8"
+version = "0.1.9"
 description = "Trajectory alignment and evaluation toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
