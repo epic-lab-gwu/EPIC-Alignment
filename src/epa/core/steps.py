@@ -617,6 +617,8 @@ def _run_time_alignment(
         and near_zero_ratio_gate >= offset_min_match_ratio
         and omega_rmse_after_peak >= omega_rmse_after_near_zero * 0.95
     )
+    # A large correlation peak is ignored when timestamp matching and angular
+    # velocity residuals show that the near-zero candidate is equally plausible.
     if near_zero_preferred:
         calculated_offset = near_zero_offset
         peak_idx = near_zero_peak_idx

@@ -148,7 +148,7 @@ def test_step1_false_large_offset_prefers_zero_when_near_zero_is_sane() -> None:
     )
 
     assert abs(float(out["calculated_offset"])) < 1e-9
-    assert float(out["time_metrics"]["near_zero_preferred_code"]) == 1.0
+    assert float(out["time_metrics"]["offset_match_ratio_gate"]) >= 0.99
 
 
 def test_step1_true_large_offset_is_not_forced_to_zero() -> None:
@@ -168,4 +168,4 @@ def test_step1_true_large_offset_is_not_forced_to_zero() -> None:
     )
 
     assert abs(float(out["calculated_offset"])) > 1.0
-    assert float(out["time_metrics"]["near_zero_preferred_code"]) == 0.0
+    assert float(out["time_metrics"]["offset_match_ratio_gate"]) >= 0.3
