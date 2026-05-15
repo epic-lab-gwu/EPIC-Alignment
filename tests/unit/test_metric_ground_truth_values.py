@@ -250,4 +250,3 @@ def test_ground_truth_multiple_failures_preserve_recovered_segments() -> None:
     np.testing.assert_allclose(valid["success"]["success_rate_distance"], 0.25)
     assert valid["rpe"]["pair_count"] == 2
     np.testing.assert_allclose(valid["ape"]["translation_part"]["rmse"], 0.0)
-
