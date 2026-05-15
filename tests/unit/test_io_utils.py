@@ -9,6 +9,7 @@ from epa.core.io_utils import (
     load_estimation_tum,
     load_reference_trajectory,
     load_vicon_csv,
+    make_output_dir,
     write_result_bundle,
 )
 
@@ -62,6 +63,39 @@ def test_load_estimation_trajectory_auto_csv(tmp_path: Path) -> None:
     np.testing.assert_allclose(quat[:, 3], np.array([1.0, 1.0]))
 
 
+def test_load_reference_trajectory_auto_csv_accepts_xyz_columns(tmp_path: Path) -> None:
+    csv_path = tmp_path / "gt.csv"
+    csv_path.write_text(
+        "timestamp,x,y,z,qx,qy,qz,qw\n"
+        "0,0,0,0,0,0,0,1\n"
+        "1,1,2,3,0,0,0,1\n",
+        encoding="utf-8",
+    )
+
+    t, pos, quat = load_reference_trajectory(csv_path, gt_format="auto")
+
+    np.testing.assert_allclose(t, np.array([0.0, 1.0]))
+    np.testing.assert_allclose(pos[1], np.array([1.0, 2.0, 3.0]))
+    np.testing.assert_allclose(quat[:, 3], np.array([1.0, 1.0]))
+
+
+def test_load_estimation_tum_sorts_and_deduplicates_timestamps(tmp_path: Path) -> None:
+    traj_path = tmp_path / "traj.tum"
+    traj_path.write_text(
+        "2 2 0 0 0 0 0 1\n"
+        "1 1 0 0 0 0 0 1\n"
+        "1 99 0 0 0 0 0 1\n"
+        "3 nan 0 0 0 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    t, pos, quat = load_estimation_tum(traj_path)
+
+    np.testing.assert_allclose(t, np.array([1.0, 2.0]))
+    np.testing.assert_allclose(pos[:, 0], np.array([1.0, 2.0]))
+    np.testing.assert_allclose(quat[:, 3], np.array([1.0, 1.0]))
+
+
 def test_load_estimation_kitti(tmp_path: Path) -> None:
     kitti_path = tmp_path / "traj_kitti.txt"
     kitti_path.write_text(
@@ -89,6 +123,22 @@ def test_load_estimation_trajectory_auto_kitti(tmp_path: Path) -> None:
 
     np.testing.assert_allclose(t, np.array([0.0, 1.0]))
     np.testing.assert_allclose(pos[:, 0], np.array([1.0, 2.0]))
+
+
+def test_load_estimation_trajectory_auto_extended_tum(tmp_path: Path) -> None:
+    traj_path = tmp_path / "est.txt"
+    traj_path.write_text(
+        "# timestamp tx ty tz qx qy qz qw covariance...\n"
+        "1403715278.51214 0.002838 0.000289 0.000852 0.826838 0.001484 0.562417 0.004867 0 0 0 0\n"
+        "1403715278.56214 0.006419 0.001126 0.003255 0.823966 0.000233 0.566622 0.004321 0 0 0 0\n",
+        encoding="utf-8",
+    )
+
+    t, pos, quat = load_estimation_trajectory(traj_path, est_format="auto")
+
+    assert t.shape == (2,)
+    np.testing.assert_allclose(pos[:, 0], np.array([0.002838, 0.006419]))
+    np.testing.assert_allclose(np.linalg.norm(quat, axis=1), np.ones(2))
 
 
 def test_load_reference_trajectory_tum(tmp_path: Path) -> None:
@@ -141,3 +191,43 @@ def test_write_result_bundle_creates_zip_with_manifest_and_metrics(tmp_path: Pat
         assert "metrics_summary.csv" in names
         assert "report_zh.md" in names
         assert "report_en.md" in names
+
+
+def test_make_output_dir_retries_existing_timestamp_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDateTime:
+        @classmethod
+        def now(cls):
+            return cls()
+
+        def strftime(self, fmt: str) -> str:
+            return "run_20260101_000000"
+
+    monkeypatch.setattr("epa.core.io_utils.datetime", FixedDateTime)
+    output_root = tmp_path / "outputs"
+
+    first = make_output_dir(tmp_path, output_root=output_root)
+    second = make_output_dir(tmp_path, output_root=output_root)
+    third = make_output_dir(tmp_path, output_root=output_root)
+
+    assert first.name == "run_20260101_000000"
+    assert second.name == "run_20260101_000000_01"
+    assert third.name == "run_20260101_000000_02"
+
+
+def test_make_output_dir_uses_safe_run_label(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FixedDateTime:
+        @classmethod
+        def now(cls):
+            return cls()
+
+        def strftime(self, fmt: str) -> str:
+            return "run_20260101_000000"
+
+    monkeypatch.setattr("epa.core.io_utils.datetime", FixedDateTime)
+    output_root = tmp_path / "outputs"
+
+    first = make_output_dir(tmp_path, output_root=output_root, run_label="demo case/01")
+    second = make_output_dir(tmp_path, output_root=output_root, run_label="demo case/01")
+
+    assert first.name == "run_20260101_000000_demo_case_01"
+    assert second.name == "run_20260101_000000_demo_case_01_01"

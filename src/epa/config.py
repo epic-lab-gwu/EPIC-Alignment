@@ -5,8 +5,8 @@ from typing import List
 
 @dataclass(frozen=True)
 class PipelineOptions:
-    gt_csv: str = "example_data/example_groundtruth.csv"
-    gt_format: str = "csv"
+    gt_csv: str = ""
+    gt_format: str = "auto"
     gt_topic: str = ""
     est_path: str = ""
     est_format: str = "auto"
@@ -33,6 +33,8 @@ class PipelineOptions:
     plot_ape_relation: str = "translation_part"
     plot_rpe_relation: str = "translation_part"
     save_results: str = ""
+    downsample_hz: float = 100.0
+    no_downsample: bool = False
 
     def to_legacy_argv(self) -> List[str]:
         argv = [
@@ -72,6 +74,8 @@ class PipelineOptions:
             self.plot_ape_relation,
             "--plot-rpe-relation",
             self.plot_rpe_relation,
+            "--downsample-hz",
+            str(self.downsample_hz),
         ]
         if self.save_results:
             argv.extend(["--save-results", self.save_results])
@@ -87,6 +91,8 @@ class PipelineOptions:
             argv.append("--rpe-all-pairs")
         if self.rpe_pairs_from_reference:
             argv.append("--rpe-pairs-from-reference")
+        if self.no_downsample:
+            argv.append("--no-downsample")
         if self.t_start is not None:
             argv.extend(["--t-start", str(self.t_start)])
         if self.t_end is not None:

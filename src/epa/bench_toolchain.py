@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -37,9 +38,15 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the EPA multi-case full benchmark workflow in one command."
     )
     p.add_argument(
-        "--cases-root",
-        default="",
+        "cases_root_pos",
+        nargs="?",
+        metavar="cases_root",
         help="Root directory containing benchmark/ and GT/ folders.",
+    )
+    p.add_argument(
+        "--cases-root",
+        default=os.getenv("EPA_CASES_ROOT", "").strip() or os.getenv("EPA_ALIGNANYTHING_ROOT", "").strip(),
+        help="Root directory containing benchmark/ and GT/ folders. Default: $EPA_CASES_ROOT.",
     )
     p.add_argument(
         "--output-root",
@@ -63,8 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--evo-repo",
-        default="/home/yifu/evo",
-        help="Local evo repository path.",
+        default=os.getenv("EVO_REPO", "").strip(),
+        help="Local evo repository path. Default: $EVO_REPO.",
     )
     p.add_argument(
         "--t-max-diff",
@@ -96,9 +103,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of cases to run.",
     )
     p.add_argument(
+        "-j",
+        "--jobs",
+        default="auto",
+        help="Number of benchmark cases to run in parallel, or 'auto'. Default: auto.",
+    )
+    p.add_argument(
         "--dry-run",
         action="store_true",
         help="Only discover cases without executing the benchmark.",
+    )
+    p.add_argument(
+        "--keep-prepared",
+        action="store_true",
+        help="Keep prepared_tum/ files for later case reruns.",
     )
     return p
 
@@ -106,9 +124,10 @@ def build_parser() -> argparse.ArgumentParser:
 def run(args: argparse.Namespace) -> int:
     cwd = Path.cwd().resolve()
     repo_root = Path(args.repo_root).expanduser().resolve()
+    cases_root_value = str(getattr(args, "cases_root_pos", "") or getattr(args, "cases_root", "")).strip()
     cases_root = (
-        Path(args.cases_root).expanduser().resolve()
-        if str(args.cases_root).strip()
+        Path(cases_root_value).expanduser().resolve()
+        if cases_root_value
         else None
     )
     output_root = (
@@ -130,19 +149,22 @@ def run(args: argparse.Namespace) -> int:
         str(Path(args.python_bin).expanduser()),
         "--epa-src",
         str(args.epa_src),
-        "--evo-repo",
-        str(Path(args.evo_repo).expanduser()),
         "--t-max-diff",
         str(float(args.t_max_diff)),
     ]
+    if str(args.evo_repo).strip():
+        bench_cmd.extend(["--evo-repo", str(Path(args.evo_repo).expanduser())])
     if cases_root is not None:
         bench_cmd.extend(["--cases-root", str(cases_root)])
     if str(args.methods).strip():
         bench_cmd.extend(["--methods", str(args.methods)])
     if int(args.limit) > 0:
         bench_cmd.extend(["--limit", str(int(args.limit))])
+    bench_cmd.extend(["--jobs", str(args.jobs)])
     if bool(args.dry_run):
         bench_cmd.append("--dry-run")
+    if bool(args.keep_prepared):
+        bench_cmd.append("--keep-prepared")
     for pattern in args.case_pattern:
         if str(pattern).strip():
             bench_cmd.extend(["--case-pattern", str(pattern)])

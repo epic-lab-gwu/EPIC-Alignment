@@ -17,7 +17,7 @@ def _write_tum(path: Path, x_offset: float = 0.0, t_offset: float = 0.0) -> None
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def test_ape_rpe_default_plot_mode_aligns_with_evo() -> None:
+def test_ape_rpe_default_plot_mode_is_xyz() -> None:
     ape_args = ape_tool._build_parser().parse_args(["tum", "ref.tum", "est.tum"])
     rpe_args = rpe_tool._build_parser().parse_args(["tum", "ref.tum", "est.tum"])
     assert ape_args.plot_mode == "xyz"
@@ -152,6 +152,39 @@ def test_rpe_tool_tum_eval(tmp_path: Path) -> None:
     rmse = float(payload["pose_metrics"]["rpe"]["raw"]["translation_part"]["rmse"])
     assert pair_count > 0
     assert rmse < 1e-9
+
+
+def test_rpe_tool_tum_eval_seconds_delta(tmp_path: Path) -> None:
+    ref = tmp_path / "ref.tum"
+    est = tmp_path / "est.tum"
+    _write_tum(ref, x_offset=0.0, t_offset=0.0)
+    _write_tum(est, x_offset=0.0, t_offset=0.0)
+
+    out_dir = tmp_path / "out_rpe_seconds"
+    parser = rpe_tool._build_parser()
+    args = parser.parse_args(
+        [
+            "--pose_relation",
+            "trans_part",
+            "--delta",
+            "1",
+            "--delta_unit",
+            "s",
+            "--all_pairs",
+            "--out_dir",
+            str(out_dir),
+            "tum",
+            str(ref),
+            str(est),
+            "--t_max_diff",
+            "0.05",
+        ]
+    )
+
+    assert rpe_tool.run(args) == 0
+    payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
+    assert payload["pose_metrics"]["rpe_config"]["delta_unit"] == "s"
+    assert int(payload["pose_metrics"]["rpe"]["raw"]["pair_count"]) == 3
 
 
 def test_rpe_tool_accepts_options_after_subcommand(tmp_path: Path) -> None:

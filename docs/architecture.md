@@ -29,6 +29,14 @@ At a high level, the modular pipeline does this:
 6. compute APE and RPE metrics
 7. write metrics, reports, plots, and optional result bundles
 
+## System Diagram
+
+The current architecture can be read as three related entry paths: the main `epa` pipeline, the `epa_bench` harness, and the `ov_eval` compatibility layer.
+
+![EPA system diagram](images/architecture_system_diagram_v2.png)
+
+*System-level view of the current EPA architecture, including the main modular pipeline, benchmark harness reuse, and the `ov_eval_compat` `se3` path that now reuses EPA Step 1/2/3 internals.*
+
 ## Main Pipeline Stages
 
 ### Step 1: Time Alignment

@@ -48,13 +48,9 @@ python -m pip install "epica[ros]"
 For ROS logs, you usually need to provide a topic:
 
 ```bash
-epa \
-  --gt-csv /path/to/run.bag \
-  --gt-format bag \
-  --gt-topic /vicon/pose \
-  --est-path /path/to/run.bag \
-  --est-format bag \
-  --est-topic /odom
+epa /path/to/run.bag /path/to/run.bag \
+  --gt-format bag --gt-topic /vicon/pose \
+  --est-format bag --est-topic /odom
 ```
 
 For `epa_traj`, you can also encode the topic inside each trajectory spec:
@@ -96,38 +92,29 @@ epa_config --help
 
 Common options:
 
-- `--gt-csv`: reference trajectory path
+- positional `<gt_file>` or `--gt`: reference trajectory path
 - `--gt-format`: reference format
 - `--gt-topic`: reference topic for ROS logs
-- `--est-path`: estimation trajectory path
+- positional `<est_file>` or `--est`: estimation trajectory path
 - `--est-format`: estimation format
 - `--est-topic`: estimation topic for ROS logs
 - `--t-max-diff`: maximum timestamp association gap
 - `--t-offset`: constant offset applied to estimation timestamps before sync
 - `--plot` and `--no-plot`: enable or disable metric plot generation
 - `--save-results`: write a bundled result zip
+- `--save-full-metrics`: keep full per-sample APE/RPE arrays in `metrics.json`
 - `--rerun`: enable Rerun logging
 
 Minimal example:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --t-max-diff 0.02 \
-  --plot
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
 With result bundle export:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt \
   --save-results outputs/results/run_a.zip
 ```
 
@@ -227,7 +214,7 @@ Common options:
 
 - `--pose_relation`: metric relation such as `trans_part`, `rot_part`, or `point_distance_error_ratio`
 - `--delta`: separation between pose pairs
-- `--delta_unit`: `f` for frames, `m` for meters, `d` for degrees, `r` for radians
+- `--delta_unit`: `f` for frames, `m` for meters, `d` for degrees, `r` for radians, `s` for seconds
 - `--delta_tol`: relative tolerance used in all-pairs mode for non-frame deltas
 - `--all_pairs`: use all candidate pairs
 - `--pairs_from_reference`: build RPE pairs from the reference instead of the estimate
@@ -260,6 +247,16 @@ epa_rpe tum gt.tum est.tum \
   --pose_relation trans_part \
   --delta 1.0 \
   --delta_unit m \
+  --all_pairs
+```
+
+Time-based RPE example:
+
+```bash
+epa_rpe tum gt.tum est.tum \
+  --pose_relation trans_part \
+  --delta 1.0 \
+  --delta_unit s \
   --all_pairs
 ```
 
@@ -365,12 +362,7 @@ epa_fig outputs/ape_plot.json --save_plot outputs/ape_rerender.png
 Run one pair end to end:
 
 ```bash
-epa \
-  --engine modular \
-  --gt-csv example_data/example_groundtruth.csv \
-  --est-path example_data/example_estimation.txt \
-  --est-format tum \
-  --plot
+epa example_data/example_groundtruth.csv example_data/example_estimation.txt
 ```
 
 Inspect alignment before metric evaluation:

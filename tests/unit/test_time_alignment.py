@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.signal import correlate
@@ -10,6 +12,7 @@ from epa.core.time_alignment import (
     interpolate_quat_slerp,
     matching_time_indices,
 )
+from epa.core.steps import _run_time_alignment
 
 
 def test_matching_time_indices_respects_offset() -> None:
@@ -77,6 +80,12 @@ def _build_pose_with_duplicate_timestamps(n: int = 600) -> tuple[np.ndarray, np.
     return t_dup, q_dup
 
 
+def _quat_from_omega_z(t: np.ndarray, omega: np.ndarray) -> np.ndarray:
+    dt = np.diff(t, prepend=t[0])
+    yaw = np.cumsum(np.maximum(omega, 0.01) * dt)
+    return R.from_euler("z", yaw).as_quat()
+
+
 def test_get_angular_velocity_norm_filters_duplicate_timestamps() -> None:
     t_dup, q_dup = _build_pose_with_duplicate_timestamps()
     t_mid, omega = get_angular_velocity_norm(t_dup, q_dup)
@@ -118,3 +127,45 @@ def test_step1_correlation_stays_near_zero_with_duplicate_timestamps() -> None:
 
     assert abs(offset) < 0.01
     assert ratio > 0.95
+
+
+def test_step1_false_large_offset_prefers_zero_when_near_zero_is_sane() -> None:
+    t = np.arange(0.0, 30.0, 0.05)
+    rng = np.random.default_rng(0)
+    kernel = np.ones(21) / 21
+    omega_gt = np.convolve(np.abs(rng.normal(size=t.size)), kernel, mode="same") + 0.1
+    omega_est = np.convolve(np.abs(rng.normal(size=t.size)), kernel, mode="same") + 0.1
+
+    out = _run_time_alignment(
+        t_gt=t,
+        quat_gt=_quat_from_omega_z(t, omega_gt),
+        t_est=t,
+        quat_est=_quat_from_omega_z(t, omega_est),
+        dt_resample=0.01,
+        offset_search_window_s=0.0,
+        offset_min_match_ratio=0.3,
+        evo_match_max_diff_s=0.02,
+    )
+
+    assert abs(float(out["calculated_offset"])) < 1e-9
+    assert float(out["time_metrics"]["offset_match_ratio_gate"]) >= 0.99
+
+
+def test_step1_true_large_offset_is_not_forced_to_zero() -> None:
+    t_gt = np.arange(0.0, 30.0, 0.05)
+    yaw = 0.3 * np.sin(0.7 * t_gt) + 0.02 * t_gt * t_gt
+    quat = R.from_euler("z", yaw).as_quat()
+
+    out = _run_time_alignment(
+        t_gt=t_gt,
+        quat_gt=quat,
+        t_est=t_gt + 5.0,
+        quat_est=quat,
+        dt_resample=0.01,
+        offset_search_window_s=0.0,
+        offset_min_match_ratio=0.3,
+        evo_match_max_diff_s=0.02,
+    )
+
+    assert abs(float(out["calculated_offset"])) > 1.0
+    assert float(out["time_metrics"]["offset_match_ratio_gate"]) >= 0.3

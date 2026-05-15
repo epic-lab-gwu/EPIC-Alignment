@@ -153,6 +153,39 @@ legend {
   margin-bottom: 1rem;
 }
 
+.rst-content img {
+  display: block;
+  margin: 1rem auto 1.25rem;
+  max-width: min(100%, 920px);
+  height: auto;
+}
+
+.rst-content p > img:only-child {
+  margin-top: 0.4rem;
+}
+
+.rst-content .doc-image-grid {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0 1.25rem;
+}
+
+.rst-content .doc-image-grid.two-col {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.rst-content .doc-image-grid img {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  .rst-content .doc-image-grid.two-col {
+    grid-template-columns: 1fr;
+  }
+}
+
 .rst-content p,
 .rst-content li {
   line-height: 1.7;

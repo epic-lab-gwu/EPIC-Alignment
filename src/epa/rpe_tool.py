@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from epa.config_cli import parse_args_with_config
-from epa.core.evaluation import RELATION_UNITS, compute_rpe_evo_style, normalize_pose_relation
+from epa.core.evaluation import RELATION_UNITS, compute_rpe, normalize_pose_relation
 from epa.core.io_utils import save_metrics, to_builtin, write_result_bundle
 from epa.metric_cli_common import (
     MetricInputs,
@@ -321,9 +321,9 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
     algo.add_argument(
         "-u",
         "--delta_unit",
-        choices=["f", "m", "d", "r"],
+        choices=["f", "m", "d", "r", "s"],
         default=dflt("f"),
-        help="unit of delta: frames/meters/degrees/radians",
+        help="unit of delta: frames/meters/degrees/radians/seconds",
     )
     algo.add_argument("--all_pairs", action="store_true", default=dflt(False), help="use all candidate pairs")
     algo.add_argument(
@@ -339,7 +339,7 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
         "--plot",
         action="store_true",
         default=dflt(False),
-        help="generate raw/map plots (evo-style: in TTY sessions also opens interactive window)",
+        help="generate raw/map plots (in TTY sessions also opens interactive window)",
     )
     output.add_argument(
         "--plot_mode",
@@ -537,7 +537,7 @@ def run(args: argparse.Namespace) -> int:
     ref_eval_pos, ref_eval_quat = project_to_plane(data.pos_ref, data.quat_ref, project_plane)
     est_eval_pos, est_eval_quat = project_to_plane(est_aligned_pos, est_aligned_quat, project_plane)
 
-    rpe_block = compute_rpe_evo_style(
+    rpe_block = compute_rpe(
         pos_ref=ref_eval_pos,
         quat_ref=ref_eval_quat,
         pos_est=est_eval_pos,
@@ -547,6 +547,7 @@ def run(args: argparse.Namespace) -> int:
         rel_delta_tol=float(getattr(args, "delta_tol", 0.1)),
         all_pairs=bool(getattr(args, "all_pairs", False)),
         pairs_from_reference=bool(getattr(args, "pairs_from_reference", False)),
+        timestamps=np.asarray(data.t_ref, dtype=float),
         include_raw=True,
     )
     seconds_from_start = np.asarray(data.t_ref, dtype=float) - float(data.t_ref[0])
