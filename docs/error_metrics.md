@@ -116,20 +116,9 @@ A stable constant bias is not treated as drift by itself. For example, if a
 trajectory stays consistently offset by `6 m` but its relative motion is stable,
 that bias contributes to ATE but does not by itself create a drift/fail segment.
 
-EPA also applies a global failed-case gate. By default, if the 5th percentile
-Step-3 APE translation error is above `30 m`, the case is treated as globally
-failed and drift-valid metrics are reported as `nan`.
-
-For larger or smaller trajectories, EPA can also use a scale-aware gate:
-
-```text
-effective gate = clamp(GT path length * path_ratio, min_m, max_m)
-```
-
-The current scale-aware defaults are `path_ratio=0.05`, `min_m=2 m`, and
-`max_m=100 m`. The default mode remains `fixed` so existing results stay
-comparable. Use scale-aware mode when a fixed meter threshold is too strict for
-long trajectories or too loose for short trajectories.
+EPA also applies a global failed-case gate. If the 5th percentile Step-3 APE
+translation error is above `30 m`, the case is treated as globally failed and
+drift-valid metrics are reported as `nan`.
 
 EPA still estimates and records a per-case APE knee threshold, clamped to
 `5-30 m` by default, as tolerance metadata for success-rate reporting and
@@ -170,7 +159,6 @@ Example `error_comparison se3` output:
         RPE: seg 40 - median_ori = 2.6837 | median_pos = 2.5001 (1065 samples)
         RPE: seg 48 - median_ori = 2.6756 | median_pos = 2.4689 (1002 samples)
         RPE time 1s - mean_ori = 3.350 | mean_pos = 2.223 (1122 samples)
-        SR config: GT path=475.20m | time=475.20s | threshold=20.18m(adaptive_knee) | gate=30.00m(fixed)
         SR - distance = 53.36% | time = 49.65%
 [COMP]: processing svo_mono algorithm => R_12_10cp dataset
         ATE: mean_ori = 23.106 | mean_pos = 1737.041 (1 runs)
@@ -182,7 +170,6 @@ Example `error_comparison se3` output:
         RPE: seg 40 - median_ori = 1.0295 | median_pos = 36.9502 (236 samples)
         RPE: seg 48 - median_ori = 1.2350 | median_pos = 37.4510 (216 samples)
         RPE time 1s - mean_ori = 2.907 | mean_pos = 122.646 (2375 samples)
-        SR config: GT path=1014.17m | time=1011.45s | threshold=30.00m(adaptive_knee) | gate=30.00m(fixed)
         SR - distance = 0.00% | time = 0.00%
 [COMP]: processing svo_mono algorithm => R_13_15cp dataset
         ATE: mean_ori = 9.567 | mean_pos = 29.527 (1 runs)
@@ -194,7 +181,6 @@ Example `error_comparison se3` output:
         RPE: seg 40 - median_ori = 1.5133 | median_pos = 2.2573 (3439 samples)
         RPE: seg 48 - median_ori = 1.5520 | median_pos = 2.3947 (3400 samples)
         RPE time 1s - mean_ori = 2.222 | mean_pos = 3.059 (3036 samples)
-        SR config: GT path=1172.17m | time=1404.10s | threshold=24.34m(adaptive_knee) | gate=30.00m(fixed)
         SR - distance = 71.28% | time = 69.38%
 ============================================
 TOOL SOURCE: epa=3, ov_eval=0
@@ -259,10 +245,6 @@ Key observations from this example:
 
 - `TOOL SOURCE: epa=3, ov_eval=0` means all three sequences were evaluated by
   EPA Step 3; none fell back to ov_eval-style SE3.
-- `SR config` shows the reference trajectory scale and the actual thresholds
-  used for drift-valid success rate. `GT path` is the reference path length,
-  `threshold` is the adaptive APE tolerance metadata, and `gate` is the global
-  failed-case gate.
 - `R_12_10cp` has full-trajectory ATE translation error `1737.041 m` and
   one-second time RPE translation error `122.646 m`, so it is a severe failure
   case.
