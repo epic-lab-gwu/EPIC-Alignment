@@ -470,9 +470,7 @@ def _evaluate_pair(
         except Exception as exc:
             param_msg = (
                 f"epa_dt_resample={float(epa_dt_resample):.6g}, "
-                f"epa_offset_min_match_ratio={float(epa_offset_min_match_ratio):.6g}, "
-                f"epa_downsample_hz={float(epa_downsample_hz):.6g}, "
-                f"epa_quat_interp={epa_quat_interp}"
+                f"epa_offset_min_match_ratio={float(epa_offset_min_match_ratio):.6g}"
             )
             if bool(epa_no_fallback):
                 raise RuntimeError(
@@ -1540,13 +1538,13 @@ def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
         "--epa-downsample-hz",
         type=float,
         default=_DEFAULT_EPA_DOWNSAMPLE_HZ,
-        help="EPA Step2/3 solve and metric downsample cap. Use 0 to disable.",
+        help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--epa-quat-interp",
         choices=["linear", "slerp"],
         default=_DEFAULT_EPA_QUAT_INTERP,
-        help="Quaternion interpolation mode for EPA Step2/3 trajectory preparation.",
+        help=argparse.SUPPRESS,
     )
     p.add_argument(
         "--epa-no-fallback",
