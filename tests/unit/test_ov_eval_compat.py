@@ -19,7 +19,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.8"
+    assert epa.__version__ == "0.1.9"
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -128,8 +128,16 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
             "40",
             "--epa-success-threshold-trim-percentile",
             "90",
+            "--epa-success-global-gate-mode",
+            "scale_aware",
             "--epa-success-global-gate-m",
             "35",
+            "--epa-success-global-gate-path-ratio",
+            "0.07",
+            "--epa-success-global-gate-min-m",
+            "3",
+            "--epa-success-global-gate-max-m",
+            "120",
             "--epa-success-global-gate-percentile",
             "10",
             "--epa-success-drift-rpe-1s-m",
@@ -152,7 +160,11 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
     assert args.epa_success_threshold_min_m == 2
     assert args.epa_success_threshold_max_m == 40
     assert args.epa_success_threshold_trim_percentile == 90
+    assert args.epa_success_global_gate_mode == "scale_aware"
     assert args.epa_success_global_gate_m == 35
+    assert args.epa_success_global_gate_path_ratio == 0.07
+    assert args.epa_success_global_gate_min_m == 3
+    assert args.epa_success_global_gate_max_m == 120
     assert args.epa_success_global_gate_percentile == 10
     assert args.epa_success_drift_rpe_1s_m == 3
     assert args.epa_success_drift_ape_slope_mps == 1.5
@@ -297,3 +309,32 @@ def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(
     assert "TOOL SOURCE: epa=1, ov_eval=1" in out
     assert "EVAL SOURCE NON-EPA RUNS: algo/seq/run_ov.txt:ov_eval_style" in out
     assert "DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)" in out
+    assert "& \\textbf{Average} \\\\hline" in out
+
+
+def test_error_comparison_skips_failed_small_trajectory_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    gt_root = tmp_path / "gt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    gt_root.mkdir()
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_root / "seq.txt", t, gt_pos, quat)
+    (run_dir / "bad_small.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**_kwargs):
+        raise ValueError("Unable to associate enough timestamps")
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_comparison_parser().parse_args(["se3", str(gt_root), str(alg_root)])
+
+    assert run_error_comparison(args) == 0
+    out = capsys.readouterr().out
+    assert "[warn] skipping bad_small.txt" in out
+    assert "no valid runs for algo/seq" in out
