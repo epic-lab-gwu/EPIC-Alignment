@@ -7,6 +7,7 @@ from scipy.spatial.transform import Rotation as R
 import epa
 from epa.ov_eval_compat import _format_source_counts
 from epa.ov_eval_compat import (
+    _build_error_dataset_parser,
     _build_error_comparison_parser,
     _compute_time_rpe_1s,
     _drift_rate_percent,
@@ -15,6 +16,7 @@ from epa.ov_eval_compat import (
     _evaluate_pair_ov_style,
     _format_source_details,
     run_error_comparison,
+    run_error_dataset,
 )
 
 
@@ -310,6 +312,7 @@ def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(
     assert "EVAL SOURCE NON-EPA RUNS: algo/seq/run_ov.txt:ov_eval_style" in out
     assert "DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)" in out
     assert "& \\textbf{Average} \\\\hline" in out
+    assert "(2/2 valid runs)" in out
 
 
 def test_error_comparison_skips_failed_small_trajectory_runs(
@@ -338,3 +341,33 @@ def test_error_comparison_skips_failed_small_trajectory_runs(
     out = capsys.readouterr().out
     assert "[warn] skipping bad_small.txt" in out
     assert "no valid runs for algo/seq" in out
+    assert "FAILED RUNS: algo/seq/bad_small.txt:failed" in out
+    assert "EVAL SOURCE NON-EPA RUNS" not in out
+
+
+def test_error_dataset_skips_failed_small_trajectory_runs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    gt_path = tmp_path / "seq.txt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_path, t, gt_pos, quat)
+    (run_dir / "bad_small.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**_kwargs):
+        raise ValueError("Unable to associate enough timestamps")
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_dataset_parser().parse_args(["se3", str(gt_path), str(alg_root)])
+
+    assert run_error_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert "[warn] skipping bad_small.txt" in out
+    assert "no valid runs for algo/seq" in out
+    assert "failed_runs: bad_small.txt:failed" in out
