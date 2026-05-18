@@ -768,20 +768,20 @@ def run_format_converter(args: argparse.Namespace) -> int:
 
 
 def run_error_singlerun(args: argparse.Namespace) -> int:
-    success_threshold_m = float(getattr(args, "epa_success_threshold_m", 10.0))
-    success_threshold_mode = str(getattr(args, "epa_success_threshold_mode", "adaptive_knee"))
-    success_threshold_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
-    success_threshold_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
-    success_threshold_trim_percentile = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
-    success_global_gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
-    success_global_gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
-    success_global_gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
-    success_global_gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
-    success_global_gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
-    success_global_gate_percentile = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
-    success_drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
-    success_drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
-    success_drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
+    sr_m = float(getattr(args, "epa_success_threshold_m", 10.0))
+    sr_mode = str(getattr(args, "epa_success_threshold_mode", "adaptive_knee"))
+    sr_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
+    sr_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
+    sr_trim_pct = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
+    gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
+    gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
+    gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
+    gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
+    gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
+    gate_pct = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
+    drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
+    drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
+    drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
     eval_res = _evaluate_pair(
         file_gt=Path(args.file_gt).expanduser(),
         file_est=Path(args.file_est).expanduser(),
@@ -829,20 +829,20 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         gt_quat=np.asarray(eval_res["gt_quat"], dtype=float),
         est_pos=np.asarray(eval_res["est_pos"], dtype=float),
         est_quat=np.asarray(eval_res["est_quat"], dtype=float),
-        threshold_m=success_threshold_m,
-        threshold_mode=success_threshold_mode,
-        threshold_min_m=success_threshold_min_m,
-        threshold_max_m=success_threshold_max_m,
-        threshold_trim_percentile=success_threshold_trim_percentile,
-        global_gate_mode=success_global_gate_mode,
-        global_gate_m=success_global_gate_m,
-        global_gate_path_ratio=success_global_gate_path_ratio,
-        global_gate_min_m=success_global_gate_min_m,
-        global_gate_max_m=success_global_gate_max_m,
-        global_gate_percentile=success_global_gate_percentile,
-        drift_rpe_1s_m=success_drift_rpe_1s_m,
-        drift_ape_slope_mps=success_drift_ape_slope_mps,
-        drift_ape_jump_m=success_drift_ape_jump_m,
+        threshold_m=sr_m,
+        threshold_mode=sr_mode,
+        threshold_min_m=sr_min_m,
+        threshold_max_m=sr_max_m,
+        threshold_trim_percentile=sr_trim_pct,
+        global_gate_mode=gate_mode,
+        global_gate_m=gate_m,
+        global_gate_path_ratio=gate_path_ratio,
+        global_gate_min_m=gate_min_m,
+        global_gate_max_m=gate_max_m,
+        global_gate_percentile=gate_pct,
+        drift_rpe_1s_m=drift_rpe_1s_m,
+        drift_ape_slope_mps=drift_ape_slope_mps,
+        drift_ape_jump_m=drift_ape_jump_m,
     )
 
     print("======================================")
@@ -884,20 +884,20 @@ def run_error_dataset(args: argparse.Namespace) -> int:
     file_gt = Path(args.file_gt).expanduser()
     alg_root = Path(args.folder_algorithms).expanduser()
     dataset_name = file_gt.stem
-    success_threshold_m = float(getattr(args, "epa_success_threshold_m", 10.0))
-    success_threshold_mode = str(getattr(args, "epa_success_threshold_mode", "adaptive_knee"))
-    success_threshold_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
-    success_threshold_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
-    success_threshold_trim_percentile = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
-    success_global_gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
-    success_global_gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
-    success_global_gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
-    success_global_gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
-    success_global_gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
-    success_global_gate_percentile = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
-    success_drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
-    success_drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
-    success_drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
+    sr_m = float(getattr(args, "epa_success_threshold_m", 10.0))
+    sr_mode = str(getattr(args, "epa_success_threshold_mode", "adaptive_knee"))
+    sr_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
+    sr_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
+    sr_trim_pct = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
+    gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
+    gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
+    gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
+    gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
+    gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
+    gate_pct = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
+    drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
+    drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
+    drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
 
     algo_dirs = sorted([p for p in alg_root.iterdir() if p.is_dir()])
     if len(algo_dirs) == 0:
@@ -927,19 +927,25 @@ def run_error_dataset(args: argparse.Namespace) -> int:
         ate2_pos_rmse: list[float] = []
         rpe_ori_vals: dict[float, list[float]] = {s: [] for s in segments}
         rpe_pos_vals: dict[float, list[float]] = {s: [] for s in segments}
-        time_rpe_ori_vals: list[float] = []
-        time_rpe_pos_vals: list[float] = []
-        success_distance_vals: list[float] = []
-        success_time_vals: list[float] = []
+        time_ori_vals: list[float] = []
+        time_pos_vals: list[float] = []
+        sr_dist_vals: list[float] = []
+        sr_time_vals: list[float] = []
+        failed_details: list[str] = []
 
         for run_file in run_files:
-            ev = _evaluate_pair(
-                file_gt=file_gt,
-                file_est=run_file,
-                align_mode=str(args.align_mode),
-                max_diff=float(args.max_diff),
-                **_epa_eval_kwargs(args),
-            )
+            try:
+                ev = _evaluate_pair(
+                    file_gt=file_gt,
+                    file_est=run_file,
+                    align_mode=str(args.align_mode),
+                    max_diff=float(args.max_diff),
+                    **_epa_eval_kwargs(args),
+                )
+            except Exception as exc:
+                print(f"\t[warn] skipping {run_file.name}: {exc}")
+                failed_details.append(f"{run_file.name}:failed")
+                continue
             ate_ori_rmse.append(float(ev["ate3_ori"]["rmse"]))
             ate_pos_rmse.append(float(ev["ate3_pos"]["rmse"]))
             ate2_ori_rmse.append(float(ev["ate2_ori"]["rmse"]))
@@ -962,31 +968,40 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 est_pos=np.asarray(ev["est_pos"], dtype=float),
                 est_quat=np.asarray(ev["est_quat"], dtype=float),
             )
-            time_rpe_ori_vals.extend(np.asarray(time_rpe["ori_values"], dtype=float).tolist())
-            time_rpe_pos_vals.extend(np.asarray(time_rpe["pos_values"], dtype=float).tolist())
+            time_ori_vals.extend(np.asarray(time_rpe["ori_values"], dtype=float).tolist())
+            time_pos_vals.extend(np.asarray(time_rpe["pos_values"], dtype=float).tolist())
             valid = _compute_valid_segment_summary(
                 gt_t=np.asarray(ev["gt_t"], dtype=float),
                 gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                 gt_quat=np.asarray(ev["gt_quat"], dtype=float),
                 est_pos=np.asarray(ev["est_pos"], dtype=float),
                 est_quat=np.asarray(ev["est_quat"], dtype=float),
-                threshold_m=success_threshold_m,
-                threshold_mode=success_threshold_mode,
-                threshold_min_m=success_threshold_min_m,
-                threshold_max_m=success_threshold_max_m,
-                threshold_trim_percentile=success_threshold_trim_percentile,
-                global_gate_mode=success_global_gate_mode,
-                global_gate_m=success_global_gate_m,
-                global_gate_path_ratio=success_global_gate_path_ratio,
-                global_gate_min_m=success_global_gate_min_m,
-                global_gate_max_m=success_global_gate_max_m,
-                global_gate_percentile=success_global_gate_percentile,
-                drift_rpe_1s_m=success_drift_rpe_1s_m,
-                drift_ape_slope_mps=success_drift_ape_slope_mps,
-                drift_ape_jump_m=success_drift_ape_jump_m,
+                threshold_m=sr_m,
+                threshold_mode=sr_mode,
+                threshold_min_m=sr_min_m,
+                threshold_max_m=sr_max_m,
+                threshold_trim_percentile=sr_trim_pct,
+                global_gate_mode=gate_mode,
+                global_gate_m=gate_m,
+                global_gate_path_ratio=gate_path_ratio,
+                global_gate_min_m=gate_min_m,
+                global_gate_max_m=gate_max_m,
+                global_gate_percentile=gate_pct,
+                drift_rpe_1s_m=drift_rpe_1s_m,
+                drift_ape_slope_mps=drift_ape_slope_mps,
+                drift_ape_jump_m=drift_ape_jump_m,
             )
-            success_distance_vals.append(float(valid["success"]["success_rate_distance"]))
-            success_time_vals.append(float(valid["success"]["success_rate_time"]))
+            sr_dist_vals.append(float(valid["success"]["success_rate_distance"]))
+            sr_time_vals.append(float(valid["success"]["success_rate_time"]))
+
+        valid_runs = len(ate_ori_rmse)
+        if valid_runs == 0:
+            print(f"[COMP]: processing {algo_dir.name} algorithm")
+            print(f"\t[warn] no valid runs for {algo_dir.name}/{dataset_name}; skipping dataset metrics")
+            if failed_details:
+                print(f"\tfailed_runs: {_format_source_details(failed_details)}")
+            print("======================================")
+            continue
 
         ate_ori = compute_error_statistics(np.asarray(ate_ori_rmse, dtype=float))
         ate_pos = compute_error_statistics(np.asarray(ate_pos_rmse, dtype=float))
@@ -995,13 +1010,17 @@ def run_error_dataset(args: argparse.Namespace) -> int:
 
         print(f"[COMP]: processing {algo_dir.name} algorithm")
         print(
-            f"\tATE: mean_ori = {_fmt(ate_ori['mean'])} | mean_pos = {_fmt(ate_pos['mean'])} ({len(run_files)} runs)"
+            f"\tATE: mean_ori = {_fmt(ate_ori['mean'])} | mean_pos = {_fmt(ate_pos['mean'])} "
+            f"({valid_runs}/{len(run_files)} valid runs)"
         )
         print(f"\tATE: std_ori  = {_fmt(ate_ori['std'], 5)} | std_pos  = {_fmt(ate_pos['std'], 5)}")
         print(
-            f"\tATE 2D: mean_ori = {_fmt(ate2_ori['mean'])} | mean_pos = {_fmt(ate2_pos['mean'])} ({len(run_files)} runs)"
+            f"\tATE 2D: mean_ori = {_fmt(ate2_ori['mean'])} | mean_pos = {_fmt(ate2_pos['mean'])} "
+            f"({valid_runs}/{len(run_files)} valid runs)"
         )
         print(f"\tATE 2D: std_ori  = {_fmt(ate2_ori['std'], 5)} | std_pos  = {_fmt(ate2_pos['std'], 5)}")
+        if failed_details:
+            print(f"\tfailed_runs: {_format_source_details(failed_details)}")
 
         for seg in segments:
             o_stats = compute_error_statistics(np.asarray(rpe_ori_vals[seg], dtype=float))
@@ -1012,16 +1031,16 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 f"| mean_pos = {_fmt(p_stats['mean'])} ({n} samples)"
             )
 
-        time_ori_stats = compute_error_statistics(np.asarray(time_rpe_ori_vals, dtype=float))
-        time_pos_stats = compute_error_statistics(np.asarray(time_rpe_pos_vals, dtype=float))
+        time_ori_stats = compute_error_statistics(np.asarray(time_ori_vals, dtype=float))
+        time_pos_stats = compute_error_statistics(np.asarray(time_pos_vals, dtype=float))
         print(
             f"\tRPE time 1s - mean_ori = {_fmt(time_ori_stats['mean'])} "
-            f"| mean_pos = {_fmt(time_pos_stats['mean'])} ({len(time_rpe_pos_vals)} samples)"
+            f"| mean_pos = {_fmt(time_pos_stats['mean'])} ({len(time_pos_vals)} samples)"
         )
-        sr_dist_stats = compute_error_statistics(np.asarray(success_distance_vals, dtype=float))
-        sr_time_stats = compute_error_statistics(np.asarray(success_time_vals, dtype=float))
+        sr_dist_stats = compute_error_statistics(np.asarray(sr_dist_vals, dtype=float))
+        sr_time_stats = compute_error_statistics(np.asarray(sr_time_vals, dtype=float))
         print(
-            f"\tSR@{_fmt(success_threshold_m, 1)}m - distance = {_fmt(sr_dist_stats['mean'] * 100.0, 2)}% "
+            f"\tSR@{_fmt(sr_m, 1)}m - distance = {_fmt(sr_dist_stats['mean'] * 100.0, 2)}% "
             f"| time = {_fmt(sr_time_stats['mean'] * 100.0, 2)}%"
         )
         print("\tNEES: n/a in EPA compatibility mode")
@@ -1035,20 +1054,20 @@ def run_error_dataset(args: argparse.Namespace) -> int:
 def run_error_comparison(args: argparse.Namespace) -> int:
     gt_root = Path(args.folder_groundtruth).expanduser()
     alg_root = Path(args.folder_algorithms).expanduser()
-    success_threshold_m = float(getattr(args, "epa_success_threshold_m", 10.0))
-    success_threshold_mode = str(getattr(args, "epa_success_threshold_mode", "adaptive_knee"))
-    success_threshold_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
-    success_threshold_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
-    success_threshold_trim_percentile = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
-    success_global_gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
-    success_global_gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
-    success_global_gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
-    success_global_gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
-    success_global_gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
-    success_global_gate_percentile = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
-    success_drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
-    success_drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
-    success_drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
+    sr_m = float(getattr(args, "epa_success_threshold_m", 10.0))
+    sr_mode = str(getattr(args, "epa_success_threshold_mode", "adaptive_knee"))
+    sr_min_m = float(getattr(args, "epa_success_threshold_min_m", 5.0))
+    sr_max_m = float(getattr(args, "epa_success_threshold_max_m", 30.0))
+    sr_trim_pct = float(getattr(args, "epa_success_threshold_trim_percentile", 95.0))
+    gate_mode = str(getattr(args, "epa_success_global_gate_mode", "fixed"))
+    gate_m = float(getattr(args, "epa_success_global_gate_m", 30.0))
+    gate_path_ratio = float(getattr(args, "epa_success_global_gate_path_ratio", 0.05))
+    gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
+    gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
+    gate_pct = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
+    drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
+    drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
+    drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
 
     gt_files = sorted([p for p in gt_root.rglob("*.txt") if p.is_file()])
     algo_dirs = sorted([p for p in alg_root.iterdir() if p.is_dir()])
@@ -1074,8 +1093,9 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     valid_rpe_all: dict[str, dict[float, tuple[list[float], list[float]]]] = {
         a.name: {s: ([], []) for s in segments} for a in algo_dirs
     }
-    source_counts_total: dict[str, int] = {}
-    source_details_total: list[str] = []
+    source_total: dict[str, int] = {}
+    source_details: list[str] = []
+    failed_total: list[str] = []
 
     print("======================================")
     for algo_dir in algo_dirs:
@@ -1097,36 +1117,43 @@ def run_error_comparison(args: argparse.Namespace) -> int:
             print(f"[COMP]: processing {algo_dir.name} algorithm => {ds} dataset")
             ate_ori_rmse: list[float] = []
             ate_pos_rmse: list[float] = []
-            source_counts_ds: dict[str, int] = {}
-            source_details_ds: list[str] = []
+            source_ds: dict[str, int] = {}
+            source_ds_details: list[str] = []
+            failed_ds: list[str] = []
 
             ds_rpe_ori: dict[float, list[float]] = {s: [] for s in segments}
             ds_rpe_pos: dict[float, list[float]] = {s: [] for s in segments}
-            ds_time_rpe_ori: list[float] = []
-            ds_time_rpe_pos: list[float] = []
-            ds_success_distance: list[float] = []
-            ds_success_time: list[float] = []
+            ds_time_ori: list[float] = []
+            ds_time_pos: list[float] = []
+            ds_sr_dist: list[float] = []
+            ds_sr_time: list[float] = []
             ds_valid_ate_ori: list[float] = []
             ds_valid_ate_pos: list[float] = []
-            ds_valid_time_rpe_ori: list[float] = []
-            ds_valid_time_rpe_pos: list[float] = []
+            ds_valid_time_ori: list[float] = []
+            ds_valid_time_pos: list[float] = []
 
             for run_file in run_files:
-                ev = _evaluate_pair(
-                    file_gt=gt,
-                    file_est=run_file,
-                    align_mode=str(args.align_mode),
-                    max_diff=float(args.max_diff),
-                    **_epa_eval_kwargs(args),
-                )
+                try:
+                    ev = _evaluate_pair(
+                        file_gt=gt,
+                        file_est=run_file,
+                        align_mode=str(args.align_mode),
+                        max_diff=float(args.max_diff),
+                        **_epa_eval_kwargs(args),
+                    )
+                except Exception as exc:
+                    print(f"\t[warn] skipping {run_file.name}: {exc}")
+                    failed_ds.append(f"{run_file.name}:failed")
+                    failed_total.append(f"{algo_dir.name}/{ds}/{run_file.name}:failed")
+                    continue
                 ate_ori_rmse.append(float(ev["ate3_ori"]["rmse"]))
                 ate_pos_rmse.append(float(ev["ate3_pos"]["rmse"]))
                 source = str(ev.get("eval_source", "unknown"))
-                source_counts_ds[source] = source_counts_ds.get(source, 0) + 1
-                source_counts_total[source] = source_counts_total.get(source, 0) + 1
+                source_ds[source] = source_ds.get(source, 0) + 1
+                source_total[source] = source_total.get(source, 0) + 1
                 if source != "epa_step3":
-                    source_details_ds.append(f"{run_file.name}:{source}")
-                    source_details_total.append(f"{algo_dir.name}/{ds}/{run_file.name}:{source}")
+                    source_ds_details.append(f"{run_file.name}:{source}")
+                    source_details.append(f"{algo_dir.name}/{ds}/{run_file.name}:{source}")
 
                 rpe = _compute_rpe_segments(
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
@@ -1151,41 +1178,41 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 )
                 time_ori_vals = np.asarray(time_rpe["ori_values"], dtype=float).tolist()
                 time_pos_vals = np.asarray(time_rpe["pos_values"], dtype=float).tolist()
-                ds_time_rpe_ori.extend(time_ori_vals)
-                ds_time_rpe_pos.extend(time_pos_vals)
+                ds_time_ori.extend(time_ori_vals)
+                ds_time_pos.extend(time_pos_vals)
                 valid = _compute_valid_segment_summary(
                     gt_t=np.asarray(ev["gt_t"], dtype=float),
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                     gt_quat=np.asarray(ev["gt_quat"], dtype=float),
                     est_pos=np.asarray(ev["est_pos"], dtype=float),
                     est_quat=np.asarray(ev["est_quat"], dtype=float),
-                    threshold_m=success_threshold_m,
-                    threshold_mode=success_threshold_mode,
-                    threshold_min_m=success_threshold_min_m,
-                    threshold_max_m=success_threshold_max_m,
-                    threshold_trim_percentile=success_threshold_trim_percentile,
-                    global_gate_mode=success_global_gate_mode,
-                    global_gate_m=success_global_gate_m,
-                    global_gate_path_ratio=success_global_gate_path_ratio,
-                    global_gate_min_m=success_global_gate_min_m,
-                    global_gate_max_m=success_global_gate_max_m,
-                    global_gate_percentile=success_global_gate_percentile,
-                    drift_rpe_1s_m=success_drift_rpe_1s_m,
-                    drift_ape_slope_mps=success_drift_ape_slope_mps,
-                    drift_ape_jump_m=success_drift_ape_jump_m,
+                    threshold_m=sr_m,
+                    threshold_mode=sr_mode,
+                    threshold_min_m=sr_min_m,
+                    threshold_max_m=sr_max_m,
+                    threshold_trim_percentile=sr_trim_pct,
+                    global_gate_mode=gate_mode,
+                    global_gate_m=gate_m,
+                    global_gate_path_ratio=gate_path_ratio,
+                    global_gate_min_m=gate_min_m,
+                    global_gate_max_m=gate_max_m,
+                    global_gate_percentile=gate_pct,
+                    drift_rpe_1s_m=drift_rpe_1s_m,
+                    drift_ape_slope_mps=drift_ape_slope_mps,
+                    drift_ape_jump_m=drift_ape_jump_m,
                 )
-                ds_success_distance.append(float(valid["success"]["success_rate_distance"]))
-                ds_success_time.append(float(valid["success"]["success_rate_time"]))
+                ds_sr_dist.append(float(valid["success"]["success_rate_distance"]))
+                ds_sr_time.append(float(valid["success"]["success_rate_time"]))
                 ds_valid_ate_ori.extend(
                     np.asarray(valid["ape"]["_error_arrays"]["rotation_angle_deg"], dtype=float).tolist()
                 )
                 ds_valid_ate_pos.extend(
                     np.asarray(valid["ape"]["_error_arrays"]["translation_part"], dtype=float).tolist()
                 )
-                ds_valid_time_rpe_ori.extend(
+                ds_valid_time_ori.extend(
                     np.asarray(valid["rpe_time_1s"]["_error_arrays"]["rotation_angle_deg"], dtype=float).tolist()
                 )
-                ds_valid_time_rpe_pos.extend(
+                ds_valid_time_pos.extend(
                     np.asarray(valid["rpe_time_1s"]["_error_arrays"]["translation_part"], dtype=float).tolist()
                 )
                 valid_rpe = _compute_valid_rpe_segments(
@@ -1202,11 +1229,17 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     valid_rpe_all[algo_dir.name][seg][0].extend(valid_ori_vals)
                     valid_rpe_all[algo_dir.name][seg][1].extend(valid_pos_vals)
 
+            if len(ate_ori_rmse) == 0:
+                print(f"\t[warn] no valid runs for {algo_dir.name}/{ds}; skipping dataset metrics")
+                if failed_ds:
+                    print(f"\tfailed_runs: {_format_source_details(failed_ds)}")
+                continue
+
             ate_ori_stats = compute_error_statistics(np.asarray(ate_ori_rmse, dtype=float))
             ate_pos_stats = compute_error_statistics(np.asarray(ate_pos_rmse, dtype=float))
             ate_table[algo_dir.name][ds] = (float(ate_ori_stats["mean"]), float(ate_pos_stats["mean"]))
-            time_ori_stats = compute_error_statistics(np.asarray(ds_time_rpe_ori, dtype=float))
-            time_pos_stats = compute_error_statistics(np.asarray(ds_time_rpe_pos, dtype=float))
+            time_ori_stats = compute_error_statistics(np.asarray(ds_time_ori, dtype=float))
+            time_pos_stats = compute_error_statistics(np.asarray(ds_time_pos, dtype=float))
             time_rpe_table[algo_dir.name][ds] = (float(time_ori_stats["mean"]), float(time_pos_stats["mean"]))
             valid_ate_ori_stats = compute_error_statistics(np.asarray(ds_valid_ate_ori, dtype=float))
             valid_ate_pos_stats = compute_error_statistics(np.asarray(ds_valid_ate_pos, dtype=float))
@@ -1214,14 +1247,14 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 float(valid_ate_ori_stats["rmse"]),
                 float(valid_ate_pos_stats["rmse"]),
             )
-            valid_time_ori_stats = compute_error_statistics(np.asarray(ds_valid_time_rpe_ori, dtype=float))
-            valid_time_pos_stats = compute_error_statistics(np.asarray(ds_valid_time_rpe_pos, dtype=float))
+            valid_time_ori_stats = compute_error_statistics(np.asarray(ds_valid_time_ori, dtype=float))
+            valid_time_pos_stats = compute_error_statistics(np.asarray(ds_valid_time_pos, dtype=float))
             valid_time_rpe_table[algo_dir.name][ds] = (
                 float(valid_time_ori_stats["mean"]),
                 float(valid_time_pos_stats["mean"]),
             )
-            sr_dist_stats = compute_error_statistics(np.asarray(ds_success_distance, dtype=float))
-            sr_time_stats = compute_error_statistics(np.asarray(ds_success_time, dtype=float))
+            sr_dist_stats = compute_error_statistics(np.asarray(ds_sr_dist, dtype=float))
+            sr_time_stats = compute_error_statistics(np.asarray(ds_sr_time, dtype=float))
             success_table[algo_dir.name][ds] = (
                 float(sr_dist_stats["mean"]),
                 float(sr_time_stats["mean"]),
@@ -1229,11 +1262,14 @@ def run_error_comparison(args: argparse.Namespace) -> int:
 
             print(
                 f"\tATE: mean_ori = {_fmt(ate_ori_stats['mean'])} "
-                f"| mean_pos = {_fmt(ate_pos_stats['mean'])} ({len(run_files)} runs)"
+                f"| mean_pos = {_fmt(ate_pos_stats['mean'])} "
+                f"({len(ate_ori_rmse)}/{len(run_files)} valid runs)"
             )
-            print(f"\teval_source: {_format_source_counts(source_counts_ds)}")
-            if source_details_ds:
-                print(f"\tnon_epa_runs: {_format_source_details(source_details_ds)}")
+            print(f"\teval_source: {_format_source_counts(source_ds)}")
+            if source_ds_details:
+                print(f"\tnon_epa_runs: {_format_source_details(source_ds_details)}")
+            if failed_ds:
+                print(f"\tfailed_runs: {_format_source_details(failed_ds)}")
             for seg in segments:
                 o_stats = compute_error_statistics(np.asarray(ds_rpe_ori[seg], dtype=float))
                 p_stats = compute_error_statistics(np.asarray(ds_rpe_pos[seg], dtype=float))
@@ -1243,7 +1279,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 )
             print(
                 f"\tRPE time 1s - mean_ori = {_fmt(time_ori_stats['mean'])} "
-                f"| mean_pos = {_fmt(time_pos_stats['mean'])} ({len(ds_time_rpe_pos)} samples)"
+                f"| mean_pos = {_fmt(time_pos_stats['mean'])} ({len(ds_time_pos)} samples)"
             )
             print(
                 "\t"
@@ -1259,9 +1295,11 @@ def run_error_comparison(args: argparse.Namespace) -> int:
             )
 
     print("============================================")
-    print(f"TOOL SOURCE: {_format_source_counts(source_counts_total)}")
-    if source_details_total:
-        print(f"EVAL SOURCE NON-EPA RUNS: {_format_source_details(source_details_total)}")
+    print(f"TOOL SOURCE: {_format_source_counts(source_total)}")
+    if source_details:
+        print(f"EVAL SOURCE NON-EPA RUNS: {_format_source_details(source_details)}")
+    if failed_total:
+        print(f"FAILED RUNS: {_format_source_details(failed_total)}")
     print("============================================")
     print("============================================")
     print("FULL TRAJECTORY ATE LATEX TABLE (ROT DEG / TRANS M)")
