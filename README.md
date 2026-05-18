@@ -74,8 +74,6 @@ Run a multi-case benchmark:
 epa_bench /path/to/cases_root
 ```
 
-`epa` detects trajectory formats automatically, writes plots by default, caps post-time-alignment solve/evaluation to 100 Hz, and exports compact metrics. Step-1 time alignment still uses the full input trajectory. `epa_bench` discovers cases, runs them in parallel by default, and removes temporary prepared files unless `--keep-prepared` is set.
-
 ## Input Formats
 
 For one-pair runs, `epa <gt_file> <est_file>` uses format auto-detection by default.
