@@ -149,6 +149,35 @@ def test_discover_cases_multiple_sequence_dirs_under_one_system(tmp_path: Path) 
     assert {case.sequence for case in cases} == {"room_a", "room_b"}
 
 
+def test_discover_cases_disambiguates_duplicate_case_ids(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    for subset in ["add", "add1"]:
+        gt_file = align_root / "GT" / "lamaria" / "add1" / "sequence_1_19.txt"
+        est_file = (
+            align_root
+            / "benchmark"
+            / "lamaria"
+            / subset
+            / "pose"
+            / "svo_mono"
+            / "sequence_1_19"
+            / "svo_poses.txt"
+        )
+        gt_file.parent.mkdir(parents=True, exist_ok=True)
+        est_file.parent.mkdir(parents=True, exist_ok=True)
+        gt_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+        est_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 2
+    assert {case.case_id for case in cases} == {
+        "lamaria_add_sequence_1_19_svo_mono",
+        "lamaria_add1_sequence_1_19_svo_mono",
+    }
+
+
 def test_discover_cases_ignores_non_trajectory_csv_and_tum_files(tmp_path: Path) -> None:
     align_root = tmp_path / "cases"
     gt_file = align_root / "GT" / "custom" / "seq_01.txt"
