@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import copy
 import csv
+import importlib
 import json
 import math
 import os
@@ -33,6 +34,20 @@ class BenchmarkCase:
 def _safe_case_id(dataset: str, sequence: str, method: str) -> str:
     raw = f"{dataset}_{sequence}_{method}"
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("_")
+
+
+def _case_id_qualifier(rel_pose: Path, method: str, sequence: str) -> str:
+    parts = rel_pose.parts
+    if "pose" in parts:
+        pose_idx = parts.index("pose")
+        qualifier_parts = list(parts[1:pose_idx])
+    else:
+        qualifier_parts = list(parts[1:-1])
+        if qualifier_parts and qualifier_parts[-1] == sequence:
+            qualifier_parts = qualifier_parts[:-1]
+        if qualifier_parts and qualifier_parts[-1] == method:
+            qualifier_parts = qualifier_parts[:-1]
+    return "_".join(part for part in qualifier_parts if part)
 
 
 _GT_SUFFIXES = (".txt", ".tum", ".csv")
@@ -282,7 +297,7 @@ def discover_cases(cases_root: Path) -> tuple[list[BenchmarkCase], list[dict[str
             )
         )
 
-    cases: list[BenchmarkCase] = []
+    selected_cases: list[tuple[str, str, str, Path, Path, Path]] = []
     unresolved: list[dict[str, str]] = []
     for est_path in sorted(p for p in bench_root.rglob("*") if p.is_file() and _is_est_trajectory_file(p)):
         rel_pose = est_path.relative_to(bench_root)
@@ -315,6 +330,18 @@ def discover_cases(cases_root: Path) -> tuple[list[BenchmarkCase], list[dict[str
             )
             continue
         case_id = _safe_case_id(dataset, sequence, method)
+        selected_cases.append((case_id, dataset, method, sequence, gt_path, est_path, rel_pose))
+
+    case_id_counts: dict[str, int] = {}
+    for case_id, *_ in selected_cases:
+        case_id_counts[case_id] = case_id_counts.get(case_id, 0) + 1
+
+    cases: list[BenchmarkCase] = []
+    for case_id, dataset, method, sequence, gt_path, est_path, rel_pose in selected_cases:
+        if case_id_counts[case_id] > 1:
+            qualifier = _case_id_qualifier(rel_pose, method, sequence)
+            if qualifier:
+                case_id = _safe_case_id(dataset, f"{qualifier}_{sequence}", method)
         cases.append(
             BenchmarkCase(
                 case_id=case_id,
@@ -557,9 +584,12 @@ def _run_evo_case(
     if str(evo_repo) not in sys.path:
         sys.path.insert(0, str(evo_repo))
 
-    from evo.core import metrics, sync
-    from evo.core.trajectory import PoseTrajectory3D
-    from evo.main_ape import ape
+    metrics = importlib.import_module("evo.core.metrics")
+    sync = importlib.import_module("evo.core.sync")
+    trajectory = importlib.import_module("evo.core.trajectory")
+    main_ape = importlib.import_module("evo.main_ape")
+    PoseTrajectory3D = trajectory.PoseTrajectory3D
+    ape = main_ape.ape
 
     traj_ref = _build_evo_traj(PoseTrajectory3D, gt_data)
     traj_est = _build_evo_traj(PoseTrajectory3D, est_data)

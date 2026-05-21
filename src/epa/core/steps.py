@@ -629,6 +629,20 @@ def _run_time_alignment(
         overlap_gate_min_pairs = int(near_zero_diag["overlap_gate_min_pairs"])
 
     if match_ratio_gate < offset_min_match_ratio:
+      fallback_offset = near_zero_offset
+      zero_peak_idx = near_zero_peak_idx
+
+      fallback_diag = _count_matches_for_offset(fallback_offset)
+      fallback_ratio_global = float(fallback_diag["ratio_global"])
+      fallback_ratio_overlap = float(fallback_diag["ratio_overlap"])
+      fallback_ratio_gate = float(fallback_diag["ratio_gate"])
+
+      zero_window_s = 1.0
+      zero_mask = np.abs(offsets_s) <= zero_window_s
+      if offset_search_window_s > 0.0:
+          zero_mask &= search_mask
+
+    if match_ratio_gate < offset_min_match_ratio:
         fallback_offset = near_zero_offset
         zero_peak_idx = near_zero_peak_idx
 

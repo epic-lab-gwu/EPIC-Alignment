@@ -73,11 +73,11 @@ def _build_epa_cmd(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run epa + rerun for a single case from alignanything harness prepared_tum."
+        description="Run epa + rerun for a single case from benchmark harness prepared_tum."
     )
     parser.add_argument(
         "--run-dir",
-        default="outputs/alignanything_harness",
+        default="outputs/benchmark_harness",
         help=(
             "Harness run dir (run_*/...) or parent harness dir. "
             "If a parent dir is given, latest run_* is selected."

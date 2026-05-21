@@ -7,4 +7,4 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export PYTHONPATH="$repo_root/src${PYTHONPATH:+:$PYTHONPATH}"
-exec python -m epa.benchmark.alignanything_harness "$@"
+exec python -m epa.benchmark.benchmark_harness "$@"

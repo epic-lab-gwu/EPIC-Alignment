@@ -272,7 +272,8 @@ def _plot_box(
     if not values:
         return
     plt.figure(figsize=(9.8, 4.8))
-    plt.boxplot(values, labels=labels, showfliers=False)
+    plt.boxplot(values, showfliers=False)
+    plt.xticks(np.arange(1, len(labels) + 1), labels)
     plt.title(title)
     plt.ylabel(ylabel)
     plt.grid(True, axis="y", linestyle=":", alpha=0.4)

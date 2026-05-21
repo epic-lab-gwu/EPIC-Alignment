@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from epa.benchmark.alignanything_harness import (
+from epa.benchmark.benchmark_harness import (
     BenchmarkCase,
     _run_benchmark_case,
     _resolve_jobs,
@@ -149,6 +149,35 @@ def test_discover_cases_multiple_sequence_dirs_under_one_system(tmp_path: Path) 
     assert {case.sequence for case in cases} == {"room_a", "room_b"}
 
 
+def test_discover_cases_disambiguates_duplicate_case_ids(tmp_path: Path) -> None:
+    align_root = tmp_path / "cases"
+    for subset in ["add", "add1"]:
+        gt_file = align_root / "GT" / "lamaria" / "add1" / "sequence_1_19.txt"
+        est_file = (
+            align_root
+            / "benchmark"
+            / "lamaria"
+            / subset
+            / "pose"
+            / "svo_mono"
+            / "sequence_1_19"
+            / "svo_poses.txt"
+        )
+        gt_file.parent.mkdir(parents=True, exist_ok=True)
+        est_file.parent.mkdir(parents=True, exist_ok=True)
+        gt_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+        est_file.write_text("1 0 0 0 0 0 0 1\n2 0 0 0 0 0 0 1\n", encoding="utf-8")
+
+    cases, unresolved = discover_cases(align_root)
+
+    assert unresolved == []
+    assert len(cases) == 2
+    assert {case.case_id for case in cases} == {
+        "lamaria_add_sequence_1_19_svo_mono",
+        "lamaria_add1_sequence_1_19_svo_mono",
+    }
+
+
 def test_discover_cases_ignores_non_trajectory_csv_and_tum_files(tmp_path: Path) -> None:
     align_root = tmp_path / "cases"
     gt_file = align_root / "GT" / "custom" / "seq_01.txt"
@@ -224,8 +253,8 @@ def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPa
     def fake_run_evo_case(*args, **kwargs):
         raise AssertionError("evo should not run unless --with-evo is set")
 
-    monkeypatch.setattr("epa.benchmark.alignanything_harness._run_epa_case", fake_run_epa_case)
-    monkeypatch.setattr("epa.benchmark.alignanything_harness._run_evo_case", fake_run_evo_case)
+    monkeypatch.setattr("epa.benchmark.benchmark_harness._run_epa_case", fake_run_epa_case)
+    monkeypatch.setattr("epa.benchmark.benchmark_harness._run_evo_case", fake_run_evo_case)
 
     row = _run_benchmark_case(
         BenchmarkCase("demo_seq_sys", "demo", "sys", "seq", gt, est),
@@ -273,7 +302,7 @@ def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:
 
 
 def test_benchmark_parser_accepts_positional_cases_root_and_jobs() -> None:
-    parser = __import__("epa.benchmark.alignanything_harness", fromlist=["build_parser"]).build_parser()
+    parser = __import__("epa.benchmark.benchmark_harness", fromlist=["build_parser"]).build_parser()
     args = parser.parse_args(["/tmp/cases_root", "--jobs", "4"])
     assert args.cases_root_pos == "/tmp/cases_root"
     assert args.jobs == "4"

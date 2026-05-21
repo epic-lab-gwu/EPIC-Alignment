@@ -178,7 +178,7 @@ Visualization modules:
 
 Benchmark modules:
 
-- `src/epa/benchmark/alignanything_harness.py`
+- `src/epa/benchmark/benchmark_harness.py`
 - `src/epa/benchmark/plot_summary.py`
 - `src/epa/benchmark/metrics_res.py`
 - `src/epa/benchmark/res.py`
