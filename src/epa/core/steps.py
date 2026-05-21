@@ -22,6 +22,118 @@ from .time_alignment import (
 )
 
 
+def _rotation_error_rmse_deg(q_ref, q_est) -> float:
+    err = (R.from_quat(q_est).inv() * R.from_quat(q_ref)).magnitude()
+    return float(np.sqrt(np.mean(np.degrees(err) ** 2)))
+
+
+def _step2_rotation_candidates(R_base: np.ndarray) -> list[tuple[str, np.ndarray]]:
+    flips = [
+        ("base", np.eye(3, dtype=float)),
+        ("right_rx180", R.from_euler("x", 180.0, degrees=True).as_matrix()),
+        ("right_ry180", R.from_euler("y", 180.0, degrees=True).as_matrix()),
+        ("right_rz180", R.from_euler("z", 180.0, degrees=True).as_matrix()),
+    ]
+    return [(name, np.asarray(R_base, dtype=float) @ flip) for name, flip in flips]
+
+
+def _solve_step2_step3_candidate(
+    *,
+    name: str,
+    R_calc,
+    pr_sync,
+    qr_sync,
+    pos_gt_solve,
+    quat_gt_solve,
+    pr_solve,
+    qr_solve,
+):
+    t_calc = solve_extrinsic_translation(pos_gt_solve, quat_gt_solve, pr_solve, qr_solve, R_calc)
+
+    Rr_mats = R.from_quat(qr_sync).as_matrix()
+    pr_corrected = np.zeros_like(pr_sync)
+    for i in range(len(pr_sync)):
+        pr_corrected[i] = pr_sync[i] - (Rr_mats[i] @ R_calc.T) @ t_calc
+
+    Rr_mats_solve = R.from_quat(qr_solve).as_matrix()
+    pr_corrected_solve = np.zeros_like(pr_solve)
+    for i in range(len(pr_solve)):
+        pr_corrected_solve[i] = pr_solve[i] - (Rr_mats_solve[i] @ R_calc.T) @ t_calc
+
+    Rw_calc, tw_calc = solve_world_alignment(pr_corrected_solve, pos_gt_solve)
+    pred_step3_pairs = (Rw_calc @ pr_corrected_solve.T).T + tw_calc
+    selected_rmse_m = float(np.sqrt(np.mean(np.sum((pred_step3_pairs - pos_gt_solve) ** 2, axis=1))))
+    pr_final = (Rw_calc @ pr_corrected.T).T + tw_calc
+
+    R_step2_mats = np.einsum("nij,jk->nik", Rr_mats, R_calc.T)
+    q_step2 = normalize_quat_array(R.from_matrix(R_step2_mats).as_quat())
+    q_step3_from_step2 = normalize_quat_array((R.from_matrix(Rw_calc) * R.from_quat(q_step2)).as_quat())
+    q_step3_from_raw = normalize_quat_array((R.from_matrix(Rw_calc) * R.from_quat(qr_sync)).as_quat())
+    rot_rmse_from_step2 = _rotation_error_rmse_deg(quat_gt_solve, q_step3_from_step2)
+    rot_rmse_from_raw = _rotation_error_rmse_deg(quat_gt_solve, q_step3_from_raw)
+    if rot_rmse_from_raw < rot_rmse_from_step2:
+        q_step3 = q_step3_from_raw
+        orientation_mode = "world_raw"
+        rot_rmse_deg = rot_rmse_from_raw
+    else:
+        q_step3 = q_step3_from_step2
+        orientation_mode = "step2"
+        rot_rmse_deg = rot_rmse_from_step2
+    residual = _compute_step2_residual_metrics(
+        pos_gt_solve=pos_gt_solve,
+        quat_gt_solve=quat_gt_solve,
+        pr_solve=pr_solve,
+        qr_solve=qr_solve,
+        R_calc=R_calc,
+        t_calc=t_calc,
+    )
+
+    return {
+        "candidate_name": str(name),
+        "R_calc": R_calc,
+        "t_calc": t_calc,
+        "Rw_calc": Rw_calc,
+        "tw_calc": tw_calc,
+        "pr_corrected": pr_corrected,
+        "pr_corrected_solve": pr_corrected_solve,
+        "pr_final": pr_final,
+        "pr_final_global": np.asarray(pr_final, dtype=float).copy(),
+        "q_step2": q_step2,
+        "q_step3": q_step3,
+        "step3_rmse_selected_m": selected_rmse_m,
+        "rotation_ape_rmse_deg": rot_rmse_deg,
+        "orientation_mode": orientation_mode,
+        "rot_res_median_deg": float(residual["rot_res_median_deg"]),
+        "rot_res_p95_deg": float(residual["rot_res_p95_deg"]),
+    }
+
+
+def _select_step2_step3_candidate(candidates: list[dict]) -> dict:
+    if not candidates:
+        raise ValueError("No Step2/Step3 candidates were generated.")
+    base = candidates[0]
+    best_trans = min(float(c["step3_rmse_selected_m"]) for c in candidates)
+    base_rel = float(base["rot_res_median_deg"])
+    trans_limit = best_trans * 1.05 + 0.02
+    rel_limit = base_rel + 2.0
+    eligible = [
+        c
+        for c in candidates
+        if float(c["step3_rmse_selected_m"]) <= trans_limit
+        and float(c["rot_res_median_deg"]) <= rel_limit
+    ]
+    if not eligible:
+        eligible = [base]
+    return min(
+        eligible,
+        key=lambda c: (
+            float(c["rotation_ape_rmse_deg"]),
+            float(c["step3_rmse_selected_m"]),
+            float(c["rot_res_median_deg"]),
+        ),
+    )
+
+
 def _downsample_by_max_hz(tvals, pos, quat, max_hz):
     tvals = np.asarray(tvals, dtype=float).reshape(-1)
     pos = np.asarray(pos, dtype=float)
@@ -517,18 +629,22 @@ def _run_time_alignment(
         overlap_gate_min_pairs = int(near_zero_diag["overlap_gate_min_pairs"])
 
     if match_ratio_gate < offset_min_match_ratio:
-        zero_window_s = 1.0
-        zero_mask = np.abs(offsets_s) <= zero_window_s
-        if offset_search_window_s > 0.0:
-            zero_mask &= search_mask
+      fallback_offset = near_zero_offset
+      zero_peak_idx = near_zero_peak_idx
 
-        if np.any(zero_mask):
-            zero_indices = np.flatnonzero(zero_mask)
-            zero_peak_idx = int(zero_indices[int(np.argmax(corr[zero_indices]))])
-            fallback_offset = float(offsets_s[zero_peak_idx])
-        else:
-            zero_peak_idx = int(np.argmin(np.abs(offsets_s)))
-            fallback_offset = float(offsets_s[zero_peak_idx])
+      fallback_diag = _count_matches_for_offset(fallback_offset)
+      fallback_ratio_global = float(fallback_diag["ratio_global"])
+      fallback_ratio_overlap = float(fallback_diag["ratio_overlap"])
+      fallback_ratio_gate = float(fallback_diag["ratio_gate"])
+
+      zero_window_s = 1.0
+      zero_mask = np.abs(offsets_s) <= zero_window_s
+      if offset_search_window_s > 0.0:
+          zero_mask &= search_mask
+
+    if match_ratio_gate < offset_min_match_ratio:
+        fallback_offset = near_zero_offset
+        zero_peak_idx = near_zero_peak_idx
 
         fallback_diag = _count_matches_for_offset(fallback_offset)
         fallback_ratio_global = float(fallback_diag["ratio_global"])
@@ -591,6 +707,14 @@ def _run_time_alignment(
         "fallback_match_ratio_overlap": float(fallback_ratio_overlap),
         "fallback_match_ratio_gate": float(fallback_ratio_gate),
         "step1_forced_candidate_code": 1.0 if step1_forced_candidate else 0.0,
+        "near_zero_offset_s": float(near_zero_offset),
+        "near_zero_match_ratio_global": float(near_zero_ratio_global),
+        "near_zero_match_ratio_overlap": float(near_zero_ratio_overlap),
+        "near_zero_match_ratio_gate": float(near_zero_ratio_gate),
+        "near_zero_omega_rmse_after": float(omega_rmse_after_near_zero),
+        "zero_omega_rmse_after": float(omega_rmse_after_zero),
+        "near_zero_improve_ratio": float(small_offset_improve_ratio),
+        "near_zero_preferred_code": 1.0 if near_zero_preferred else 0.0,
     }
 
     evo_t_offset_used_s = -calculated_offset
@@ -691,41 +815,49 @@ def _solve_step2_step3(
     pr_solve,
     qr_solve,
 ):
-    R_calc = solve_extrinsic_rotation(quat_gt_solve, qr_solve)
-    t_calc = solve_extrinsic_translation(pos_gt_solve, quat_gt_solve, pr_solve, qr_solve, R_calc)
-
-    Rr_mats = R.from_quat(qr_sync).as_matrix()
-    pr_corrected = np.zeros_like(pr_sync)
-    for i in range(len(pr_sync)):
-        pr_corrected[i] = pr_sync[i] - (Rr_mats[i] @ R_calc.T) @ t_calc
-
-    Rr_mats_solve = R.from_quat(qr_solve).as_matrix()
-    pr_corrected_solve = np.zeros_like(pr_solve)
-    for i in range(len(pr_solve)):
-        pr_corrected_solve[i] = pr_solve[i] - (Rr_mats_solve[i] @ R_calc.T) @ t_calc
-
-    Rw_calc, tw_calc = solve_world_alignment(pr_corrected_solve, pos_gt_solve)
-    pred_step3_pairs = (Rw_calc @ pr_corrected_solve.T).T + tw_calc
-    selected_rmse_m = float(np.sqrt(np.mean(np.sum((pred_step3_pairs - pos_gt_solve) ** 2, axis=1))))
-    pr_final = (Rw_calc @ pr_corrected.T).T + tw_calc
-
-    R_step2_mats = np.einsum("nij,jk->nik", Rr_mats, R_calc.T)
-    q_step2 = normalize_quat_array(R.from_matrix(R_step2_mats).as_quat())
-    q_step3 = normalize_quat_array((R.from_matrix(Rw_calc) * R.from_quat(q_step2)).as_quat())
+    R_base = solve_extrinsic_rotation(quat_gt_solve, qr_solve)
+    candidates = []
+    for candidate_name, R_candidate in _step2_rotation_candidates(R_base):
+        candidates.append(
+            _solve_step2_step3_candidate(
+                name=candidate_name,
+                R_calc=R_candidate,
+                pr_sync=pr_sync,
+                qr_sync=qr_sync,
+                pos_gt_solve=pos_gt_solve,
+                quat_gt_solve=quat_gt_solve,
+                pr_solve=pr_solve,
+                qr_solve=qr_solve,
+            )
+        )
+    selected = _select_step2_step3_candidate(candidates)
+    ambiguity_detected = (
+        str(selected["candidate_name"]) != "base"
+        or float(candidates[0]["rotation_ape_rmse_deg"]) > float(selected["rotation_ape_rmse_deg"]) + 5.0
+    )
 
     return {
-        "R_calc": R_calc,
-        "t_calc": t_calc,
-        "Rw_calc": Rw_calc,
-        "tw_calc": tw_calc,
-        "pr_corrected": pr_corrected,
-        "pr_corrected_solve": pr_corrected_solve,
-        "pr_final": pr_final,
-        "pr_final_global": np.asarray(pr_final, dtype=float).copy(),
-        "q_step2": q_step2,
-        "q_step3": q_step3,
+        "R_calc": selected["R_calc"],
+        "t_calc": selected["t_calc"],
+        "Rw_calc": selected["Rw_calc"],
+        "tw_calc": selected["tw_calc"],
+        "pr_corrected": selected["pr_corrected"],
+        "pr_corrected_solve": selected["pr_corrected_solve"],
+        "pr_final": selected["pr_final"],
+        "pr_final_global": selected["pr_final_global"],
+        "q_step2": selected["q_step2"],
+        "q_step3": selected["q_step3"],
         "step3_choice": {
-            "step3_rmse_selected_m": float(selected_rmse_m),
+            "step3_rmse_selected_m": float(selected["step3_rmse_selected_m"]),
+            "orientation_candidate_count": float(len(candidates)),
+            "orientation_candidate_selected_code": float(
+                [c["candidate_name"] for c in candidates].index(selected["candidate_name"])
+            ),
+            "orientation_mode_code": float(1.0 if str(selected["orientation_mode"]) == "world_raw" else 0.0),
+            "orientation_candidate_rot_rmse_deg": float(selected["rotation_ape_rmse_deg"]),
+            "orientation_candidate_trans_rmse_m": float(selected["step3_rmse_selected_m"]),
+            "orientation_candidate_rel_rot_median_deg": float(selected["rot_res_median_deg"]),
+            "orientation_ambiguity_detected": float(bool(ambiguity_detected)),
         },
     }
 
