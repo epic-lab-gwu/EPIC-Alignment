@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import importlib
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +20,7 @@ from scipy.interpolate import interp1d
 from scipy.signal import correlate
 from scipy.spatial.transform import Rotation as R
 
-from epa.benchmark.alignanything_harness import load_pose_table
+from epa.benchmark.benchmark_harness import load_pose_table
 from epa.core.calibration import (
     solve_extrinsic_rotation,
     solve_extrinsic_translation,
@@ -71,7 +72,8 @@ def _build_cases(offsets_csv: Path) -> list[CaseSpec]:
 
 
 def _build_evo_traj(data: np.ndarray):
-    from evo.core.trajectory import PoseTrajectory3D
+    trajectory = importlib.import_module("evo.core.trajectory")
+    PoseTrajectory3D = trajectory.PoseTrajectory3D
 
     xyz = data[:, 1:4]
     q_xyzw = data[:, 4:8]
@@ -81,7 +83,7 @@ def _build_evo_traj(data: np.ndarray):
 
 
 def _compute_evo_alignment(gt: np.ndarray, est: np.ndarray, t_offset_s: float, t_max_diff_s: float) -> dict[str, object]:
-    from evo.core import sync
+    sync = importlib.import_module("evo.core.sync")
 
     traj_ref = _build_evo_traj(gt)
     traj_est = _build_evo_traj(est)

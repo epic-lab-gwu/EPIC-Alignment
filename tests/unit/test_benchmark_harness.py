@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from epa.benchmark.alignanything_harness import (
+from epa.benchmark.benchmark_harness import (
     BenchmarkCase,
     _run_benchmark_case,
     _resolve_jobs,
@@ -253,8 +253,8 @@ def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPa
     def fake_run_evo_case(*args, **kwargs):
         raise AssertionError("evo should not run unless --with-evo is set")
 
-    monkeypatch.setattr("epa.benchmark.alignanything_harness._run_epa_case", fake_run_epa_case)
-    monkeypatch.setattr("epa.benchmark.alignanything_harness._run_evo_case", fake_run_evo_case)
+    monkeypatch.setattr("epa.benchmark.benchmark_harness._run_epa_case", fake_run_epa_case)
+    monkeypatch.setattr("epa.benchmark.benchmark_harness._run_evo_case", fake_run_evo_case)
 
     row = _run_benchmark_case(
         BenchmarkCase("demo_seq_sys", "demo", "sys", "seq", gt, est),
@@ -302,7 +302,7 @@ def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:
 
 
 def test_benchmark_parser_accepts_positional_cases_root_and_jobs() -> None:
-    parser = __import__("epa.benchmark.alignanything_harness", fromlist=["build_parser"]).build_parser()
+    parser = __import__("epa.benchmark.benchmark_harness", fromlist=["build_parser"]).build_parser()
     args = parser.parse_args(["/tmp/cases_root", "--jobs", "4"])
     assert args.cases_root_pos == "/tmp/cases_root"
     assert args.jobs == "4"

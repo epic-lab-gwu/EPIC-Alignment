@@ -12,7 +12,7 @@ def _write_dummy_pair(prepared_dir: Path, case_id: str) -> None:
 
 
 def test_resolve_latest_run_dir_from_parent(tmp_path: Path) -> None:
-    root = tmp_path / "outputs" / "alignanything_harness"
+    root = tmp_path / "outputs" / "benchmark_harness"
     old_run = root / "run_20260417_120000"
     new_run = root / "run_20260417_130000"
     _write_dummy_pair(old_run / "prepared_tum", "old_case")
@@ -23,7 +23,7 @@ def test_resolve_latest_run_dir_from_parent(tmp_path: Path) -> None:
 
 
 def test_run_builds_and_executes_epa_cmd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    run_dir = tmp_path / "outputs" / "alignanything_harness" / "run_20260417_130000"
+    run_dir = tmp_path / "outputs" / "benchmark_harness" / "run_20260417_130000"
     case_id = "euroc_mav_MH_01_easy_rovio"
     _write_dummy_pair(run_dir / "prepared_tum", case_id)
 
@@ -64,7 +64,7 @@ def test_run_builds_and_executes_epa_cmd(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_run_requires_case_when_multiple_pairs(tmp_path: Path) -> None:
-    run_dir = tmp_path / "outputs" / "alignanything_harness" / "run_20260417_130000"
+    run_dir = tmp_path / "outputs" / "benchmark_harness" / "run_20260417_130000"
     _write_dummy_pair(run_dir / "prepared_tum", "case_a")
     _write_dummy_pair(run_dir / "prepared_tum", "case_b")
 

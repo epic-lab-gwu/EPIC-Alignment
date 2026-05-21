@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import copy
 import csv
+import importlib
 import json
 import math
 import os
@@ -583,9 +584,12 @@ def _run_evo_case(
     if str(evo_repo) not in sys.path:
         sys.path.insert(0, str(evo_repo))
 
-    from evo.core import metrics, sync
-    from evo.core.trajectory import PoseTrajectory3D
-    from evo.main_ape import ape
+    metrics = importlib.import_module("evo.core.metrics")
+    sync = importlib.import_module("evo.core.sync")
+    trajectory = importlib.import_module("evo.core.trajectory")
+    main_ape = importlib.import_module("evo.main_ape")
+    PoseTrajectory3D = trajectory.PoseTrajectory3D
+    ape = main_ape.ape
 
     traj_ref = _build_evo_traj(PoseTrajectory3D, gt_data)
     traj_est = _build_evo_traj(PoseTrajectory3D, est_data)

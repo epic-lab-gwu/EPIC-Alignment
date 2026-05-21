@@ -140,7 +140,7 @@ def run(args: argparse.Namespace) -> int:
     bench_cmd = [
         str(Path(args.python_bin).expanduser()),
         "-m",
-        "epa.benchmark.alignanything_harness",
+        "epa.benchmark.benchmark_harness",
         "--output-root",
         str(output_root),
         "--repo-root",

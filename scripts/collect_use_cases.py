@@ -15,7 +15,7 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from epa.benchmark.alignanything_harness import discover_cases  # noqa: E402
+from epa.benchmark.benchmark_harness import discover_cases  # noqa: E402
 
 
 IDEA_ROWS = [
