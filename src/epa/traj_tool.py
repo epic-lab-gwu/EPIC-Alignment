@@ -16,9 +16,7 @@ from epa.config_cli import parse_args_with_config
 from epa.core.io_utils import (
     SUPPORTED_ROS_MSGS,
     load_estimation_csv,
-    load_estimation_kitti,
     load_estimation_trajectory,
-    load_estimation_tum,
     load_reference_trajectory,
 )
 from epa.core.time_alignment import matching_time_indices
@@ -452,10 +450,7 @@ def _load_traj(path: Path, fmt: str, topic: str) -> tuple[np.ndarray, np.ndarray
                 return load_reference_trajectory(path, gt_format="csv", gt_topic=topic)
             except Exception:
                 return load_estimation_csv(path)
-        try:
-            return load_estimation_tum(path)
-        except Exception:
-            return load_estimation_kitti(path)
+        return load_estimation_trajectory(path, fmt, est_topic=topic)
     raise ValueError(f"Unsupported format: {fmt}")
 
 
@@ -607,12 +602,12 @@ def _plot_trajectories(
             spec = load_ros_map_spec(ros_map_yaml)
             img = plt.imread(str(spec.image_path))
             h, w = img.shape[:2]
-            extent = [
+            extent = (
                 spec.origin_x,
                 spec.origin_x + float(w) * spec.resolution,
                 spec.origin_y,
                 spec.origin_y + float(h) * spec.resolution,
-            ]
+            )
             ax.imshow(
                 img,
                 extent=extent,

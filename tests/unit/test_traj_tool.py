@@ -72,6 +72,20 @@ def test_load_traj_auto_prefers_tum_for_text_with_extra_columns(tmp_path: Path) 
     assert float(quat[0, 3]) == 1.0
 
 
+def test_load_traj_auto_accepts_comma_kitti(tmp_path: Path) -> None:
+    p = tmp_path / "kitti.txt"
+    p.write_text(
+        "1,0,0,1,0,1,0,2,0,0,1,3\n"
+        "1,0,0,2,0,1,0,3,0,0,1,4\n",
+        encoding="utf-8",
+    )
+
+    t, pos, _ = traj_tool._load_traj(p, fmt="auto", topic="")
+
+    np.testing.assert_allclose(t, np.array([0.0, 1.0]))
+    np.testing.assert_allclose(pos[:, 0], np.array([1.0, 2.0]))
+
+
 def test_traj_tool_sync_with_reference(tmp_path: Path) -> None:
     ref = tmp_path / "ref.tum"
     est = tmp_path / "est.tum"
