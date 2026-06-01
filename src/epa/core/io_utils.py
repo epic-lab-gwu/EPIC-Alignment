@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import re
 from datetime import datetime
@@ -615,31 +616,85 @@ def find_col(columns, candidates):
 
 
 def load_csv_numeric_columns(path):
+    path = Path(path)
+    csv_text = _read_csv_text_without_comments(path)
     if pd is not None:
-        df = pd.read_csv(path)
+        df = pd.read_csv(io.StringIO(csv_text))
         columns = list(df.columns)
         data = {c: np.asarray(df[c].values, dtype=float) for c in columns}
         return columns, data
 
-    with Path(path).open("r", encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-        if not reader.fieldnames:
-            raise ValueError(f"CSV has no header: {path}")
-        columns = list(reader.fieldnames)
-        data = {c: [] for c in columns}
-        for row_id, row in enumerate(reader, start=2):
-            for c in columns:
-                raw = row.get(c, "")
-                if raw is None or str(raw).strip() == "":
-                    raise ValueError(f"Missing numeric value at row {row_id}, column '{c}' in {path}")
-                try:
-                    data[c].append(float(raw))
-                except ValueError as exc:
-                    raise ValueError(
-                        f"Non-numeric value at row {row_id}, column '{c}' in {path}: {raw}"
-                    ) from exc
+    reader = csv.DictReader(io.StringIO(csv_text))
+    if not reader.fieldnames:
+        raise ValueError(f"CSV has no header: {path}")
+    columns = list(reader.fieldnames)
+    data = {c: [] for c in columns}
+    for row_id, row in enumerate(reader, start=2):
+        for c in columns:
+            raw = row.get(c, "")
+            if raw is None or str(raw).strip() == "":
+                raise ValueError(f"Missing numeric value at row {row_id}, column '{c}' in {path}")
+            try:
+                data[c].append(float(raw))
+            except ValueError as exc:
+                raise ValueError(
+                    f"Non-numeric value at row {row_id}, column '{c}' in {path}: {raw}"
+                ) from exc
     data = {k: np.asarray(v, dtype=float) for k, v in data.items()}
     return columns, data
+
+
+def _read_csv_text_without_comments(path):
+    lines = []
+    with Path(path).open("r", encoding="utf-8", newline="") as f:
+        for raw in f:
+            stripped = raw.lstrip()
+            if stripped.startswith("#") and not stripped.lower().startswith("#timestamp"):
+                continue
+            lines.append(raw)
+    if not lines:
+        raise ValueError(f"CSV has no header: {path}")
+    return "".join(lines)
+
+
+def _parse_numeric_text_row(line, path, line_no, *, allow_header=False):
+    parts = line.replace(",", " ").split()
+    if not parts:
+        return None
+    try:
+        return [float(part) for part in parts]
+    except ValueError as exc:
+        if allow_header:
+            return None
+        raise ValueError(f"Non-numeric value in trajectory text file {path} at line {line_no}: {line}") from exc
+
+
+def load_text_numeric_table(path, *, min_cols=1, allow_header=True):
+    path = Path(path)
+    rows = []
+    width = None
+    with path.open("r", encoding="utf-8") as f:
+        for line_no, raw in enumerate(f, start=1):
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            values = _parse_numeric_text_row(line, path, line_no, allow_header=allow_header and not rows)
+            if values is None:
+                continue
+            if len(values) < min_cols:
+                raise ValueError(f"Trajectory file must have at least {min_cols} columns: {path}")
+            row = values[:min_cols]
+            if width is None:
+                width = len(row)
+            elif len(row) != width:
+                raise ValueError(
+                    f"Inconsistent column count in trajectory text file {path} at line {line_no}: "
+                    f"expected {width}, got {len(row)}"
+                )
+            rows.append(row)
+    if not rows:
+        raise ValueError(f"No numeric rows found in trajectory text file: {path}")
+    return np.asarray(rows, dtype=float)
 
 
 def load_vicon_csv(path):
@@ -703,7 +758,7 @@ def _sanitize_timed_trajectory(t, pos, quat, path):
 
 
 def load_estimation_tum(path):
-    arr = np.loadtxt(path)
+    arr = load_text_numeric_table(path, min_cols=8)
     if arr.ndim == 1:
         arr = arr[None, :]
     if arr.shape[1] < 8:
@@ -716,7 +771,7 @@ def load_estimation_tum(path):
 
 
 def load_estimation_kitti(path):
-    arr = np.loadtxt(path)
+    arr = load_text_numeric_table(path, min_cols=12)
     if arr.ndim == 1:
         arr = arr[None, :]
     if arr.shape[1] < 12:
@@ -812,12 +867,14 @@ def _parse_tf_topic(topic):
 
 def _infer_text_trajectory_format(path):
     with Path(path).open("r", encoding="utf-8") as f:
-        for raw in f:
+        for line_no, raw in enumerate(f, start=1):
             line = raw.strip()
             if not line or line.startswith("#"):
                 continue
-            cols = line.replace(",", " ").split()
-            values = np.asarray([float(col) for col in cols], dtype=float)
+            values = _parse_numeric_text_row(line, path, line_no, allow_header=True)
+            if values is None:
+                continue
+            values = np.asarray(values, dtype=float)
             if values.size >= 12:
                 mat = np.array(
                     [
@@ -830,10 +887,17 @@ def _infer_text_trajectory_format(path):
                 det = float(np.linalg.det(mat))
                 if det > 0.5 and np.allclose(mat @ mat.T, np.eye(3), atol=1e-2):
                     return "kitti"
-            if len(cols) >= 8:
+            if values.size >= 8:
                 return "tum"
             break
     raise ValueError(f"Cannot infer trajectory format from text file: {path}")
+
+
+def _load_auto_text_trajectory(path):
+    inferred = _infer_text_trajectory_format(path)
+    if inferred == "kitti":
+        return load_estimation_kitti(path)
+    return load_estimation_tum(path)
 
 
 def _infer_bag_kind(path):
@@ -947,11 +1011,11 @@ def load_reference_trajectory(path, gt_format="csv", gt_topic=""):
             return load_bag_trajectory(path, gt_topic, bag_format="auto")
         suffix = path.suffix.lower()
         if suffix == ".csv":
-            return load_vicon_csv(path)
-        inferred = _infer_text_trajectory_format(path)
-        if inferred == "kitti":
-            return load_estimation_kitti(path)
-        return load_estimation_tum(path)
+            try:
+                return load_vicon_csv(path)
+            except Exception:
+                return _load_auto_text_trajectory(path)
+        return _load_auto_text_trajectory(path)
     raise ValueError(f"Unsupported gt format: {gt_format}")
 
 
@@ -975,11 +1039,11 @@ def load_estimation_trajectory(path, est_format, est_topic=""):
             return load_bag_trajectory(path, est_topic, bag_format="auto")
         suffix = path.suffix.lower()
         if suffix == ".csv":
-            return load_estimation_csv(path)
-        inferred = _infer_text_trajectory_format(path)
-        if inferred == "kitti":
-            return load_estimation_kitti(path)
-        return load_estimation_tum(path)
+            try:
+                return load_estimation_csv(path)
+            except Exception:
+                return _load_auto_text_trajectory(path)
+        return _load_auto_text_trajectory(path)
 
     raise ValueError(f"Unsupported estimation format: {est_format}")
 
