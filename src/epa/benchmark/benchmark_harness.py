@@ -4,6 +4,7 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import copy
 import csv
+import html
 import importlib
 import json
 import math
@@ -362,7 +363,22 @@ def _bool_to_status(ok: bool) -> str:
 def _as_float(value: object) -> float:
     if isinstance(value, (int, float, np.floating, np.integer)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return float("nan")
     return float("nan")
+
+
+def _as_bool(value: object) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.floating, np.integer)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y"}
+    return False
 
 
 def _make_run_dir(output_root: Path) -> Path:
@@ -475,6 +491,31 @@ def _run_epa_case(
         "omega_improve_pct": float("nan"),
         "evo_t_offset_used_s": float("nan"),
         "evo_matches_equivalent": float("nan"),
+        "sr_distance": float("nan"),
+        "sr_time": float("nan"),
+        "case_status": "",
+        "global_gate_failed": "",
+        "global_gate_value_m": float("nan"),
+        "global_gate_m": float("nan"),
+        "valid_distance_m": float("nan"),
+        "total_distance_m": float("nan"),
+        "step3_alignment_mode": "",
+        "step3_inlier_count": float("nan"),
+        "step3_rejected_count": float("nan"),
+        "step3_rejection_ratio": float("nan"),
+        "step3_stable_segment_used": float("nan"),
+        "step3_stable_solve_ratio": float("nan"),
+        "sim3_scale": float("nan"),
+        "sim3_reliable": "",
+        "sim3_warning": "",
+        "orientation_unstable": "",
+        "orientation_ape_rmse_deg": float("nan"),
+        "orientation_rpe_rmse_deg": float("nan"),
+        "orientation_rpe_time_1s_rmse_deg": float("nan"),
+        "orientation_warning": "",
+        "diagnosis_primary": "",
+        "diagnosis_summary": "",
+        "diagnosis_tags": "",
     }
 
     run_dir = _parse_epa_run_dir(proc.stdout, proc.stderr)
@@ -492,6 +533,21 @@ def _run_epa_case(
 
     traj = payload.get("trajectory", {})
     time_block = payload.get("time_alignment", {})
+    step3_selection = payload.get("step3_selection", {})
+    valid_step3 = (
+        payload.get("pose_metrics", {})
+        .get("valid_segment", {})
+        .get("step3", {})
+        .get("success", {})
+    )
+    eval_step3 = (
+        payload.get("pose_metrics", {})
+        .get("eval_alignment", {})
+        .get("step3", {})
+    )
+    orientation = payload.get("orientation_diagnostics", {})
+    case_diagnostics = payload.get("case_diagnostics", {})
+    metadata = payload.get("metadata", {})
     result["offset_est_s"] = _as_float(time_block.get("offset_est_s"))
     result["ate_rmse_raw_m"] = _as_float(traj.get("ate_rmse_raw_m"))
     result["ate_rmse_step3_m"] = _as_float(traj.get("ate_rmse_step3_m"))
@@ -501,6 +557,49 @@ def _run_epa_case(
     result["omega_improve_pct"] = _as_float(time_block.get("omega_rmse_improve_pct"))
     result["evo_t_offset_used_s"] = _as_float(time_block.get("evo_t_offset_used_s"))
     result["evo_matches_equivalent"] = _as_float(time_block.get("evo_matches_equivalent"))
+    result["sr_distance"] = _as_float(valid_step3.get("success_rate_distance"))
+    result["sr_time"] = _as_float(valid_step3.get("success_rate_time"))
+    result["case_status"] = str(valid_step3.get("case_status", ""))
+    result["global_gate_failed"] = _as_bool(valid_step3.get("global_gate_failed"))
+    result["global_gate_value_m"] = _as_float(valid_step3.get("global_gate_value_m"))
+    result["global_gate_m"] = _as_float(valid_step3.get("global_gate_m"))
+    result["valid_distance_m"] = _as_float(valid_step3.get("valid_distance_m"))
+    result["total_distance_m"] = _as_float(valid_step3.get("total_distance_m"))
+    result["step3_alignment_mode"] = str(step3_selection.get("step3_alignment_mode", ""))
+    result["step3_inlier_count"] = _as_float(step3_selection.get("step3_inlier_count"))
+    result["step3_rejected_count"] = _as_float(step3_selection.get("step3_rejected_count"))
+    result["step3_rejection_ratio"] = _as_float(step3_selection.get("step3_rejection_ratio"))
+    result["step3_stable_segment_used"] = _as_float(step3_selection.get("step3_stable_segment_used"))
+    result["step3_stable_solve_ratio"] = _as_float(step3_selection.get("step3_stable_solve_ratio"))
+    result["sim3_scale"] = _as_float(eval_step3.get("sim3_scale", eval_step3.get("align_scale")))
+    if str(eval_step3.get("align_mode", "")).lower() == "sim3":
+        result["sim3_reliable"] = str(bool(eval_step3.get("sim3_reliable", True)))
+        result["sim3_warning"] = str(eval_step3.get("sim3_warning", ""))
+    result["orientation_unstable"] = str(
+        bool(orientation.get("orientation_unstable", metadata.get("orientation_unstable", False)))
+    )
+    result["orientation_ape_rmse_deg"] = _as_float(
+        orientation.get("orientation_ape_rmse_deg", metadata.get("orientation_ape_rmse_deg"))
+    )
+    result["orientation_rpe_rmse_deg"] = _as_float(
+        orientation.get("orientation_rpe_rmse_deg", metadata.get("orientation_rpe_rmse_deg"))
+    )
+    result["orientation_rpe_time_1s_rmse_deg"] = _as_float(
+        orientation.get("orientation_rpe_time_1s_rmse_deg", metadata.get("orientation_rpe_time_1s_rmse_deg"))
+    )
+    result["orientation_warning"] = str(
+        orientation.get("orientation_warning", metadata.get("orientation_warning", ""))
+    )
+    result["diagnosis_primary"] = str(
+        case_diagnostics.get("diagnosis_primary", metadata.get("diagnosis_primary", ""))
+    )
+    result["diagnosis_summary"] = str(
+        case_diagnostics.get("diagnosis_summary", metadata.get("diagnosis_summary", ""))
+    )
+    tags = case_diagnostics.get("diagnosis_tags", metadata.get("diagnosis_tags", ""))
+    if isinstance(tags, list):
+        tags = ",".join(str(tag) for tag in tags)
+    result["diagnosis_tags"] = str(tags)
     return result
 
 
@@ -687,13 +786,18 @@ def _run_evo_case(
 
 
 def _fmt(value: object, ndigits: int = 3) -> str:
+    if value is None:
+        return ""
     if isinstance(value, (int, np.integer)):
         return str(int(value))
     if isinstance(value, (float, np.floating)):
         x = float(value)
         if math.isnan(x):
-            return "nan"
+            return ""
         return f"{x:.{ndigits}f}"
+    text = str(value)
+    if text.strip().lower() in {"none", "nan"}:
+        return ""
     return str(value)
 
 
@@ -739,7 +843,34 @@ def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
     lines.extend(
         [
             "",
-            "## Table 2: epa-only Metrics",
+            "## Table 2: Valid Segment Status",
+            "",
+            "| case | case_status | SR_dist_% (↑) | SR_time_% (↑) | global_gate_failed | global_gate_value_m | valid_distance_m | step3_mode | stable_solve_% | rejected_% | sim3_scale | sim3_reliable | orientation_unstable |",
+            "|---|---|---:|---:|---|---:|---:|---|---:|---:|---:|---|---|",
+        ]
+    )
+    for row in rows:
+        lines.append(
+            "| {case} | {case_status} | {sr_dist} | {sr_time} | {gate_failed} | {gate_value} | {valid_dist} | {mode} | {stable_pct} | {reject_pct} | {sim3_scale} | {sim3_reliable} | {orientation_unstable} |".format(
+                case=row.get("case", ""),
+                case_status=row.get("epa_case_status", ""),
+                sr_dist=_fmt(_as_float(row.get("epa_sr_distance")) * 100.0, 2),
+                sr_time=_fmt(_as_float(row.get("epa_sr_time")) * 100.0, 2),
+                gate_failed=row.get("epa_global_gate_failed", ""),
+                gate_value=_fmt(row.get("epa_global_gate_value_m"), 3),
+                valid_dist=_fmt(row.get("epa_valid_distance_m"), 3),
+                mode=row.get("epa_step3_alignment_mode", ""),
+                stable_pct=_fmt(_as_float(row.get("epa_step3_stable_solve_ratio")) * 100.0, 2),
+                reject_pct=_fmt(_as_float(row.get("epa_step3_rejection_ratio")) * 100.0, 2),
+                sim3_scale=_fmt(row.get("epa_sim3_scale"), 6),
+                sim3_reliable=row.get("epa_sim3_reliable", ""),
+                orientation_unstable=row.get("epa_orientation_unstable", ""),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Table 3: epa-only Metrics",
             "",
             "| case | epa_xcorr_peak (↑) | epa_xcorr_psr (↑) | epa_omega_improve_pct (↑) |",
             "|---|---:|---:|---:|",
@@ -758,7 +889,7 @@ def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
         lines.extend(
             [
                 "",
-                "## Table 3: Legacy evo Baseline",
+                "## Table 4: Legacy evo Baseline",
                 "",
                 "| case | evo_status | evo_aligned_rmse_m (↓) | evo_improve_pct (↑) | evo_offset_s (N/A) | evo_sweep_evals (N/A) |",
                 "|---|---|---:|---:|---:|---:|",
@@ -782,6 +913,233 @@ def _write_summary_md(rows: list[dict[str, object]], path: Path) -> None:
         ]
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _rel_link(path_text: object, base_dir: Path) -> str:
+    text = str(path_text or "").strip()
+    if not text:
+        return ""
+    path = Path(text)
+    if path.is_dir():
+        candidate = path / "plots" / "step3_alignment_map.png"
+        if candidate.exists():
+            path = candidate
+        else:
+            path = path / "metrics.json"
+    try:
+        href = os.path.relpath(path, start=base_dir)
+    except ValueError:
+        href = str(path)
+    label = path.name or str(path)
+    return f'<a href="{html.escape(href)}">{html.escape(label)}</a>'
+
+
+def _interactive_thumb(path_text: object, base_dir: Path) -> str:
+    text = str(path_text or "").strip()
+    if not text:
+        return ""
+    run_path = Path(text)
+    img = run_path / "plots" / "step3_alignment_map.png"
+    interactive = run_path / "interactive_report.html"
+    if interactive.exists() and not img.exists():
+        try:
+            href = os.path.relpath(interactive, start=base_dir)
+        except ValueError:
+            href = str(interactive)
+        return f'<a href="{html.escape(href, quote=True)}">interactive_report.html</a>'
+    if not img.exists():
+        return _rel_link(path_text, base_dir)
+    try:
+        img_href = os.path.relpath(img, start=base_dir)
+    except ValueError:
+        img_href = str(img)
+    try:
+        target_href = os.path.relpath(interactive if interactive.exists() else img, start=base_dir)
+    except ValueError:
+        target_href = str(interactive if interactive.exists() else img)
+    label = "interactive_report.html" if interactive.exists() else "step3_alignment_map.png"
+    return (
+        f'<a class="thumbLink" href="{html.escape(target_href, quote=True)}">'
+        f'<img class="thumb" src="{html.escape(img_href, quote=True)}" alt="step3 alignment">'
+        f'<span class="plotCount">{html.escape(label)}</span>'
+        "</a>"
+    )
+
+
+def _summary_filter_options(rows: list[dict[str, object]], key: str) -> str:
+    values = sorted({str(row.get(key, "") or "") for row in rows if str(row.get(key, "") or "")})
+    options = ['<option value="">all</option>']
+    options.extend(
+        f'<option value="{html.escape(value, quote=True)}">{html.escape(value)}</option>'
+        for value in values
+    )
+    return "".join(options)
+
+
+def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    total = len(rows)
+    epa_ok = sum(1 for row in rows if row.get("status") == "ok")
+    status_counts: dict[str, int] = {}
+    for row in rows:
+        key = str(row.get("epa_case_status", "unknown") or "unknown")
+        status_counts[key] = status_counts.get(key, 0) + 1
+    status_bits = " ".join(
+        f"<span><b>{html.escape(key)}</b>: {value}</span>"
+        for key, value in sorted(status_counts.items())
+    )
+
+    table_rows = []
+    for row in rows:
+        sr_dist = _as_float(row.get("epa_sr_distance")) * 100.0
+        sr_time = _as_float(row.get("epa_sr_time")) * 100.0
+        reject_pct = _as_float(row.get("epa_step3_rejection_ratio")) * 100.0
+        stable_pct = _as_float(row.get("epa_step3_stable_solve_ratio")) * 100.0
+        sr_data = "" if not math.isfinite(sr_dist) else f"{sr_dist:.12g}"
+        gate_failed = str(row.get("epa_global_gate_failed", ""))
+        case_status = str(row.get("epa_case_status", ""))
+        dataset = str(row.get("dataset", ""))
+        method = str(row.get("method", ""))
+        step3_mode = str(row.get("epa_step3_alignment_mode", ""))
+        sim3_reliable = str(row.get("epa_sim3_reliable", ""))
+        orientation_unstable = str(row.get("epa_orientation_unstable", ""))
+        diagnosis_primary = str(row.get("epa_case_diagnosis_primary", ""))
+        diagnosis_summary = str(row.get("epa_case_diagnosis_summary", ""))
+        status_class = "ok" if case_status == "valid_segment" else "warn"
+        if case_status == "globally_failed" or row.get("status") != "ok":
+            status_class = "bad"
+        table_rows.append(
+            "<tr "
+            f'data-dataset="{html.escape(dataset, quote=True)}" '
+            f'data-method="{html.escape(method, quote=True)}" '
+            f'data-status="{html.escape(case_status, quote=True)}" '
+            f'data-step3="{html.escape(step3_mode, quote=True)}" '
+            f'data-sim3-reliable="{html.escape(sim3_reliable, quote=True)}" '
+            f'data-orientation="{html.escape(orientation_unstable, quote=True)}" '
+            f'data-diagnosis="{html.escape(diagnosis_primary, quote=True)}" '
+            f'data-sr="{html.escape(sr_data, quote=True)}">'
+            f"<td>{html.escape(str(row.get('case', '')))}</td>"
+            f"<td>{html.escape(dataset)}</td>"
+            f"<td>{html.escape(method)}</td>"
+            f"<td class='{status_class}'>{html.escape(case_status)}</td>"
+            f"<td>{_fmt(sr_dist, 2)}</td>"
+            f"<td>{_fmt(sr_time, 2)}</td>"
+            f"<td>{html.escape(gate_failed)}</td>"
+            f"<td>{_fmt(row.get('epa_global_gate_value_m'), 3)}</td>"
+            f"<td>{_fmt(row.get('epa_valid_distance_m'), 3)}</td>"
+            f"<td>{html.escape(step3_mode)}</td>"
+            f"<td>{_fmt(stable_pct, 2)}</td>"
+            f"<td>{_fmt(reject_pct, 2)}</td>"
+            f"<td>{_fmt(row.get('epa_sim3_scale'), 6)}</td>"
+            f"<td>{html.escape(sim3_reliable)}</td>"
+            f"<td>{html.escape(str(row.get('epa_sim3_warning', '')))}</td>"
+            f"<td>{html.escape(orientation_unstable)}</td>"
+            f"<td>{html.escape(diagnosis_primary)}</td>"
+            f"<td>{html.escape(diagnosis_summary)}</td>"
+            f"<td>{_fmt(row.get('epa_orientation_ape_rmse_deg'), 2)}</td>"
+            f"<td>{_fmt(row.get('epa_orientation_rpe_rmse_deg'), 2)}</td>"
+            f"<td>{_fmt(row.get('epa_orientation_rpe_time_1s_rmse_deg'), 2)}</td>"
+            f"<td>{html.escape(str(row.get('epa_orientation_warning', '')))}</td>"
+            f"<td>{_fmt(row.get('epa_ate_rmse_step3_m'), 3)}</td>"
+            f"<td>{_interactive_thumb(row.get('epa_run_dir', ''), path.parent)}</td>"
+            f"<td>{_rel_link(row.get('epa_run_dir', ''), path.parent)}</td>"
+            "</tr>"
+        )
+    css = """
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:24px;color:#17202a;background:#fafafa}
+h1{font-size:24px;margin:0 0 12px}
+.summary{display:flex;gap:18px;margin:0 0 18px;color:#445}
+.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0 0 16px;padding:12px;background:#fff;border:1px solid #d7dee8}
+.filterGroup{display:flex;flex-direction:column;gap:4px}
+.filterGroup label{font-size:11px;color:#526070;text-transform:uppercase}
+.filterGroup select,.filterGroup input{height:30px;border:1px solid #c9d3df;background:#fff;padding:4px 7px;font-size:13px;min-width:112px}
+.filters button{height:30px;border:1px solid #9fb1c5;background:#eef3f8;padding:4px 10px;font-size:13px;cursor:pointer}
+.resultCount{font-size:13px;color:#445;margin-left:auto}
+table{border-collapse:collapse;width:100%;background:white;border:1px solid #d7dee8}
+th,td{padding:7px 9px;border-bottom:1px solid #e6ebf2;text-align:left;font-size:13px;white-space:nowrap}
+th{position:sticky;top:0;background:#eef3f8;z-index:1}
+tr:hover{background:#f6f9fc}
+.thumbLink{position:relative;display:block;width:180px;height:132px}
+.thumb{width:180px;height:132px;object-fit:contain;border:1px solid #d7dee8;background:#fff;display:block}
+.plotCount{position:absolute;right:6px;bottom:6px;padding:2px 6px;border-radius:3px;background:rgba(23,32,42,.78);color:white;font-size:11px}
+.ok{color:#146c43;font-weight:600}.warn{color:#9a6700;font-weight:600}.bad{color:#b42318;font-weight:600}
+"""
+    doc = [
+        "<!doctype html><html><head><meta charset='utf-8'>",
+        "<title>EPA Benchmark Summary</title>",
+        f"<style>{css}</style>",
+        "</head><body>",
+        "<h1>EPA Benchmark Summary</h1>",
+        f"<div class='summary'><span><b>total</b>: {total}</span><span><b>epa_ok</b>: {epa_ok}</span>{status_bits}</div>",
+        "<div class='filters'>",
+        f"<div class='filterGroup'><label for='filterDataset'>dataset</label><select id='filterDataset'>{_summary_filter_options(rows, 'dataset')}</select></div>",
+        f"<div class='filterGroup'><label for='filterMethod'>method</label><select id='filterMethod'>{_summary_filter_options(rows, 'method')}</select></div>",
+        f"<div class='filterGroup'><label for='filterStatus'>case_status</label><select id='filterStatus'>{_summary_filter_options(rows, 'epa_case_status')}</select></div>",
+        f"<div class='filterGroup'><label for='filterStep3'>Step3 mode</label><select id='filterStep3'>{_summary_filter_options(rows, 'epa_step3_alignment_mode')}</select></div>",
+        f"<div class='filterGroup'><label for='filterSim3'>Sim3 reliable</label><select id='filterSim3'>{_summary_filter_options(rows, 'epa_sim3_reliable')}</select></div>",
+        f"<div class='filterGroup'><label for='filterOrientation'>orientation</label><select id='filterOrientation'>{_summary_filter_options(rows, 'epa_orientation_unstable')}</select></div>",
+        f"<div class='filterGroup'><label for='filterDiagnosis'>diagnosis</label><select id='filterDiagnosis'>{_summary_filter_options(rows, 'epa_case_diagnosis_primary')}</select></div>",
+        "<div class='filterGroup'><label for='filterSrMin'>SR min %</label><input id='filterSrMin' type='number' min='0' max='100' step='0.01'></div>",
+        "<div class='filterGroup'><label for='filterSrMax'>SR max %</label><input id='filterSrMax' type='number' min='0' max='100' step='0.01'></div>",
+        "<button id='resetFilters' type='button'>reset</button>",
+        f"<span class='resultCount'><b id='visibleCount'>{total}</b> / {total}</span>",
+        "</div>",
+        "<table><thead><tr>",
+        "<th>case</th><th>dataset</th><th>method</th><th>case_status</th><th>SR_dist_%</th><th>SR_time_%</th><th>global_gate_failed</th><th>gate_value_m</th><th>valid_distance_m</th><th>step3_mode</th><th>stable_solve_%</th><th>rejected_%</th><th>sim3_scale</th><th>sim3_reliable</th><th>sim3_warning</th><th>orientation_unstable</th><th>diagnosis</th><th>diagnosis_summary</th><th>APE_rot_deg</th><th>RPE_rot_deg</th><th>RPE_1s_rot_deg</th><th>orientation_warning</th><th>step3_rmse_m</th><th>interactive</th><th>run</th>",
+        "</tr></thead><tbody id='summaryBody'>",
+        *table_rows,
+        "</tbody></table>",
+        """<script>
+(function(){
+  const controls = {
+    dataset: document.getElementById('filterDataset'),
+    method: document.getElementById('filterMethod'),
+    status: document.getElementById('filterStatus'),
+    step3: document.getElementById('filterStep3'),
+    sim3: document.getElementById('filterSim3'),
+    orientation: document.getElementById('filterOrientation'),
+    diagnosis: document.getElementById('filterDiagnosis'),
+    srMin: document.getElementById('filterSrMin'),
+    srMax: document.getElementById('filterSrMax')
+  };
+  const rows = Array.from(document.querySelectorAll('#summaryBody tr'));
+  const visibleCount = document.getElementById('visibleCount');
+  function matchSelect(row, name, control) {
+    return !control.value || row.dataset[name] === control.value;
+  }
+  function applyFilters() {
+    const minText = controls.srMin.value.trim();
+    const maxText = controls.srMax.value.trim();
+    const minSr = minText === '' ? -Infinity : Number(minText);
+    const maxSr = maxText === '' ? Infinity : Number(maxText);
+    let shown = 0;
+    rows.forEach(row => {
+      const sr = Number(row.dataset.sr);
+      const hasSr = row.dataset.sr !== '' && Number.isFinite(sr);
+      let ok = true;
+      ok = ok && matchSelect(row, 'dataset', controls.dataset);
+      ok = ok && matchSelect(row, 'method', controls.method);
+      ok = ok && matchSelect(row, 'status', controls.status);
+      ok = ok && matchSelect(row, 'step3', controls.step3);
+      ok = ok && matchSelect(row, 'sim3Reliable', controls.sim3);
+      ok = ok && matchSelect(row, 'orientation', controls.orientation);
+      ok = ok && matchSelect(row, 'diagnosis', controls.diagnosis);
+      if (minText !== '' || maxText !== '') ok = ok && hasSr && sr >= minSr && sr <= maxSr;
+      row.style.display = ok ? '' : 'none';
+      if (ok) shown += 1;
+    });
+    visibleCount.textContent = shown;
+  }
+  Object.values(controls).forEach(control => control.addEventListener('input', applyFilters));
+  document.getElementById('resetFilters').addEventListener('click', () => {
+    Object.values(controls).forEach(control => { control.value = ''; });
+    applyFilters();
+  });
+})();
+</script>""",
+        "</body></html>",
+    ]
+    path.write_text("\n".join(doc) + "\n", encoding="utf-8")
 
 
 
@@ -859,6 +1217,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--output-root",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--resume-run",
         default="",
         help=argparse.SUPPRESS,
     )
@@ -1009,6 +1372,31 @@ def _failed_summary_row(
         "epa_xcorr_psr": float("nan"),
         "epa_omega_improve_pct": float("nan"),
         "epa_matches_equivalent": float("nan"),
+        "epa_sr_distance": float("nan"),
+        "epa_sr_time": float("nan"),
+        "epa_case_status": "",
+        "epa_global_gate_failed": "",
+        "epa_global_gate_value_m": float("nan"),
+        "epa_global_gate_m": float("nan"),
+        "epa_valid_distance_m": float("nan"),
+        "epa_total_distance_m": float("nan"),
+        "epa_step3_alignment_mode": "",
+        "epa_step3_inlier_count": float("nan"),
+        "epa_step3_rejected_count": float("nan"),
+        "epa_step3_rejection_ratio": float("nan"),
+        "epa_step3_stable_segment_used": float("nan"),
+        "epa_step3_stable_solve_ratio": float("nan"),
+        "epa_sim3_scale": float("nan"),
+        "epa_sim3_reliable": "",
+        "epa_sim3_warning": "",
+        "epa_orientation_unstable": "",
+        "epa_orientation_ape_rmse_deg": float("nan"),
+        "epa_orientation_rpe_rmse_deg": float("nan"),
+        "epa_orientation_rpe_time_1s_rmse_deg": float("nan"),
+        "epa_orientation_warning": "",
+        "epa_case_diagnosis_primary": "",
+        "epa_case_diagnosis_summary": "",
+        "epa_case_diagnosis_tags": "",
         "evo_matches": float("nan"),
         "epa_run_dir": "",
         "epa_stdout_log": "",
@@ -1152,6 +1540,33 @@ def _run_benchmark_case(
         "epa_xcorr_psr": _as_float(epa_result.get("xcorr_psr")),
         "epa_omega_improve_pct": _as_float(epa_result.get("omega_improve_pct")),
         "epa_matches_equivalent": _as_float(epa_result.get("evo_matches_equivalent")),
+        "epa_sr_distance": _as_float(epa_result.get("sr_distance")),
+        "epa_sr_time": _as_float(epa_result.get("sr_time")),
+        "epa_case_status": str(epa_result.get("case_status", "")),
+        "epa_global_gate_failed": str(epa_result.get("global_gate_failed", "")),
+        "epa_global_gate_value_m": _as_float(epa_result.get("global_gate_value_m")),
+        "epa_global_gate_m": _as_float(epa_result.get("global_gate_m")),
+        "epa_valid_distance_m": _as_float(epa_result.get("valid_distance_m")),
+        "epa_total_distance_m": _as_float(epa_result.get("total_distance_m")),
+        "epa_step3_alignment_mode": str(epa_result.get("step3_alignment_mode", "")),
+        "epa_step3_inlier_count": _as_float(epa_result.get("step3_inlier_count")),
+        "epa_step3_rejected_count": _as_float(epa_result.get("step3_rejected_count")),
+        "epa_step3_rejection_ratio": _as_float(epa_result.get("step3_rejection_ratio")),
+        "epa_step3_stable_segment_used": _as_float(epa_result.get("step3_stable_segment_used")),
+        "epa_step3_stable_solve_ratio": _as_float(epa_result.get("step3_stable_solve_ratio")),
+        "epa_sim3_scale": _as_float(epa_result.get("sim3_scale")),
+        "epa_sim3_reliable": str(epa_result.get("sim3_reliable", "")),
+        "epa_sim3_warning": str(epa_result.get("sim3_warning", "")),
+        "epa_orientation_unstable": str(epa_result.get("orientation_unstable", "")),
+        "epa_orientation_ape_rmse_deg": _as_float(epa_result.get("orientation_ape_rmse_deg")),
+        "epa_orientation_rpe_rmse_deg": _as_float(epa_result.get("orientation_rpe_rmse_deg")),
+        "epa_orientation_rpe_time_1s_rmse_deg": _as_float(
+            epa_result.get("orientation_rpe_time_1s_rmse_deg")
+        ),
+        "epa_orientation_warning": str(epa_result.get("orientation_warning", "")),
+        "epa_case_diagnosis_primary": str(epa_result.get("diagnosis_primary", "")),
+        "epa_case_diagnosis_summary": str(epa_result.get("diagnosis_summary", "")),
+        "epa_case_diagnosis_tags": str(epa_result.get("diagnosis_tags", "")),
         "evo_matches": _as_float(evo_result.get("matches")),
         "epa_run_dir": str(epa_result.get("run_dir", "")),
         "epa_stdout_log": str(epa_result.get("stdout_log", "")),
@@ -1179,6 +1594,111 @@ def _run_benchmark_case(
     return row
 
 
+def _relative_or_absolute(path_text: object, root: Path) -> str:
+    try:
+        path = Path(str(path_text))
+        return str(path.relative_to(root))
+    except Exception:
+        return str(path_text)
+
+
+def _summary_row_from_case_payload(
+    case: BenchmarkCase,
+    *,
+    align_root: Path,
+    payload: dict[str, object],
+) -> dict[str, object]:
+    epa_result = payload.get("epa", {})
+    evo_result = payload.get("evo", {})
+    if not isinstance(epa_result, dict) or not isinstance(evo_result, dict):
+        return _failed_summary_row(
+            case,
+            gt=_relative_or_absolute(payload.get("gt_path", case.gt_path), align_root),
+            est=_relative_or_absolute(payload.get("est_path", case.est_path), align_root),
+            error=str(payload.get("error", "Incomplete cached case payload.")),
+        )
+
+    epa_ok = epa_result.get("status") == "ok"
+    row = {
+        "case": case.case_id,
+        "dataset": case.dataset,
+        "method": case.method,
+        "status": _bool_to_status(epa_ok),
+        "gt": _relative_or_absolute(payload.get("gt_path", case.gt_path), align_root),
+        "est": _relative_or_absolute(payload.get("est_path", case.est_path), align_root),
+        "epa_status": epa_result.get("status", "failed"),
+        "evo_status": evo_result.get("status", "failed"),
+        "epa_offset_est_s": _as_float(epa_result.get("offset_est_s")),
+        "evo_offset_s": _as_float(evo_result.get("offset_s")),
+        "epa_ate_rmse_raw_m": _as_float(epa_result.get("ate_rmse_raw_m")),
+        "epa_ate_rmse_step3_m": _as_float(epa_result.get("ate_rmse_step3_m")),
+        "evo_ape_raw_rmse_m": _as_float(evo_result.get("ape_raw_rmse_m")),
+        "evo_ape_se3_rmse_m": _as_float(evo_result.get("ape_se3_rmse_m")),
+        "epa_improve_pct": _as_float(epa_result.get("improve_raw_to_step3_pct")),
+        "evo_improve_pct": _as_float(evo_result.get("improve_pct")),
+        "epa_xcorr_peak": _as_float(epa_result.get("xcorr_peak")),
+        "epa_xcorr_psr": _as_float(epa_result.get("xcorr_psr")),
+        "epa_omega_improve_pct": _as_float(epa_result.get("omega_improve_pct")),
+        "epa_matches_equivalent": _as_float(epa_result.get("evo_matches_equivalent")),
+        "epa_sr_distance": _as_float(epa_result.get("sr_distance")),
+        "epa_sr_time": _as_float(epa_result.get("sr_time")),
+        "epa_case_status": str(epa_result.get("case_status", "")),
+        "epa_global_gate_failed": str(epa_result.get("global_gate_failed", "")),
+        "epa_global_gate_value_m": _as_float(epa_result.get("global_gate_value_m")),
+        "epa_global_gate_m": _as_float(epa_result.get("global_gate_m")),
+        "epa_valid_distance_m": _as_float(epa_result.get("valid_distance_m")),
+        "epa_total_distance_m": _as_float(epa_result.get("total_distance_m")),
+        "epa_step3_alignment_mode": str(epa_result.get("step3_alignment_mode", "")),
+        "epa_step3_inlier_count": _as_float(epa_result.get("step3_inlier_count")),
+        "epa_step3_rejected_count": _as_float(epa_result.get("step3_rejected_count")),
+        "epa_step3_rejection_ratio": _as_float(epa_result.get("step3_rejection_ratio")),
+        "epa_step3_stable_segment_used": _as_float(epa_result.get("step3_stable_segment_used")),
+        "epa_step3_stable_solve_ratio": _as_float(epa_result.get("step3_stable_solve_ratio")),
+        "epa_sim3_scale": _as_float(epa_result.get("sim3_scale")),
+        "epa_sim3_reliable": str(epa_result.get("sim3_reliable", "")),
+        "epa_sim3_warning": str(epa_result.get("sim3_warning", "")),
+        "epa_orientation_unstable": str(epa_result.get("orientation_unstable", "")),
+        "epa_orientation_ape_rmse_deg": _as_float(epa_result.get("orientation_ape_rmse_deg")),
+        "epa_orientation_rpe_rmse_deg": _as_float(epa_result.get("orientation_rpe_rmse_deg")),
+        "epa_orientation_rpe_time_1s_rmse_deg": _as_float(
+            epa_result.get("orientation_rpe_time_1s_rmse_deg")
+        ),
+        "epa_orientation_warning": str(epa_result.get("orientation_warning", "")),
+        "epa_case_diagnosis_primary": str(epa_result.get("diagnosis_primary", "")),
+        "epa_case_diagnosis_summary": str(epa_result.get("diagnosis_summary", "")),
+        "epa_case_diagnosis_tags": str(epa_result.get("diagnosis_tags", "")),
+        "evo_matches": _as_float(evo_result.get("matches")),
+        "epa_run_dir": str(epa_result.get("run_dir", "")),
+        "epa_stdout_log": str(epa_result.get("stdout_log", "")),
+        "epa_stderr_log": str(epa_result.get("stderr_log", "")),
+        "evo_sweep_evals": int(evo_result.get("sweep_evals", 0)),
+        "error": "",
+    }
+    if epa_result.get("status") != "ok":
+        row["error"] = str(epa_result.get("stderr_tail", "") or evo_result.get("error", ""))
+    elif evo_result.get("status") == "failed":
+        row["error"] = str(evo_result.get("error", ""))
+    return row
+
+
+def _load_cached_summary_row(
+    case: BenchmarkCase,
+    *,
+    align_root: Path,
+    case_json_dir: Path,
+) -> dict[str, object] | None:
+    case_json_path = case_json_dir / f"{case.case_id}.json"
+    if not case_json_path.exists():
+        return None
+    try:
+        payload = json.loads(case_json_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return _summary_row_from_case_payload(case, align_root=align_root, payload=payload)
+
+
 def run(args: argparse.Namespace) -> int:
     repo_root = Path(args.repo_root).resolve()
     cases_root_arg = str(getattr(args, "cases_root_pos", "") or getattr(args, "cases_root", ""))
@@ -1200,7 +1720,10 @@ def run(args: argparse.Namespace) -> int:
             print(f"- {case.case_id} | {case.gt_path} | {case.est_path}")
         return 0
 
-    run_dir = _make_run_dir(output_root)
+    resume_run = str(getattr(args, "resume_run", "")).strip()
+    run_dir = _resolve_cli_path(resume_run, repo_root) if resume_run else _make_run_dir(output_root)
+    if resume_run:
+        run_dir.mkdir(parents=True, exist_ok=True)
     prepared_dir = run_dir / "prepared_tum"
     logs_dir = run_dir / "logs"
     case_json_dir = run_dir / "cases"
@@ -1239,8 +1762,21 @@ def run(args: argparse.Namespace) -> int:
         "min_match_ratio": args.min_match_ratio,
     }
     summary_rows_by_index: dict[int, dict[str, object]] = {}
-    if jobs == 1:
+    pending_cases: list[tuple[int, BenchmarkCase]] = []
+    if resume_run:
         for index, case in enumerate(cases, start=1):
+            cached = _load_cached_summary_row(case, align_root=align_root, case_json_dir=case_json_dir)
+            if cached is None:
+                pending_cases.append((index, case))
+            else:
+                summary_rows_by_index[index] = cached
+        print(f"Resuming run dir: {run_dir}")
+        print(f"Cached cases: {len(summary_rows_by_index)}; pending cases: {len(pending_cases)}")
+    else:
+        pending_cases = list(enumerate(cases, start=1))
+
+    if jobs == 1:
+        for index, case in pending_cases:
             print(f"[{index}/{len(cases)}] {case.case_id}")
             summary_rows_by_index[index] = _run_benchmark_case(case, **worker_kwargs)
     else:
@@ -1248,7 +1784,7 @@ def run(args: argparse.Namespace) -> int:
         with ProcessPoolExecutor(max_workers=jobs) as executor:
             futures = {
                 executor.submit(_run_benchmark_case, case, **worker_kwargs): (index, case)
-                for index, case in enumerate(cases, start=1)
+                for index, case in pending_cases
             }
             completed = 0
             for future in as_completed(futures):
@@ -1271,6 +1807,7 @@ def run(args: argparse.Namespace) -> int:
 
     _write_csv(summary_rows, run_dir / "summary.csv")
     _write_summary_md(summary_rows, run_dir / "summary.md")
+    _write_summary_html(summary_rows, run_dir / "summary.html")
 
     try:
         write_latex_tables(

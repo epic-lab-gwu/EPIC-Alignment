@@ -390,6 +390,112 @@ def _compute_piecewise_diagnostics(
     return metrics, details
 
 
+def _diagnosis_tags_from_metrics(
+    *,
+    success: dict,
+    time_metrics: dict,
+    traj_metrics: dict,
+    step3_selection: dict,
+    alignment_quality: dict,
+    rigid_alignability: dict,
+    orientation: dict,
+) -> dict:
+    tags = []
+    reasons = {}
+
+    def finite_float(value: object) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return float(np.nan)
+
+    def strict_bool(value: object) -> bool:
+        if isinstance(value, (bool, np.bool_)):
+            return bool(value)
+        if isinstance(value, (int, float, np.integer, np.floating)):
+            return bool(value)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "y"}
+        return False
+
+    xcorr_peak = finite_float(time_metrics.get("xcorr_peak_normalized", np.nan))
+    xcorr_psr = finite_float(time_metrics.get("xcorr_psr", np.nan))
+    gate_value = finite_float(success.get("global_gate_value_m", np.nan))
+    gate_m = finite_float(success.get("global_gate_m", np.nan))
+    stable_used = finite_float(step3_selection.get("step3_stable_segment_used", np.nan))
+    stable_ratio = finite_float(step3_selection.get("step3_stable_solve_ratio", np.nan))
+    sr_distance = finite_float(success.get("success_rate_distance", np.nan))
+    case_status = str(success.get("case_status", ""))
+    quality_label = str(alignment_quality.get("_quality_label", ""))
+    rigid_label = str(rigid_alignability.get("_rigid_alignability_label", ""))
+    rigid_reasons = str(rigid_alignability.get("_rigid_alignability_reasons", ""))
+    orientation_unstable = strict_bool(orientation.get("orientation_unstable", False))
+    orientation_warning = str(orientation.get("orientation_warning", "") or "").strip()
+    global_gate_failed = strict_bool(success.get("global_gate_failed", False))
+    piecewise_ratio = finite_float(rigid_alignability.get("segment_global_local_rmse_ratio", np.nan))
+    sim3_scale = finite_float(rigid_alignability.get("sim3_scale", np.nan))
+    low_performance = case_status in {"globally_unstable", "globally_failed"} or (
+        np.isfinite(sr_distance) and sr_distance < 0.2
+    )
+
+    if (np.isfinite(xcorr_peak) and xcorr_peak < 0.75) or (np.isfinite(xcorr_psr) and xcorr_psr < 6.0):
+        tags.append("time_alignment_weak")
+        reasons.setdefault("time_alignment_weak", "weak xcorr peak/psr")
+
+    if low_performance and (
+        (np.isfinite(stable_ratio) and stable_ratio < 0.15)
+        or (np.isfinite(stable_used) and stable_used < 0.5 and not np.isfinite(stable_ratio))
+    ):
+        tags.append("step3_no_reliable_stable_segment")
+        reasons.setdefault("step3_no_reliable_stable_segment", "no stable segment or too little stable solve coverage")
+
+    if (
+        case_status in {"globally_unstable", "globally_failed"}
+        and np.isfinite(gate_value)
+        and np.isfinite(gate_m)
+        and gate_value > gate_m
+    ):
+        tags.append("global_gate_too_large")
+        reasons.setdefault("global_gate_too_large", f"global gate value {gate_value:.3g} exceeds gate {gate_m:.3g}")
+
+    if case_status in {"globally_unstable", "globally_failed"} and np.isfinite(piecewise_ratio) and piecewise_ratio > 4.0:
+        tags.append("trajectory_jump")
+        reasons.setdefault("trajectory_jump", "global/local segment error ratio is large")
+
+    if (
+        ("scale_mismatch_severe" in str(rigid_reasons))
+        or (np.isfinite(sim3_scale) and (sim3_scale <= 0.1 or sim3_scale >= 10.0))
+    ):
+        tags.append("scale_or_unit_suspect")
+        reasons.setdefault("scale_or_unit_suspect", "scale mismatch indicators are strong")
+
+    if rigid_label != "rigidly_alignable" and (
+        "path_ratio" in rigid_reasons
+        or "bbox_ratio" in rigid_reasons
+        or "global_local_ratio" in rigid_reasons
+        or "sim3_gain" in rigid_reasons
+    ):
+        tags.append("gt_mapping_suspect")
+        reasons.setdefault("gt_mapping_suspect", "rigid alignability checks failed")
+
+    if orientation_unstable or orientation_warning:
+        tags.append("orientation_unstable")
+        reasons.setdefault("orientation_unstable", orientation_warning or "rotation error unstable")
+
+    if quality_label == "poor_align" and case_status in {"globally_unstable", "globally_failed"}:
+        tags.append("alignment_poor")
+        reasons.setdefault("alignment_poor", "step3 remains poor after diagnostics")
+
+    tags = list(dict.fromkeys(tags))
+    return {
+        "diagnosis_tags": tags,
+        "diagnosis_reasons": reasons,
+        "diagnosis_summary": "; ".join(tags),
+        "diagnosis_primary": tags[0] if tags else "",
+        "diagnosis_count": float(len(tags)),
+    }
+
+
 def _build_user_alert(
     *,
     time_metrics,

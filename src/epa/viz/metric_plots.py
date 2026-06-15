@@ -15,6 +15,7 @@ import numpy as np
 from epa.core.evaluation import RELATION_UNITS
 
 _STATS_KEYS = ["rmse", "mean", "median", "std", "min", "max"]
+_STATS_CORE_KEYS = ["rmse", "mean", "median", "std", "p95"]
 _DEFAULT_STAGES = ("raw", "step2", "step3")
 
 
@@ -181,13 +182,33 @@ def _plot_raw(
     xlabel: str,
     out_path: Path,
     keep_open: bool = False,
+    clip_percentile: float | None = None,
 ) -> None:
     plt.figure(figsize=(11, 4.8))
+    clipped_any = False
     for label, xvals, errs in traces:
-        n = min(xvals.size, errs.size)
+        x = np.asarray(xvals, dtype=float)
+        y = np.asarray(errs, dtype=float)
+        n = min(x.size, y.size)
         if n == 0:
             continue
-        plt.plot(xvals[:n], errs[:n], label=label, linewidth=1.4)
+        x = x[:n]
+        y = y[:n]
+        valid = np.isfinite(x) & np.isfinite(y)
+        x = x[valid]
+        y = y[valid]
+        if y.size == 0:
+            continue
+        if clip_percentile is not None:
+            clip_at = float(np.nanpercentile(y, float(clip_percentile)))
+            if np.isfinite(clip_at) and clip_at > 0.0:
+                keep = y <= clip_at
+                clipped_any = clipped_any or bool(np.any(~keep))
+                x = x[keep]
+                y = y[keep]
+        if y.size == 0:
+            continue
+        plt.plot(x, y, label=label, linewidth=1.4)
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
@@ -197,6 +218,8 @@ def _plot_raw(
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     if not keep_open:
         plt.close()
+    if clip_percentile is not None and not clipped_any and out_path.exists():
+        return
 
 
 def _plot_stats(
@@ -204,20 +227,22 @@ def _plot_stats(
     title: str,
     out_path: Path,
     keep_open: bool = False,
+    keys: list[str] | None = None,
 ) -> None:
+    keys = list(keys or _STATS_KEYS)
     labels = [name for name, _ in stage_stats]
     values = np.array(
-        [[float(stats.get(k, np.nan)) for k in _STATS_KEYS] for _, stats in stage_stats],
+        [[float(stats.get(k, np.nan)) for k in keys] for _, stats in stage_stats],
         dtype=float,
     )
-    x = np.arange(len(_STATS_KEYS), dtype=float)
+    x = np.arange(len(keys), dtype=float)
     width = 0.24
 
     plt.figure(figsize=(11, 5.3))
     for idx, label in enumerate(labels):
         offset = (idx - (len(labels) - 1) / 2.0) * width
         plt.bar(x + offset, values[idx], width=width, label=label)
-    plt.xticks(x, _STATS_KEYS)
+    plt.xticks(x, keys)
     plt.title(title)
     plt.ylabel("value")
     plt.grid(True, axis="y", linestyle=":", alpha=0.4)
@@ -234,11 +259,21 @@ def _plot_hist(
     xlabel: str,
     out_path: Path,
     keep_open: bool = False,
+    clip_percentile: float | None = None,
 ) -> None:
     plt.figure(figsize=(11, 4.8))
+    clipped_any = False
     for label, errs in stage_errors:
         vals = np.asarray(errs, dtype=float)
         vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        if clip_percentile is not None:
+            clip_at = float(np.nanpercentile(vals, float(clip_percentile)))
+            if np.isfinite(clip_at) and clip_at > 0.0:
+                before = vals.size
+                vals = vals[vals <= clip_at]
+                clipped_any = clipped_any or vals.size < before
         if vals.size == 0:
             continue
         plt.hist(vals, bins=36, alpha=0.4, density=True, label=label)
@@ -251,6 +286,8 @@ def _plot_hist(
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     if not keep_open:
         plt.close()
+    if clip_percentile is not None and not clipped_any and out_path.exists():
+        return
 
 
 def _plot_box(
@@ -259,12 +296,22 @@ def _plot_box(
     ylabel: str,
     out_path: Path,
     keep_open: bool = False,
+    clip_percentile: float | None = None,
 ) -> None:
     labels = []
     values = []
+    clipped_any = False
     for label, errs in stage_errors:
         vals = np.asarray(errs, dtype=float)
         vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        if clip_percentile is not None:
+            clip_at = float(np.nanpercentile(vals, float(clip_percentile)))
+            if np.isfinite(clip_at) and clip_at > 0.0:
+                before = vals.size
+                vals = vals[vals <= clip_at]
+                clipped_any = clipped_any or vals.size < before
         if vals.size == 0:
             continue
         labels.append(label)
@@ -281,6 +328,8 @@ def _plot_box(
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     if not keep_open:
         plt.close()
+    if clip_percentile is not None and not clipped_any and out_path.exists():
+        return
 
 
 def _plot_violin(
@@ -289,12 +338,22 @@ def _plot_violin(
     ylabel: str,
     out_path: Path,
     keep_open: bool = False,
+    clip_percentile: float | None = None,
 ) -> None:
     labels = []
     values = []
+    clipped_any = False
     for label, errs in stage_errors:
         vals = np.asarray(errs, dtype=float)
         vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        if clip_percentile is not None:
+            clip_at = float(np.nanpercentile(vals, float(clip_percentile)))
+            if np.isfinite(clip_at) and clip_at > 0.0:
+                before = vals.size
+                vals = vals[vals <= clip_at]
+                clipped_any = clipped_any or vals.size < before
         if vals.size == 0:
             continue
         labels.append(label)
@@ -311,6 +370,8 @@ def _plot_violin(
     plt.savefig(out_path, dpi=180, bbox_inches="tight")
     if not keep_open:
         plt.close()
+    if clip_percentile is not None and not clipped_any and out_path.exists():
+        return
 
 
 def generate_metric_plots(
@@ -352,6 +413,20 @@ def generate_metric_plots(
         )
         produced.append(raw_path)
 
+        for pct in (95.0, 99.0):
+            clipped_raw_path = out_dir / f"{metric_kind}_{slug}_raw_p{int(pct)}.png"
+            _plot_raw(
+                traces,
+                title=f"{metric_kind.upper()} raw values ({relation}, p{int(pct)} clipped)",
+                ylabel=ylabel,
+                xlabel=x_label,
+                out_path=clipped_raw_path,
+                keep_open=keep_open,
+                clip_percentile=pct,
+            )
+            if clipped_raw_path.exists():
+                produced.append(clipped_raw_path)
+
         stats_path = out_dir / f"{metric_kind}_{slug}_stats.png"
         _plot_stats(
             stage_stats,
@@ -360,6 +435,16 @@ def generate_metric_plots(
             keep_open=keep_open,
         )
         produced.append(stats_path)
+
+        stats_core_path = out_dir / f"{metric_kind}_{slug}_stats_core.png"
+        _plot_stats(
+            stage_stats,
+            title=f"{metric_kind.upper()} core stats ({relation})",
+            out_path=stats_core_path,
+            keep_open=keep_open,
+            keys=_STATS_CORE_KEYS,
+        )
+        produced.append(stats_core_path)
 
         hist_path = out_dir / f"{metric_kind}_{slug}_hist.png"
         _plot_hist(
@@ -370,6 +455,19 @@ def generate_metric_plots(
             keep_open=keep_open,
         )
         produced.append(hist_path)
+
+        for pct in (95.0, 99.0):
+            clipped_hist_path = out_dir / f"{metric_kind}_{slug}_hist_p{int(pct)}.png"
+            _plot_hist(
+                stage_errors,
+                title=f"{metric_kind.upper()} distribution ({relation}, p{int(pct)} clipped)",
+                xlabel=ylabel,
+                out_path=clipped_hist_path,
+                keep_open=keep_open,
+                clip_percentile=pct,
+            )
+            if clipped_hist_path.exists():
+                produced.append(clipped_hist_path)
 
         box_path = out_dir / f"{metric_kind}_{slug}_box.png"
         _plot_box(
@@ -382,6 +480,19 @@ def generate_metric_plots(
         if box_path.exists():
             produced.append(box_path)
 
+        for pct in (95.0, 99.0):
+            clipped_box_path = out_dir / f"{metric_kind}_{slug}_box_p{int(pct)}.png"
+            _plot_box(
+                stage_errors,
+                title=f"{metric_kind.upper()} box ({relation}, p{int(pct)} clipped)",
+                ylabel=ylabel,
+                out_path=clipped_box_path,
+                keep_open=keep_open,
+                clip_percentile=pct,
+            )
+            if clipped_box_path.exists():
+                produced.append(clipped_box_path)
+
         violin_path = out_dir / f"{metric_kind}_{slug}_violin.png"
         _plot_violin(
             stage_errors,
@@ -392,6 +503,19 @@ def generate_metric_plots(
         )
         if violin_path.exists():
             produced.append(violin_path)
+
+        for pct in (95.0, 99.0):
+            clipped_violin_path = out_dir / f"{metric_kind}_{slug}_violin_p{int(pct)}.png"
+            _plot_violin(
+                stage_errors,
+                title=f"{metric_kind.upper()} violin ({relation}, p{int(pct)} clipped)",
+                ylabel=ylabel,
+                out_path=clipped_violin_path,
+                keep_open=keep_open,
+                clip_percentile=pct,
+            )
+            if clipped_violin_path.exists():
+                produced.append(clipped_violin_path)
 
     return produced
 
@@ -433,6 +557,20 @@ def generate_time_rpe_metric_plots(
     )
     produced.append(raw_path)
 
+    for pct in (95.0, 99.0):
+        clipped_raw_path = out_dir / f"rpe_time_1s_{slug}_raw_p{int(pct)}.png"
+        _plot_raw(
+            traces,
+            title=f"1-second time RPE raw values ({relation}, p{int(pct)} clipped)",
+            ylabel=ylabel,
+            xlabel=x_label,
+            out_path=clipped_raw_path,
+            keep_open=keep_open,
+            clip_percentile=pct,
+        )
+        if clipped_raw_path.exists():
+            produced.append(clipped_raw_path)
+
     stats_path = out_dir / f"rpe_time_1s_{slug}_stats.png"
     _plot_stats(
         stage_stats,
@@ -441,6 +579,16 @@ def generate_time_rpe_metric_plots(
         keep_open=keep_open,
     )
     produced.append(stats_path)
+
+    stats_core_path = out_dir / f"rpe_time_1s_{slug}_stats_core.png"
+    _plot_stats(
+        stage_stats,
+        title=f"1-second time RPE core stats ({relation})",
+        out_path=stats_core_path,
+        keep_open=keep_open,
+        keys=_STATS_CORE_KEYS,
+    )
+    produced.append(stats_core_path)
 
     box_path = out_dir / f"rpe_time_1s_{slug}_box.png"
     _plot_box(
@@ -452,6 +600,19 @@ def generate_time_rpe_metric_plots(
     )
     if box_path.exists():
         produced.append(box_path)
+
+    for pct in (95.0, 99.0):
+        clipped_box_path = out_dir / f"rpe_time_1s_{slug}_box_p{int(pct)}.png"
+        _plot_box(
+            stage_errors,
+            title=f"1-second time RPE box ({relation}, p{int(pct)} clipped)",
+            ylabel=ylabel,
+            out_path=clipped_box_path,
+            keep_open=keep_open,
+            clip_percentile=pct,
+        )
+        if clipped_box_path.exists():
+            produced.append(clipped_box_path)
 
     return produced
 
@@ -556,6 +717,20 @@ def aggregate_metric_results(
         keep_open=keep_open,
     )
 
+    clipped_hist_paths = []
+    for pct in (95.0, 99.0):
+        clipped_hist_path = out_dir / f"aggregated_hist_p{int(pct)}.png"
+        _plot_hist(
+            series,
+            title=f"{metric_kind.upper()} {relation} distribution ({stage}, p{int(pct)} clipped)",
+            xlabel=ylabel,
+            out_path=clipped_hist_path,
+            keep_open=keep_open,
+            clip_percentile=pct,
+        )
+        if clipped_hist_path.exists():
+            clipped_hist_paths.append(clipped_hist_path)
+
     box_path = out_dir / "aggregated_box.png"
     _plot_box(
         series,
@@ -574,7 +749,7 @@ def aggregate_metric_results(
         keep_open=keep_open,
     )
 
-    produced = [csv_path, rmse_path, hist_path]
+    produced = [csv_path, rmse_path, hist_path, *clipped_hist_paths]
     if box_path.exists():
         produced.append(box_path)
     if violin_path.exists():

@@ -202,22 +202,78 @@ def _umeyama_transform(src_xyz, dst_xyz, with_scale=False):
     return scale, R_align, t_align
 
 
-def align_for_eval(
+def sim3_scale_guard(
+    scale: float,
+    *,
+    warning_min: float = 0.5,
+    warning_max: float = 2.0,
+    severe_min: float = 0.1,
+    severe_max: float = 10.0,
+) -> dict[str, object]:
+    scale_f = float(scale)
+    finite_positive = bool(np.isfinite(scale_f) and scale_f > 0.0)
+    log10_abs = float(abs(np.log10(scale_f))) if finite_positive else float("nan")
+    warning = bool(
+        not finite_positive
+        or scale_f < float(warning_min)
+        or scale_f > float(warning_max)
+    )
+    severe = bool(
+        not finite_positive
+        or scale_f < float(severe_min)
+        or scale_f > float(severe_max)
+    )
+    if severe:
+        level = "severe"
+        message = (
+            "Sim3 estimated scale is outside the reliable range; "
+            "Sim3-aligned RMSE/SR may be misleading."
+        )
+    elif warning:
+        level = "warning"
+        message = (
+            "Sim3 estimated scale is outside the expected range; "
+            "check whether scale correction is appropriate."
+        )
+    else:
+        level = "ok"
+        message = ""
+    return {
+        "sim3_scale": scale_f,
+        "sim3_scale_log10_abs": log10_abs,
+        "sim3_scale_warning": bool(warning),
+        "sim3_scale_severe": bool(severe),
+        "sim3_reliable": bool(not severe),
+        "sim3_warning_level": level,
+        "sim3_warning": message,
+        "sim3_scale_warning_min": float(warning_min),
+        "sim3_scale_warning_max": float(warning_max),
+        "sim3_scale_severe_min": float(severe_min),
+        "sim3_scale_severe_max": float(severe_max),
+    }
+
+
+def align_for_eval_with_info(
     pos_ref: np.ndarray,
     quat_ref: np.ndarray,
     pos_est: np.ndarray,
     quat_est: np.ndarray,
     mode: str,
     n_to_align: int = -1,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
+    info: dict[str, object] = {
+        "align_mode": str(mode).lower(),
+        "n_to_align": int(n_to_align),
+    }
     mode = str(mode).lower()
     if mode == "none":
-        return np.asarray(pos_est, dtype=float), np.asarray(quat_est, dtype=float)
+        return np.asarray(pos_est, dtype=float), np.asarray(quat_est, dtype=float), info
 
     n = pos_ref.shape[0]
     n_use = n if int(n_to_align) <= 0 else min(n, int(n_to_align))
+    info["align_pair_count"] = int(n_use)
     if n_use < 2:
-        return np.asarray(pos_est, dtype=float), np.asarray(quat_est, dtype=float)
+        return np.asarray(pos_est, dtype=float), np.asarray(quat_est, dtype=float), info
 
     pref = np.asarray(pos_ref[:n_use], dtype=float)
     pest = np.asarray(pos_est[:n_use], dtype=float)
@@ -227,13 +283,16 @@ def align_for_eval(
         _, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=False)
         pos_new = (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
-        return pos_new, q_new
+        info["align_scale"] = 1.0
+        return pos_new, q_new, info
 
     if mode == "sim3":
         s_eval, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=True)
         pos_new = s_eval * (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
-        return pos_new, q_new
+        info["align_scale"] = float(s_eval)
+        info.update(sim3_scale_guard(float(s_eval)))
+        return pos_new, q_new, info
 
     if mode == "scale":
         src_centered = pest - np.mean(pest, axis=0)
@@ -241,16 +300,37 @@ def align_for_eval(
         denom = np.sum(src_centered**2)
         scale = 1.0 if denom < 1e-12 else float(np.sqrt(np.sum(dst_centered**2) / denom))
         pos_new = scale * np.asarray(pos_est, dtype=float)
-        return pos_new, q_est
+        info["align_scale"] = float(scale)
+        return pos_new, q_est, info
 
     if mode == "origin":
         R0 = R.from_quat(quat_ref[0]).as_matrix() @ R.from_quat(quat_est[0]).as_matrix().T
         t0 = np.asarray(pos_ref[0], dtype=float) - (R0 @ np.asarray(pos_est[0], dtype=float))
         pos_new = (R0 @ np.asarray(pos_est, dtype=float).T).T + t0
         q_new = normalize_quat_array((R.from_matrix(R0) * R.from_quat(q_est)).as_quat())
-        return pos_new, q_new
+        info["align_scale"] = 1.0
+        return pos_new, q_new, info
 
     raise ValueError(f"Unsupported eval alignment mode: {mode}")
+
+
+def align_for_eval(
+    pos_ref: np.ndarray,
+    quat_ref: np.ndarray,
+    pos_est: np.ndarray,
+    quat_est: np.ndarray,
+    mode: str,
+    n_to_align: int = -1,
+) -> tuple[np.ndarray, np.ndarray]:
+    pos_new, quat_new, _ = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est,
+        mode=mode,
+        n_to_align=n_to_align,
+    )
+    return pos_new, quat_new
 
 
 def project_to_plane(

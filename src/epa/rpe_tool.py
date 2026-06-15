@@ -23,7 +23,7 @@ from epa.core.evaluation import RELATION_UNITS, compute_rpe, normalize_pose_rela
 from epa.core.io_utils import save_metrics, to_builtin, write_result_bundle
 from epa.metric_cli_common import (
     MetricInputs,
-    align_for_eval,
+    align_for_eval_with_info,
     apply_time_window,
     cum_distance,
     default_out_dir,
@@ -526,7 +526,7 @@ def run(args: argparse.Namespace) -> int:
     pose_relation = normalize_pose_relation("rpe", getattr(args, "pose_relation", "trans_part"))
     project_plane = str(getattr(args, "project_to_plane", "none"))
 
-    est_aligned_pos, est_aligned_quat = align_for_eval(
+    est_aligned_pos, est_aligned_quat, align_info = align_for_eval_with_info(
         pos_ref=data.pos_ref,
         quat_ref=data.quat_ref,
         pos_est=data.pos_est,
@@ -534,6 +534,8 @@ def run(args: argparse.Namespace) -> int:
         mode=align_mode,
         n_to_align=n_to_align,
     )
+    if align_info.get("sim3_scale_severe"):
+        print(f"[warn] {align_info.get('sim3_warning')} scale={float(align_info.get('sim3_scale', float('nan'))):.6g}")
     ref_eval_pos, ref_eval_quat = project_to_plane(data.pos_ref, data.quat_ref, project_plane)
     est_eval_pos, est_eval_quat = project_to_plane(est_aligned_pos, est_aligned_quat, project_plane)
 
@@ -616,6 +618,11 @@ def run(args: argparse.Namespace) -> int:
             f"rpe_{pose_relation}_median": float(stat["median"]),
             "pair_count": float(pair_count),
             "matched_pairs": float(matched),
+            "sim3_sr_reliable": (
+                float(bool(align_info.get("sim3_reliable", True)))
+                if align_mode == "sim3"
+                else float("nan")
+            ),
         },
         "pose_metrics": {
             "ape": {},
@@ -632,6 +639,7 @@ def run(args: argparse.Namespace) -> int:
                 "pose_relation": pose_relation,
                 "align": align_mode,
                 "n_to_align": n_to_align,
+                "align_info": align_info,
                 "project_to_plane": project_plane,
                 "change_unit": target_unit,
                 "ros_map_yaml": None if not getattr(args, "ros_map_yaml", None) else str(args.ros_map_yaml),
@@ -648,6 +656,7 @@ def run(args: argparse.Namespace) -> int:
             "ref_name": data.ref_name,
             "est_name": data.est_name,
             "output_dir": str(out_dir),
+            "eval_alignment": align_info,
         },
     }
 

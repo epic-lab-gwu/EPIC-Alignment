@@ -4,6 +4,7 @@ import json
 import pytest
 
 from epa.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config, resolve_scoped_config
+from epa.cli import build_parser
 
 
 def test_parse_args_with_config_supports_required_fields(tmp_path) -> None:
@@ -25,6 +26,16 @@ def test_parse_args_with_config_supports_required_fields(tmp_path) -> None:
     args = parse_args_with_config(parser, argv=["--config", str(cfg)], config_dest="config")
     assert args.metrics_json == ["a.json", "b.json"]
     assert args.mode == "aggregate"
+
+
+def test_epa_cli_debug_flag_defaults_off() -> None:
+    parser = build_parser()
+
+    default_args = parser.parse_args([])
+    debug_args = parser.parse_args(["--debug"])
+
+    assert default_args.debug is False
+    assert debug_args.debug is True
 
 
 def test_parse_args_with_config_overrides_cli_values(tmp_path) -> None:
@@ -193,4 +204,3 @@ def test_parse_args_with_config_reads_tools_container_section(tmp_path, monkeypa
     parser.add_argument("--count", type=int, default=0)
     args = parse_args_with_config(parser, argv=[], config_dest="config", tool_name="epa_traj")
     assert args.count == 8
-

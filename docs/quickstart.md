@@ -45,22 +45,23 @@ Each run creates a timestamped directory under `outputs/`:
 outputs/run_YYYYmmdd_HHMMSS/
 ├── metrics.json
 ├── metrics_summary.csv
+├── interactive_report.html
 ├── report_en.md
 ├── report_zh.md
 └── plots/
     ├── step1_time_alignment.png
-    └── step23_trajectory_alignment_3d.png
+    └── step3_alignment_map.png
 ```
 
-Start with `report_en.md` for a readable summary, `metrics_summary.csv` for table-friendly numbers, and the two plots below for the main alignment diagnostics. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis. Add `--no-downsample` only if you need full-rate solve/evaluation.
+Start with `report_en.md` for a readable summary, `interactive_report.html` for pan/zoom trajectory and metric inspection, `metrics_summary.csv` for table-friendly numbers, and `step3_alignment_map.png` for the static trajectory view. Add `--debug` when you need extra diagnostics such as `debug_step123_trajectory_alignment_3d.png` to compare raw, Step2, and Step3. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis. Add `--no-downsample` only if you need full-rate solve/evaluation.
 
 ![Step 1 time alignment result](images/quickstart_step1_time_alignment.png)
 
 *Step 1: rotational signals after temporal alignment.*
 
-![Step 2/3 trajectory alignment result](images/quickstart_step23_alignment_3d.png)
+![Step 3 trajectory alignment result](images/quickstart_step23_alignment_3d.png)
 
-*Step 2 and Step 3: aligned trajectories in 3D.*
+*Step 3: final aligned trajectory in 3D.*
 
 ## Run A Benchmark
 
@@ -81,12 +82,15 @@ epa_bench /home/username/epa_data/benchmark_cases
 ```text
 outputs/<benchmark_name>_bench/run_YYYYmmdd_HHMMSS/
 ├── summary.csv
+├── summary.html
 ├── summary.md
 ├── unresolved_cases.csv
 ├── cases/
 ├── logs/
 └── paper_tables/
 ```
+
+`summary.html` links each completed case to its `interactive_report.html` when available.
 
 The benchmark root should contain `benchmark/` and `GT/`. Common layouts are:
 

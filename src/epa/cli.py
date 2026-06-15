@@ -362,6 +362,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.set_defaults(plot=True)
     parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Generate additional debug figures, including raw/Step2/Step3 trajectory comparison.",
+    )
+    parser.add_argument(
         "--save-results",
         default="",
         help="Optional path to save a bundled result zip (e.g. outputs/results/run1.zip).",

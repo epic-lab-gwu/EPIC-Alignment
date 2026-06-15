@@ -190,6 +190,7 @@ Common contents:
 
 - `summary.csv`: machine-readable per-case summary
 - `summary.md`: human-readable summary table
+- `summary.html`: filterable benchmark summary with links to per-case outputs
 - `paper_tables/main_table.tex`: paper-ready short LaTeX table
 - `paper_tables/dataset_table.tex`: dataset-level aggregate LaTeX table
 - `paper_tables/appendix_full_table.tex`: full per-case LaTeX longtable for appendix
@@ -199,6 +200,40 @@ Common contents:
 - `unresolved_cases.csv`: discovered but unresolved cases, when applicable
 
 `prepared_tum/` is removed by default to keep benchmark outputs small. Add `--keep-prepared` if you want to keep those intermediate files for later `epa_rerun` debugging.
+
+## Reports and Diagnostics
+
+Each per-case `epa` run writes both Markdown reports and an optional interactive HTML report:
+
+- `report_en.md` and `report_zh.md`: stable Markdown reports for review and archival use
+- `interactive_report.html`: supplementary Plotly-based report for pan/zoom/rotate inspection
+- `pose_states.csv`: per-timestamp GT/raw/Step2/Step3 pose and velocity export
+
+Markdown remains the default durable report format. The HTML report is an additional visualization artifact; it does not replace the Markdown report.
+
+Default reports are user-facing. They emphasize final Step-3 alignment and clipped/core plots so large raw errors or outliers do not hide the readable performance range. Full-scale plots are still generated and kept in the figure gallery for debugging.
+
+Use `epa --debug` when you need intermediate-stage debugging figures. In debug mode, the report includes the raw/Step2/Step3 trajectory comparison that is otherwise hidden from the default report.
+
+The benchmark summary includes case-level diagnostic columns such as:
+
+- `epa_case_diagnosis_primary`
+- `epa_case_diagnosis_summary`
+- `epa_case_diagnosis_tags`
+- `epa_orientation_unstable`
+
+Common diagnostic tags include:
+
+- `time_alignment_weak`
+- `step3_no_reliable_stable_segment`
+- `global_gate_too_large`
+- `trajectory_jump`
+- `scale_or_unit_suspect`
+- `gt_mapping_suspect`
+- `alignment_poor`
+- `orientation_unstable`
+
+`orientation_unstable` is a warning only. It does not change translation successful rate, because SR remains a translation-validity metric.
 
 ## Analysis Notebook
 

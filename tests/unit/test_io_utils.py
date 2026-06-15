@@ -2,6 +2,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from scipy.spatial.transform import Rotation as R
 
 from epa.core.io_utils import (
     load_estimation_kitti,
@@ -10,8 +11,10 @@ from epa.core.io_utils import (
     load_reference_trajectory,
     load_vicon_csv,
     make_output_dir,
+    write_run_reports,
     write_result_bundle,
 )
+from epa.core.outputs import write_pose_state_csv
 
 
 def test_load_estimation_tum(tmp_path: Path) -> None:
@@ -268,6 +271,214 @@ def test_write_result_bundle_creates_zip_with_manifest_and_metrics(tmp_path: Pat
         assert "metrics_summary.csv" in names
         assert "report_zh.md" in names
         assert "report_en.md" in names
+
+
+def test_write_run_reports_keeps_gallery_but_hides_step123_by_default(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    plots_dir = out_dir / "plots"
+    plots_dir.mkdir(parents=True)
+    for name in [
+        "ape_translation_part_se3_raw.png",
+        "debug_step123_trajectory_alignment_3d.png",
+        "step1_time_alignment.png",
+        "step3_alignment_map.png",
+    ]:
+        (plots_dir / name).write_bytes(b"png")
+
+    write_run_reports(
+        out_dir,
+        {
+            "trajectory": {"ate_rmse_step3_m": 0.1},
+            "metadata": {
+                "timestamp": "2026-06-12T00:00:00",
+                "gt_path": "gt.tum",
+                "est_path": "est.tum",
+            },
+        },
+    )
+
+    report = (out_dir / "report_en.md").read_text(encoding="utf-8")
+    assert "## Figure Gallery" in report
+    assert "## User-Facing Figures" not in report
+    assert "## Debug Figures" not in report
+    assert report.index("step3_alignment_map.png") < report.index("ape_translation_part_se3_raw.png")
+    assert "step1_time_alignment.png" in report
+    assert "ape_translation_part_se3_raw.png" in report
+    assert "debug_step123_trajectory_alignment_3d.png" not in report
+
+
+def test_write_run_reports_includes_step123_in_gallery_when_debug_enabled(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    plots_dir = out_dir / "plots"
+    plots_dir.mkdir(parents=True)
+    for name in [
+        "debug_step123_trajectory_alignment_3d.png",
+        "step1_time_alignment.png",
+        "step3_alignment_map.png",
+    ]:
+        (plots_dir / name).write_bytes(b"png")
+
+    write_run_reports(
+        out_dir,
+        {
+            "trajectory": {"ate_rmse_step3_m": 0.1},
+            "metadata": {
+                "timestamp": "2026-06-12T00:00:00",
+                "gt_path": "gt.tum",
+                "est_path": "est.tum",
+                "debug": True,
+            },
+        },
+    )
+
+    report = (out_dir / "report_en.md").read_text(encoding="utf-8")
+    assert "## Figure Gallery" in report
+    assert "## User-Facing Figures" not in report
+    assert "## Debug Figures" not in report
+    assert report.index("step3_alignment_map.png") < report.index("debug_step123_trajectory_alignment_3d.png")
+    assert "step1_time_alignment.png" in report
+
+
+def test_write_run_reports_includes_sim3_alignment_warning(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    out_dir.mkdir(parents=True)
+    write_run_reports(
+        out_dir,
+        {
+            "metric_summary": {"ape_translation_part_rmse": 0.0},
+            "metadata": {
+                "timestamp": "2026-06-12T00:00:00",
+                "gt_path": "gt.tum",
+                "est_path": "est.tum",
+                "eval_alignment": {
+                    "align_mode": "sim3",
+                    "sim3_scale": 0.01,
+                    "sim3_reliable": False,
+                    "sim3_warning": "Sim3 estimated scale is outside the reliable range.",
+                },
+            },
+        },
+    )
+
+    report = (out_dir / "report_en.md").read_text(encoding="utf-8")
+    assert "## Sim3 Alignment" in report
+    assert "Sim3 scale: `0.010000`" in report
+    assert "Reliable: `false`" in report
+    assert "outside the reliable range" in report
+
+
+def test_write_run_reports_includes_orientation_warning(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    out_dir.mkdir(parents=True)
+    write_run_reports(
+        out_dir,
+        {
+            "metric_summary": {"ape_translation_part_rmse": 0.0},
+            "metadata": {
+                "timestamp": "2026-06-12T00:00:00",
+                "gt_path": "gt.tum",
+                "est_path": "est.tum",
+                "orientation_unstable": True,
+                "orientation_warning": "Translation SR is high but rotation error is unstable.",
+                "orientation_ape_rmse_deg": 80.0,
+                "orientation_rpe_rmse_deg": 35.0,
+                "orientation_rpe_time_1s_rmse_deg": 32.0,
+            },
+        },
+    )
+
+    report = (out_dir / "report_en.md").read_text(encoding="utf-8")
+    assert "## Orientation Warning" in report
+    assert "orientation_unstable" in report
+    assert "APE rotation RMSE: `80.000000` deg" in report
+
+
+def test_write_run_reports_highlights_time_rpe_and_pose_state_csv(tmp_path: Path) -> None:
+    out_dir = tmp_path / "run"
+    plots_dir = out_dir / "plots"
+    plots_dir.mkdir(parents=True)
+    for name in [
+        "step3_alignment_map.png",
+        "rpe_time_1s_translation_part_raw.png",
+        "rpe_time_1s_translation_part_stats.png",
+        "rpe_time_1s_translation_part_box.png",
+        "rpe_time_1s_translation_part_raw_p95.png",
+        "rpe_time_1s_translation_part_stats_core.png",
+        "rpe_time_1s_translation_part_box_p95.png",
+        "ape_translation_part_hist.png",
+        "ape_translation_part_hist_p95.png",
+        "ape_translation_part_hist_p99.png",
+        "ape_translation_part_raw_p95.png",
+        "ape_translation_part_raw_p99.png",
+    ]:
+        (plots_dir / name).write_bytes(b"png")
+    (out_dir / "pose_states.csv").write_text("timestamp_s\n", encoding="utf-8")
+
+    write_run_reports(
+        out_dir,
+        {
+            "pose_metrics": {
+                "rpe_time_1s": {
+                    "step3": {
+                        "translation_part": {"rmse": 1.2, "p95": 2.3, "max": 4.5},
+                        "rotation_angle_deg": {"rmse": 6.7},
+                        "pair_count": 8,
+                    }
+                },
+                "valid_segment": {"step3": {"success": {"drift_rpe_1s_m": 2.0}}},
+            },
+            "case_diagnostics": {
+                "diagnosis_primary": "trajectory_jump",
+                "diagnosis_summary": "trajectory_jump; global_gate_too_large",
+                "diagnosis_tags": ["trajectory_jump", "global_gate_too_large"],
+                "diagnosis_reasons": {
+                    "trajectory_jump": "global/local segment error ratio is large",
+                },
+            },
+            "metadata": {
+                "timestamp": "2026-06-12T00:00:00",
+                "gt_path": "gt.tum",
+                "est_path": "est.tum",
+                "pose_state_csv": str(out_dir / "pose_states.csv"),
+            },
+        },
+    )
+
+    report = (out_dir / "report_en.md").read_text(encoding="utf-8")
+    assert "## Case Diagnostics" in report
+    assert "trajectory_jump" in report
+    assert "## 1-second RPE (Local Jumps)" in report
+    assert "Step3 translation RMSE: `1.200000` m" in report
+    assert "[pose_states.csv](pose_states.csv)" in report
+    assert report.index("ape_translation_part_hist_p95.png") < report.index("ape_translation_part_hist.png")
+    assert report.index("ape_translation_part_raw_p95.png") < report.index("ape_translation_part_hist.png")
+    assert report.index("rpe_time_1s_translation_part_raw_p95.png") < report.index("rpe_time_1s_translation_part_raw.png")
+    assert report.index("ape_translation_part_hist_p95.png") < report.index("ape_translation_part_hist.png")
+
+
+def test_write_pose_state_csv_exports_pose_and_velocity(tmp_path: Path) -> None:
+    t = np.array([0.0, 1.0, 2.0])
+    pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = R.from_euler("z", [0.0, 0.5, 1.0]).as_quat()
+
+    out = write_pose_state_csv(
+        tmp_path / "pose_states.csv",
+        timestamps_s=t,
+        stages={"gt": (pos, quat), "step3": (pos, quat)},
+    )
+
+    rows = out.read_text(encoding="utf-8").strip().splitlines()
+    header = rows[0].split(",")
+    values = rows[1].split(",")
+    assert "gt_px" in header
+    assert "gt_qw" in header
+    assert "gt_vx" in header
+    assert "gt_wz" in header
+    assert len(rows) == 4
+    vx = float(values[header.index("gt_vx")])
+    wz = float(values[header.index("gt_wz")])
+    np.testing.assert_allclose(vx, 1.0)
+    np.testing.assert_allclose(wz, 0.5)
 
 
 def test_make_output_dir_retries_existing_timestamp_names(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

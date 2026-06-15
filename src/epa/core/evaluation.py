@@ -202,14 +202,18 @@ def compute_ape(pos_ref, quat_ref, pos_est, quat_est, include_raw=False):
     pos_est = np.asarray(pos_est, dtype=float)
     T_ref = poses_se3_from_traj(pos_ref, quat_ref)
     T_est = poses_se3_from_traj(pos_est, quat_est)
-    E = np.array([relative_se3(T_est[i], T_ref[i]) for i in range(len(T_ref))])
+    R_est = T_est[:, :3, :3]
+    R_ref = T_ref[:, :3, :3]
+    t_est = T_est[:, :3, 3]
+    t_ref = T_ref[:, :3, 3]
+    E_rot = np.einsum("nij,njk->nik", np.swapaxes(R_est, 1, 2), R_ref)
+    E_trans = np.einsum("nij,nj->ni", np.swapaxes(R_est, 1, 2), t_ref - t_est)
 
     I3 = np.eye(3)
-    I4 = np.eye(4)
     trans_err = np.linalg.norm(pos_est - pos_ref, axis=1)
-    rot_part_err = np.linalg.norm(E[:, :3, :3] - I3, axis=(1, 2))
-    full_err = np.linalg.norm(E - I4, axis=(1, 2))
-    rot_angle_rad = np.abs(R.from_matrix(E[:, :3, :3]).magnitude())
+    rot_part_err = np.linalg.norm(E_rot - I3, axis=(1, 2))
+    full_err = np.sqrt(rot_part_err * rot_part_err + np.sum(E_trans * E_trans, axis=1))
+    rot_angle_rad = np.abs(R.from_matrix(E_rot).magnitude())
     rot_angle_deg = np.degrees(rot_angle_rad)
     error_arrays = {
         "translation_part": trans_err,
@@ -246,6 +250,7 @@ def compute_rpe(
     pairs_from_reference=False,
     timestamps=None,
     include_raw=False,
+    max_pairs=50000,
 ):
     if len(pos_ref) != len(pos_est):
         raise ValueError("RPE requires trajectories with the same number of poses.")
@@ -263,6 +268,9 @@ def compute_rpe(
         all_pairs=all_pairs,
         timestamps=timestamps,
     )
+    if int(max_pairs) > 0 and len(id_pairs) > int(max_pairs):
+        keep = np.linspace(0, len(id_pairs) - 1, int(max_pairs), dtype=int)
+        id_pairs = [id_pairs[int(idx)] for idx in keep]
     delta_ids = [int(j) for _, j in id_pairs]
 
     if len(id_pairs) == 0:
@@ -294,26 +302,43 @@ def compute_rpe(
             result["_pair_ids"] = np.array([], dtype=int).reshape(0, 2)
         return result
 
-    ref_distances = np.array([np.linalg.norm(pos_ref[i] - pos_ref[j]) for i, j in id_pairs])
-    est_distances = np.array([np.linalg.norm(pos_est[i] - pos_est[j]) for i, j in id_pairs])
+    pair_ids = np.asarray(id_pairs, dtype=int).reshape(-1, 2)
+    pair_i = pair_ids[:, 0]
+    pair_j = pair_ids[:, 1]
+
+    ref_distances = np.linalg.norm(pos_ref[pair_i] - pos_ref[pair_j], axis=1)
+    est_distances = np.linalg.norm(pos_est[pair_i] - pos_est[pair_j], axis=1)
     point_distance_err = np.abs(ref_distances - est_distances)
     ratio_mask = ref_distances != 0.0
     point_ratio = np.full(len(id_pairs), np.nan, dtype=float)
     point_ratio[ratio_mask] = np.divide(point_distance_err[ratio_mask], ref_distances[ratio_mask]) * 100.0
 
-    E = []
-    for i, j in id_pairs:
-        Q_rel = relative_se3(T_ref[i], T_ref[j])
-        P_rel = relative_se3(T_est[i], T_est[j])
-        E.append(relative_se3(Q_rel, P_rel))
-    E = np.array(E)
+    R_ref_i = T_ref[pair_i, :3, :3]
+    R_ref_j = T_ref[pair_j, :3, :3]
+    t_ref_i = T_ref[pair_i, :3, 3]
+    t_ref_j = T_ref[pair_j, :3, 3]
+    R_est_i = T_est[pair_i, :3, :3]
+    R_est_j = T_est[pair_j, :3, :3]
+    t_est_i = T_est[pair_i, :3, 3]
+    t_est_j = T_est[pair_j, :3, 3]
+
+    R_ref_rel = np.einsum("nij,njk->nik", np.swapaxes(R_ref_i, 1, 2), R_ref_j)
+    t_ref_rel = np.einsum("nij,nj->ni", np.swapaxes(R_ref_i, 1, 2), t_ref_j - t_ref_i)
+    R_est_rel = np.einsum("nij,njk->nik", np.swapaxes(R_est_i, 1, 2), R_est_j)
+    t_est_rel = np.einsum("nij,nj->ni", np.swapaxes(R_est_i, 1, 2), t_est_j - t_est_i)
+
+    E_rot = np.einsum("nij,njk->nik", np.swapaxes(R_ref_rel, 1, 2), R_est_rel)
+    E_trans = np.einsum(
+        "nij,nj->ni",
+        np.swapaxes(R_ref_rel, 1, 2),
+        t_est_rel - t_ref_rel,
+    )
 
     I3 = np.eye(3)
-    I4 = np.eye(4)
-    translation_part_err = np.linalg.norm(E[:, :3, 3], axis=1)
-    rotation_part_err = np.linalg.norm(E[:, :3, :3] - I3, axis=(1, 2))
-    full_err = np.linalg.norm(E - I4, axis=(1, 2))
-    rot_angle_rad = np.abs(R.from_matrix(E[:, :3, :3]).magnitude())
+    translation_part_err = np.linalg.norm(E_trans, axis=1)
+    rotation_part_err = np.linalg.norm(E_rot - I3, axis=(1, 2))
+    full_err = np.sqrt(rotation_part_err * rotation_part_err + translation_part_err * translation_part_err)
+    rot_angle_rad = np.abs(R.from_matrix(E_rot).magnitude())
     rot_angle_deg = np.degrees(rot_angle_rad)
     error_arrays = {
         "translation_part": translation_part_err,
@@ -341,7 +366,7 @@ def compute_rpe(
             "index": np.arange(len(id_pairs), dtype=float),
             "delta_ids": np.asarray(delta_ids, dtype=float),
         }
-        result["_pair_ids"] = np.asarray(id_pairs, dtype=int)
+        result["_pair_ids"] = pair_ids
     return result
 
 def _empty_metric_block(include_raw=False):
@@ -432,15 +457,17 @@ def _filter_rpe_block(rpe_block, valid_segment_mask, include_raw=True):
     if pair_ids.size == 0 or not arrays:
         return _empty_rpe_block(include_raw=include_raw)
 
+    starts = pair_ids[:, 0].astype(int)
+    ends = pair_ids[:, 1].astype(int)
+    valid_pair = (ends > starts) & (starts >= 0) & ((ends - 1) < valid_segments.size)
+    invalid_prefix = np.concatenate(
+        [[0], np.cumsum((~valid_segments).astype(int), dtype=int)]
+    )
     keep = np.zeros(pair_ids.shape[0], dtype=bool)
-    for idx, (i, j) in enumerate(pair_ids):
-        i_int = int(i)
-        j_int = int(j)
-        if j_int <= i_int:
-            continue
-        if i_int < 0 or j_int - 1 >= valid_segments.size:
-            continue
-        keep[idx] = bool(np.all(valid_segments[i_int:j_int]))
+    if np.any(valid_pair):
+        keep[valid_pair] = (
+            invalid_prefix[ends[valid_pair]] - invalid_prefix[starts[valid_pair]]
+        ) == 0
 
     result = {"pair_count": int(np.count_nonzero(keep))}
     filtered_arrays = {}
@@ -586,13 +613,15 @@ def _sample_mask_from_pair_mask(n, pair_ids, pair_mask):
         return sample_mask
     pairs = pairs.reshape(-1, 2)
     m = min(pairs.shape[0], keep_pair.size)
-    for pair, keep in zip(pairs[:m], keep_pair[:m]):
-        if keep:
-            continue
-        i, j = int(pair[0]), int(pair[1])
-        lo = max(0, min(i, j))
-        hi = min(int(n) - 1, max(i, j))
-        sample_mask[lo : hi + 1] = False
+    bad_pairs = pairs[:m][~keep_pair[:m]]
+    if bad_pairs.size == 0:
+        return sample_mask
+    lo = np.clip(np.minimum(bad_pairs[:, 0], bad_pairs[:, 1]), 0, int(n) - 1)
+    hi = np.clip(np.maximum(bad_pairs[:, 0], bad_pairs[:, 1]), 0, int(n) - 1)
+    diff = np.zeros(int(n) + 1, dtype=int)
+    np.add.at(diff, lo, 1)
+    np.add.at(diff, hi + 1, -1)
+    sample_mask[np.cumsum(diff[:-1]) > 0] = False
     return sample_mask
 
 
@@ -643,13 +672,16 @@ def compute_drift_regions(
         )
         drift_sample = np.zeros(n, dtype=bool)
         drift_sample[1:] |= drift_step
-        for idx in np.flatnonzero(drift_step):
-            if not np.isfinite(ape[idx]):
-                continue
-            j = int(idx) + 1
-            while j < n and np.isfinite(ape[j]) and ape[j] > ape[idx] + float(drift_ape_jump_m):
+        active_level = float("inf")
+        jump_m = float(drift_ape_jump_m)
+        for idx, is_drift in enumerate(drift_step):
+            if is_drift and np.isfinite(ape[idx]):
+                active_level = min(active_level, float(ape[idx]) + jump_m)
+            j = idx + 1
+            if np.isfinite(ape[j]) and float(ape[j]) > active_level:
                 drift_sample[j] = True
-                j += 1
+            else:
+                active_level = float("inf")
         valid_sample &= ~drift_sample
 
     return compute_success_regions(t, pos, ape, valid_sample_mask=valid_sample)
@@ -777,7 +809,7 @@ def compute_valid_segment_metrics(
         min_m=float(global_gate_min_m),
         max_m=float(global_gate_max_m),
     )
-    globally_failed = bool(not np.isfinite(gate_value) or gate_value > float(effective_gate_m))
+    global_gate_failed = bool(not np.isfinite(gate_value) or gate_value > float(effective_gate_m))
     regions = compute_drift_regions(
         timestamps=timestamps,
         pos_ref=pos_ref,
@@ -798,7 +830,12 @@ def compute_valid_segment_metrics(
         for key, value in regions.items()
         if key not in {"valid_sample_mask", "valid_segment_mask"}
     }
-    success["case_status"] = "globally_failed" if globally_failed else "valid_segment"
+    has_valid_segments = bool(np.count_nonzero(valid_segment) > 0)
+    if global_gate_failed:
+        success["case_status"] = "globally_unstable" if has_valid_segments else "globally_failed"
+    else:
+        success["case_status"] = "valid_segment"
+    success["global_gate_failed"] = bool(global_gate_failed)
     success["global_gate_m"] = float(effective_gate_m)
     success["global_gate_info"] = gate_info
     success["global_gate_mode"] = str(gate_info["mode"])
@@ -806,27 +843,15 @@ def compute_valid_segment_metrics(
     success["global_gate_path_length_m"] = float(gate_info["path_length_m"])
     success["global_gate_percentile"] = float(global_gate_percentile)
     success["global_gate_value_m"] = float(gate_value)
+    if global_gate_failed:
+        success["global_gate_warning"] = (
+            "global gate failed; success rate and valid metrics are computed from local valid segments"
+        )
     success["drift_rpe_1s_m"] = float(drift_rpe_1s_m)
     success["drift_ape_slope_mps"] = float(drift_ape_slope_mps)
     success["drift_ape_jump_m"] = float(drift_ape_jump_m)
     if threshold_info is not None:
         success["threshold"] = threshold_info
-    if globally_failed:
-        success["success_rate_distance"] = 0.0
-        success["success_rate_time"] = 0.0
-        success["valid_distance_m"] = 0.0
-        success["valid_time_s"] = 0.0
-        success["valid_sample_count"] = 0
-        if include_masks:
-            success["valid_sample_mask"] = np.zeros(valid_sample.size, dtype=bool)
-            success["valid_metric_sample_mask"] = np.zeros(valid_sample.size, dtype=bool)
-            success["valid_segment_mask"] = np.zeros(valid_segment.size, dtype=bool)
-        return {
-            "success": success,
-            "ape": _empty_metric_block(include_raw=include_raw),
-            "rpe": _empty_rpe_block(include_raw=include_raw),
-            "rpe_time_1s": _empty_rpe_block(include_raw=include_raw),
-        }
     if include_masks:
         success["valid_sample_mask"] = valid_sample
         success["valid_metric_sample_mask"] = valid_metric_sample

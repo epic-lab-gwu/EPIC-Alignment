@@ -1,8 +1,12 @@
+from __future__ import annotations
+
+import csv
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
+from scipy.spatial.transform import Rotation as R
 
 from .evaluation import normalize_pose_relation
 from .io_utils import (
@@ -11,7 +15,9 @@ from .io_utils import (
     write_result_bundle,
     write_run_reports,
 )
+from .math_utils import normalize_quat_array
 from ..viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots, generate_time_rpe_metric_plots
+from ..viz.interactive_html import write_interactive_run_html
 
 
 def _line_segments_xyz(points_xyz):
@@ -36,6 +42,94 @@ def _set_axes_equal_3d(ax) -> None:
     ax.set_xlim3d([xmean - plot_radius, xmean + plot_radius])
     ax.set_ylim3d([ymean - plot_radius, ymean + plot_radius])
     ax.set_zlim3d([zmean - plot_radius, zmean + plot_radius])
+
+
+def _linear_velocity(tvals: np.ndarray, pos: np.ndarray) -> np.ndarray:
+    t = np.asarray(tvals, dtype=float).reshape(-1)
+    p = np.asarray(pos, dtype=float)
+    n = int(min(t.size, p.shape[0]))
+    out = np.full((n, 3), np.nan, dtype=float)
+    if n < 2:
+        return out
+    dt = np.diff(t[:n])
+    valid = np.isfinite(dt) & (dt > 0.0)
+    seg = np.full((n - 1, 3), np.nan, dtype=float)
+    seg[valid] = (p[1:n][valid] - p[: n - 1][valid]) / dt[valid, None]
+    out[0] = seg[0]
+    out[-1] = seg[-1]
+    if n > 2:
+        for idx in range(1, n - 1):
+            vals = seg[idx - 1 : idx + 1]
+            finite = np.isfinite(vals).all(axis=1)
+            if np.any(finite):
+                out[idx] = np.mean(vals[finite], axis=0)
+    return out
+
+
+def _angular_velocity(tvals: np.ndarray, quat_xyzw: np.ndarray) -> np.ndarray:
+    t = np.asarray(tvals, dtype=float).reshape(-1)
+    q = normalize_quat_array(np.asarray(quat_xyzw, dtype=float))
+    n = int(min(t.size, q.shape[0]))
+    out = np.full((n, 3), np.nan, dtype=float)
+    if n < 2:
+        return out
+    dt = np.diff(t[:n])
+    valid = np.isfinite(dt) & (dt > 0.0)
+    seg = np.full((n - 1, 3), np.nan, dtype=float)
+    rel = R.from_quat(q[: n - 1]).inv() * R.from_quat(q[1:n])
+    rotvec = rel.as_rotvec()
+    seg[valid] = rotvec[valid] / dt[valid, None]
+    out[0] = seg[0]
+    out[-1] = seg[-1]
+    if n > 2:
+        for idx in range(1, n - 1):
+            vals = seg[idx - 1 : idx + 1]
+            finite = np.isfinite(vals).all(axis=1)
+            if np.any(finite):
+                out[idx] = np.mean(vals[finite], axis=0)
+    return out
+
+
+def write_pose_state_csv(
+    path: Path,
+    *,
+    timestamps_s,
+    stages: dict[str, tuple[np.ndarray, np.ndarray]],
+) -> Path:
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    t = np.asarray(timestamps_s, dtype=float).reshape(-1)
+    clean_stages: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    n = int(t.size)
+    for name, (pos, quat) in stages.items():
+        p = np.asarray(pos, dtype=float)
+        q = normalize_quat_array(np.asarray(quat, dtype=float))
+        n = min(n, p.shape[0], q.shape[0])
+        clean_stages[str(name)] = (p, q, _linear_velocity(t, p), _angular_velocity(t, q))
+    t = t[:n]
+
+    headers = ["timestamp_s", "time_from_start_s"]
+    fields = ("px", "py", "pz", "qx", "qy", "qz", "qw", "vx", "vy", "vz", "wx", "wy", "wz")
+    for stage in clean_stages:
+        headers.extend(f"{stage}_{field}" for field in fields)
+
+    t0 = float(t[0]) if t.size else 0.0
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        for idx in range(n):
+            row = [float(t[idx]), float(t[idx] - t0)]
+            for p, q, v, w in clean_stages.values():
+                row.extend(
+                    [
+                        *p[idx, :3],
+                        *q[idx, :4],
+                        *v[idx, :3],
+                        *w[idx, :3],
+                    ]
+                )
+            writer.writerow(row)
+    return path
 
 
 def _plot_alignment_map(
@@ -179,40 +273,43 @@ def _plot_stage_alignment_maps(
     pr_sync,
     pr_corrected,
     pr_final,
+    include_debug: bool = False,
 ):
-    stage_order = ["raw", "step2", "step3"]
-    stage_titles = {
-        "raw": "Raw (After Step-1 Sync)",
-        "step2": "Sensor Fixed (Step 2)",
-        "step3": "Aligned (Step 3)",
-    }
-    stage_pos = {
-        "raw": np.asarray(pr_sync, dtype=float),
-        "step2": np.asarray(pr_corrected, dtype=float),
-        "step3": np.asarray(pr_final, dtype=float),
-    }
+    fig2_path = None
+    if include_debug:
+        stage_order = ["raw", "step2", "step3"]
+        stage_titles = {
+            "raw": "Raw (After Step-1 Sync)",
+            "step2": "Sensor Fixed (Step 2)",
+            "step3": "Aligned (Step 3)",
+        }
+        stage_pos = {
+            "raw": np.asarray(pr_sync, dtype=float),
+            "step2": np.asarray(pr_corrected, dtype=float),
+            "step3": np.asarray(pr_final, dtype=float),
+        }
 
-    fig2 = plt.figure(figsize=(18, 5.8))
-    for i, stage_name in enumerate(stage_order):
-        ax = fig2.add_subplot(131 + i, projection="3d")
-        stage_ref = np.asarray(pos_gt, dtype=float)
-        stage_est = np.asarray(stage_pos[stage_name], dtype=float)
-        stage_err = np.linalg.norm(stage_est - stage_ref, axis=1)
-        _plot_alignment_map(
-            fig2,
-            ax,
-            pos_ref=stage_ref,
-            pos_est=stage_est,
-            errors_m=stage_err,
-            title=(
-                f"{stage_titles[stage_name]}\n"
-                f"ATE translation RMSE={float(np.sqrt(np.mean(stage_err**2))):.6f} m"
-            ),
-        )
-    fig2.tight_layout()
-    fig2_path = plots_dir / "step23_trajectory_alignment_3d.png"
-    fig2.savefig(fig2_path, dpi=220, bbox_inches="tight")
-    plt.close(fig2)
+        fig2 = plt.figure(figsize=(18, 5.8))
+        for i, stage_name in enumerate(stage_order):
+            ax = fig2.add_subplot(131 + i, projection="3d")
+            stage_ref = np.asarray(pos_gt, dtype=float)
+            stage_est = np.asarray(stage_pos[stage_name], dtype=float)
+            stage_err = np.linalg.norm(stage_est - stage_ref, axis=1)
+            _plot_alignment_map(
+                fig2,
+                ax,
+                pos_ref=stage_ref,
+                pos_est=stage_est,
+                errors_m=stage_err,
+                title=(
+                    f"{stage_titles[stage_name]}\n"
+                    f"ATE translation RMSE={float(np.sqrt(np.mean(stage_err**2))):.6f} m"
+                ),
+            )
+        fig2.tight_layout()
+        fig2_path = plots_dir / "debug_step123_trajectory_alignment_3d.png"
+        fig2.savefig(fig2_path, dpi=220, bbox_inches="tight")
+        plt.close(fig2)
 
     step3_err_subset = np.linalg.norm(np.asarray(pr_final, dtype=float) - np.asarray(pos_gt, dtype=float), axis=1)
     fig_step3_map = plt.figure(figsize=(8.4, 6.8))
@@ -297,10 +394,10 @@ def _generate_and_cleanup_metric_plots(
 
     metrics_payload["metadata"]["plot"] = plot_meta
     core_plot_names = {
+        "debug_step123_trajectory_alignment_3d.png",
         "piecewise_segment_rmse.png",
         "step1_cross_correlation.png",
         "step1_time_alignment.png",
-        "step23_trajectory_alignment_3d.png",
         "step3_alignment_map.png",
     }
     retained_plot_names = set(core_plot_names)
@@ -324,6 +421,7 @@ def _write_outputs(
     plots_dir: Path,
     metrics_payload,
     args,
+    interactive_payload: dict | None = None,
 ):
     bundle_path = _resolve_result_bundle_path(getattr(args, "save_results", ""))
     if bundle_path is not None:
@@ -334,6 +432,21 @@ def _write_outputs(
         plots_dir=plots_dir,
         args=args,
     )
+
+    interactive_path = None
+    if interactive_payload is not None:
+        interactive_path = write_interactive_run_html(
+            run_dir / "interactive_report.html",
+            title=str(interactive_payload.get("title", "EPA Interactive Report")),
+            metrics_payload=metrics_payload,
+            pos_gt=interactive_payload.get("pos_gt"),
+            pr_sync=interactive_payload.get("pr_sync"),
+            pr_corrected=interactive_payload.get("pr_corrected"),
+            pr_final=interactive_payload.get("pr_final"),
+            time_alignment=interactive_payload.get("time_alignment"),
+            x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+        )
+        metrics_payload["metadata"]["interactive_report"] = str(interactive_path)
 
     output_metrics_payload = (
         metrics_payload
@@ -353,4 +466,5 @@ def _write_outputs(
         "bundle_path": bundle_path,
         "report_zh_path": report_zh_path,
         "report_en_path": report_en_path,
+        "interactive_path": interactive_path,
     }

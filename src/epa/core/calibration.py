@@ -3,19 +3,27 @@ from scipy.spatial.transform import Rotation as R
 
 
 def build_translation_system(pv, qv, pr, qr, Rext):
+    pv = np.asarray(pv, dtype=float)
+    pr = np.asarray(pr, dtype=float)
+    Rext = np.asarray(Rext, dtype=float)
     Rv = R.from_quat(qv).as_matrix()
     Rr = R.from_quat(qr).as_matrix()
-    C, d = [], []
-    for i in range(len(pv) - 1):
-        ta = Rv[i].T @ (pv[i + 1] - pv[i])
-        tb = Rr[i].T @ (pr[i + 1] - pr[i])
-        if np.linalg.norm(ta) < 1e-3:
-            continue
-        C.append(Rv[i].T @ Rv[i + 1] - np.eye(3))
-        d.append(Rext @ tb - ta)
-    if not C:
+    if pv.shape[0] < 2:
         raise ValueError("No valid translation constraints for extrinsic translation solve.")
-    return np.vstack(C), np.concatenate(d), len(C)
+
+    dpv = pv[1:] - pv[:-1]
+    dpr = pr[1:] - pr[:-1]
+    Rv_i_t = np.swapaxes(Rv[:-1], 1, 2)
+    Rr_i_t = np.swapaxes(Rr[:-1], 1, 2)
+    ta = np.einsum("nij,nj->ni", Rv_i_t, dpv)
+    tb = np.einsum("nij,nj->ni", Rr_i_t, dpr)
+    mask = np.linalg.norm(ta, axis=1) >= 1e-3
+    if not np.any(mask):
+        raise ValueError("No valid translation constraints for extrinsic translation solve.")
+
+    C = np.einsum("nij,njk->nik", Rv_i_t[mask], Rv[1:][mask]) - np.eye(3)
+    d = np.einsum("ij,nj->ni", Rext, tb[mask]) - ta[mask]
+    return C.reshape(-1, 3), d.reshape(-1), int(np.count_nonzero(mask))
 
 
 def solve_extrinsic_rotation(qv, qr):

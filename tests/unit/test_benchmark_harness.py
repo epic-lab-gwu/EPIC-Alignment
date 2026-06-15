@@ -7,6 +7,7 @@ from epa.benchmark.benchmark_harness import (
     BenchmarkCase,
     _run_benchmark_case,
     _resolve_jobs,
+    _write_summary_html,
     _write_summary_md,
     discover_cases,
     load_pose_table,
@@ -219,6 +220,14 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
             "epa_xcorr_psr": 12.0,
             "epa_omega_improve_pct": 70.0,
             "evo_sweep_evals": 88,
+            "epa_sr_distance": 0.5,
+            "epa_sr_time": 0.6,
+            "epa_case_status": "globally_unstable",
+            "epa_global_gate_failed": "True",
+            "epa_global_gate_value_m": 45.0,
+            "epa_valid_distance_m": 12.0,
+            "epa_step3_alignment_mode": "robust_trimmed",
+            "epa_step3_rejection_ratio": 0.25,
         }
     ]
     out = tmp_path / "summary.md"
@@ -226,7 +235,80 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert "raw_rmse_m (↓)" in text
     assert "improve_pct (↑)" in text
+    assert "Valid Segment Status" in text
+    assert "globally_unstable" in text
+    assert "robust_trimmed" in text
     assert "epa_xcorr_peak (↑)" in text
+
+
+def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run" / "epa_runs" / "case_a"
+    plot = run_dir / "plots" / "step3_alignment_map.png"
+    plot.parent.mkdir(parents=True)
+    plot.write_text("png", encoding="utf-8")
+    (run_dir / "interactive_report.html").write_text("<html></html>", encoding="utf-8")
+    rows = [
+        {
+            "case": "case_a",
+            "dataset": "demo",
+            "method": "sys",
+            "status": "ok",
+            "epa_case_status": "globally_unstable",
+            "epa_sr_distance": 0.42,
+            "epa_sr_time": 0.5,
+            "epa_global_gate_failed": "True",
+            "epa_global_gate_value_m": 50.0,
+            "epa_valid_distance_m": 4.2,
+            "epa_step3_alignment_mode": "robust_trimmed",
+            "epa_step3_rejection_ratio": 0.33,
+            "epa_step3_stable_solve_ratio": 0.42,
+            "epa_sim3_scale": 0.01,
+            "epa_sim3_reliable": "False",
+            "epa_sim3_warning": "Sim3 scale warning",
+            "epa_orientation_unstable": "True",
+            "epa_orientation_ape_rmse_deg": 80.0,
+            "epa_orientation_rpe_rmse_deg": 35.0,
+            "epa_orientation_rpe_time_1s_rmse_deg": 32.0,
+            "epa_orientation_warning": "rotation unstable",
+            "epa_ate_rmse_step3_m": 3.0,
+            "epa_case_diagnosis_primary": "trajectory_jump",
+            "epa_case_diagnosis_summary": "trajectory_jump; global_gate_too_large",
+            "epa_case_diagnosis_tags": "trajectory_jump,global_gate_too_large",
+            "epa_run_dir": str(run_dir),
+        }
+    ]
+
+    out = tmp_path / "run" / "summary.html"
+    _write_summary_html(rows, out)
+    text = out.read_text(encoding="utf-8")
+
+    assert "globally_unstable" in text
+    assert "robust_trimmed" in text
+    assert "step3_alignment_map.png" in text
+    assert "interactive_report.html" in text
+    assert "thumbLink" in text
+    assert "filterDataset" in text
+    assert "filterMethod" in text
+    assert "filterStatus" in text
+    assert "filterSrMin" in text
+    assert "filterSrMax" in text
+    assert "filterStep3" in text
+    assert "filterSim3" in text
+    assert "filterOrientation" in text
+    assert "filterDiagnosis" in text
+    assert "resetFilters" in text
+    assert "stable_solve_%" in text
+    assert "42.00" in text
+    assert 'data-dataset="demo"' in text
+    assert 'data-method="sys"' in text
+    assert 'data-status="globally_unstable"' in text
+    assert 'data-step3="robust_trimmed"' in text
+    assert 'data-sim3-reliable="False"' in text
+    assert 'data-orientation="True"' in text
+    assert 'data-diagnosis="trajectory_jump"' in text
+    assert "Sim3 scale warning" in text
+    assert "rotation unstable" in text
+    assert "openImageViewer" not in text
 
 
 def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -248,6 +330,25 @@ def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPa
             "ate_rmse_raw_m": 2.0,
             "ate_rmse_step3_m": 1.0,
             "improve_raw_to_step3_pct": 50.0,
+            "sr_distance": 0.75,
+            "sr_time": 0.8,
+            "case_status": "valid_segment",
+            "global_gate_failed": False,
+            "global_gate_value_m": 0.2,
+            "global_gate_m": 30.0,
+            "valid_distance_m": 3.0,
+            "total_distance_m": 4.0,
+            "step3_alignment_mode": "standard",
+            "step3_inlier_count": 20.0,
+            "step3_rejected_count": 0.0,
+            "step3_rejection_ratio": 0.0,
+            "step3_stable_segment_used": 1.0,
+            "step3_stable_solve_ratio": 0.5,
+            "orientation_unstable": "True",
+            "orientation_ape_rmse_deg": 80.0,
+            "orientation_rpe_rmse_deg": 35.0,
+            "orientation_rpe_time_1s_rmse_deg": 32.0,
+            "orientation_warning": "rotation unstable",
         }
 
     def fake_run_evo_case(*args, **kwargs):
@@ -285,6 +386,13 @@ def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPa
     assert row["status"] == "ok"
     assert row["epa_status"] == "ok"
     assert row["evo_status"] == "not_run"
+    assert row["epa_case_status"] == "valid_segment"
+    assert row["epa_sr_distance"] == 0.75
+    assert row["epa_step3_alignment_mode"] == "standard"
+    assert row["epa_orientation_unstable"] == "True"
+    assert row["epa_orientation_ape_rmse_deg"] == 80.0
+    assert row["epa_step3_stable_segment_used"] == 1.0
+    assert row["epa_step3_stable_solve_ratio"] == 0.5
 
 
 def test_discover_cases_missing_root_error_has_examples(tmp_path: Path) -> None:

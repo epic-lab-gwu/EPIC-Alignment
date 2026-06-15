@@ -173,7 +173,10 @@ def test_ground_truth_stable_bias_is_not_local_drift_when_global_gate_allows_it(
     np.testing.assert_allclose(ape["translation_part"]["rmse"], 6.0)
     np.testing.assert_allclose(rpe_time["translation_part"]["rmse"], 0.0)
     np.testing.assert_allclose(valid["success"]["success_rate_distance"], 1.0)
-    np.testing.assert_allclose(globally_rejected["success"]["success_rate_distance"], 0.0)
+    assert globally_rejected["success"]["case_status"] == "globally_unstable"
+    assert globally_rejected["success"]["global_gate_failed"] is True
+    np.testing.assert_allclose(globally_rejected["success"]["success_rate_distance"], 1.0)
+    np.testing.assert_allclose(globally_rejected["ape"]["translation_part"]["rmse"], 6.0)
 
 
 def test_ground_truth_local_jump_invalidates_drift_valid_metrics() -> None:

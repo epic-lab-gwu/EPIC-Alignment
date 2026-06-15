@@ -32,6 +32,7 @@ class PipelineOptions:
     plot_x_dimension: str = "seconds"
     plot_ape_relation: str = "translation_part"
     plot_rpe_relation: str = "translation_part"
+    debug: bool = False
     save_results: str = ""
     downsample_hz: float = 100.0
     no_downsample: bool = False
@@ -101,6 +102,8 @@ class PipelineOptions:
             argv.append("--plot")
         else:
             argv.append("--no-plot")
+        if self.debug:
+            argv.append("--debug")
         return argv
 
 

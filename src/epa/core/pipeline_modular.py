@@ -46,19 +46,23 @@ from .outputs import (
     _plot_stage_alignment_maps,
     _plot_step1_outputs,
     _write_outputs,
+    write_pose_state_csv,
 )
 from .diagnostics import (
     _build_user_alert,
     _compute_alignment_quality,
+    _diagnosis_tags_from_metrics,
     _compute_piecewise_alignment as _compute_piecewise_alignment,
     _compute_piecewise_diagnostics,
     _compute_rigid_alignability,
 )
 from ..metric_cli_common import (
+    align_for_eval_with_info,
     align_for_eval,
     cum_distance,
     project_to_plane,
 )
+from ..viz.interactive_html import write_interactive_run_html
 from ..viz.rerun_viz import log_alignment_to_rerun
 
 
@@ -164,6 +168,23 @@ def _finalize_step1_failure(
             },
         },
     }
+    interactive_path = write_interactive_run_html(
+        run_dir / "interactive_report.html",
+        title=f"EPA Interactive Report: {run_dir.name}",
+        metrics_payload=metrics_payload,
+        pos_gt=pos_gt,
+        pr_sync=pr_sync,
+        pr_corrected=pr_sync,
+        pr_final=pr_sync,
+        time_alignment={
+            "corr": corr,
+            "lags": lag_times,
+            "dt_resample": 1.0,
+            "calculated_offset": selected_offset_s,
+        },
+        x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+    )
+    metrics_payload["metadata"]["interactive_report"] = str(interactive_path)
     save_metrics(run_dir, metrics_payload)
     report_zh_path, report_en_path = write_run_reports(run_dir, metrics_payload)
 
@@ -172,6 +193,7 @@ def _finalize_step1_failure(
     print("\n--- OUTPUT FILES ---")
     print(f"Saved figure: {fig_corr_path}")
     print(f"Saved figure: {fig_raw_path}")
+    print(f"Saved interactive: {interactive_path}")
     print(f"Saved metrics: {run_dir / 'metrics.json'}")
     print(f"Saved metrics: {run_dir / 'metrics_summary.csv'}")
     print(f"Saved report: {report_zh_path}")
@@ -307,6 +329,7 @@ def _compute_pose_metrics_by_stage(
     rpe_metrics_by_stage = {}
     rpe_time_1s_by_stage = {}
     valid_metrics_by_stage = {}
+    eval_alignment_by_stage = {}
     seconds_from_start = np.asarray(t_gt, dtype=float) - float(t_gt[0])
     distances_from_start = cum_distance(pos_gt)
     ref_eval_pos, ref_eval_quat = project_to_plane(
@@ -314,7 +337,7 @@ def _compute_pose_metrics_by_stage(
     )
 
     for stage_name, stage_data in stage_trajs.items():
-        eval_pos, eval_quat = align_for_eval(
+        eval_pos, eval_quat, eval_align_info = align_for_eval_with_info(
             pos_ref=pos_gt,
             quat_ref=quat_gt,
             pos_est=stage_data["pos"],
@@ -322,6 +345,7 @@ def _compute_pose_metrics_by_stage(
             mode=eval_align_mode,
             n_to_align=eval_n_to_align,
         )
+        eval_alignment_by_stage[stage_name] = eval_align_info
         est_eval_pos, est_eval_quat = project_to_plane(
             eval_pos, eval_quat, plane=eval_project_to_plane
         )
@@ -390,12 +414,27 @@ def _compute_pose_metrics_by_stage(
             drift_ape_jump_m=float(success_drift_ape_jump_m),
             include_raw=True,
         )
+        if str(eval_align_mode).lower() == "sim3":
+            valid_metrics_by_stage[stage_name]["success"]["sim3_sr_distance_raw"] = (
+                valid_metrics_by_stage[stage_name]["success"].get("success_rate_distance")
+            )
+            valid_metrics_by_stage[stage_name]["success"]["sim3_sr_time_raw"] = (
+                valid_metrics_by_stage[stage_name]["success"].get("success_rate_time")
+            )
+            valid_metrics_by_stage[stage_name]["success"]["sim3_sr_reliable"] = bool(
+                eval_align_info.get("sim3_reliable", True)
+            )
+            if eval_align_info.get("sim3_scale_severe"):
+                valid_metrics_by_stage[stage_name]["success"]["sim3_scale_warning"] = str(
+                    eval_align_info.get("sim3_warning", "")
+                )
 
     return {
         "ape": ape_metrics_by_stage,
         "rpe": rpe_metrics_by_stage,
         "rpe_time_1s": rpe_time_1s_by_stage,
         "valid_segment": valid_metrics_by_stage,
+        "eval_alignment": eval_alignment_by_stage,
         "rpe_config": {
             "delta": rpe_delta,
             "delta_unit": rpe_delta_unit,
@@ -433,6 +472,60 @@ def _compute_pose_metrics_by_stage(
             "n_to_align": int(eval_n_to_align),
             "project_to_plane": str(eval_project_to_plane),
         },
+    }
+
+
+def _finite_float(value, default=np.nan) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return float(default)
+    return out if np.isfinite(out) else float(default)
+
+
+def _compute_orientation_diagnostics(pose_metrics: dict, stage: str = "step3") -> dict:
+    ape_rot_rmse = _finite_float(
+        pose_metrics.get("ape", {}).get(stage, {}).get("rotation_angle_deg", {}).get("rmse")
+    )
+    rpe_rot_rmse = _finite_float(
+        pose_metrics.get("rpe", {}).get(stage, {}).get("rotation_angle_deg", {}).get("rmse")
+    )
+    rpe_time_rot_rmse = _finite_float(
+        pose_metrics.get("rpe_time_1s", {}).get(stage, {}).get("rotation_angle_deg", {}).get("rmse")
+    )
+    success = pose_metrics.get("valid_segment", {}).get(stage, {}).get("success", {})
+    sr_distance = _finite_float(success.get("success_rate_distance"))
+
+    min_sr = 0.99
+    ape_threshold = 45.0
+    rpe_threshold = 30.0
+    rpe_time_threshold = 30.0
+    high_translation_sr = bool(np.isfinite(sr_distance) and sr_distance >= min_sr)
+    rotation_bad = bool(
+        (np.isfinite(ape_rot_rmse) and ape_rot_rmse >= ape_threshold)
+        or (np.isfinite(rpe_rot_rmse) and rpe_rot_rmse >= rpe_threshold)
+        or (np.isfinite(rpe_time_rot_rmse) and rpe_time_rot_rmse >= rpe_time_threshold)
+    )
+    unstable = high_translation_sr and rotation_bad
+    warning = ""
+    if unstable:
+        warning = (
+            "Translation SR is high but rotation error is unstable; "
+            "SR is unchanged because it is translation-only."
+        )
+
+    return {
+        "orientation_unstable": bool(unstable),
+        "orientation_warning": warning,
+        "orientation_stage": stage,
+        "orientation_min_sr_for_warning": min_sr,
+        "orientation_ape_rmse_deg": ape_rot_rmse,
+        "orientation_ape_rmse_threshold_deg": ape_threshold,
+        "orientation_rpe_rmse_deg": rpe_rot_rmse,
+        "orientation_rpe_rmse_threshold_deg": rpe_threshold,
+        "orientation_rpe_time_1s_rmse_deg": rpe_time_rot_rmse,
+        "orientation_rpe_time_1s_rmse_threshold_deg": rpe_time_threshold,
+        "orientation_translation_sr_distance": sr_distance,
     }
 
 
@@ -657,6 +750,12 @@ def run_pipeline_modular(args, script_dir: Path):
     print(
         f"Step3 selected_rmse={step3_choice['step3_rmse_selected_m']:.6f} m"
     )
+    print(
+        "Step3 alignment_mode="
+        f"{step3_choice['step3_alignment_mode']} "
+        f"inliers={int(step3_choice['step3_inlier_count'])} "
+        f"rejected={int(step3_choice['step3_rejected_count'])}"
+    )
 
     if args.synthetic:
         rot_ext_err_deg = float(np.degrees(R.from_matrix(R_calc.T @ R_ext_true).magnitude()))
@@ -760,9 +859,14 @@ def run_pipeline_modular(args, script_dir: Path):
     )
     alignment_quality = diagnostics["alignment_quality"]
     quality_label = diagnostics["quality_label"]
+    alignment_quality_for_diagnosis = dict(alignment_quality)
+    alignment_quality_for_diagnosis["_quality_label"] = quality_label
     rigid_alignability = diagnostics["rigid_alignability"]
     rigid_alignability_label = diagnostics["rigid_alignability_label"]
     rigid_alignability_reasons = diagnostics["rigid_alignability_reasons"]
+    rigid_alignability_for_diagnosis = dict(rigid_alignability)
+    rigid_alignability_for_diagnosis["_rigid_alignability_label"] = rigid_alignability_label
+    rigid_alignability_for_diagnosis["_rigid_alignability_reasons"] = rigid_alignability_reasons
     user_alert = diagnostics["user_alert"]
     alert_level = diagnostics["alert_level"]
     alert_message = diagnostics["alert_message"]
@@ -831,6 +935,16 @@ def run_pipeline_modular(args, script_dir: Path):
         t_start=getattr(args, "t_start", None),
         t_end=getattr(args, "t_end", None),
     )
+    orientation_diagnostics = _compute_orientation_diagnostics(pose_metrics, stage="step3")
+    case_diagnostics = _diagnosis_tags_from_metrics(
+        success=pose_metrics["valid_segment"]["step3"]["success"],
+        time_metrics=time_metrics,
+        traj_metrics=traj_metrics,
+        step3_selection=step3_choice,
+        alignment_quality=alignment_quality_for_diagnosis,
+        rigid_alignability=rigid_alignability_for_diagnosis,
+        orientation=orientation_diagnostics,
+    )
 
     stage_order = ["raw", "step2", "step3"]
 
@@ -867,12 +981,14 @@ def run_pipeline_modular(args, script_dir: Path):
         if verbose:
             print(f"{stage_name}: pairs={pairs}, time_pairs={time_pairs}, threshold_m={success_threshold_m:g}")
 
+    debug_outputs = bool(getattr(args, "debug", False))
     fig2_path, fig_step3_map_path = _plot_stage_alignment_maps(
         plots_dir=plots_dir,
         pos_gt=pos_gt,
         pr_sync=pr_sync,
         pr_corrected=pr_corrected,
         pr_final=pr_final,
+        include_debug=debug_outputs,
     )
 
     rerun_info = {
@@ -906,13 +1022,13 @@ def run_pipeline_modular(args, script_dir: Path):
         "time_alignment": time_metrics,
         "step2_residuals": step2_metrics,
         "trajectory": traj_metrics,
-        "step3_selection": {
-            "step3_rmse_selected_m": float(step3_choice["step3_rmse_selected_m"]),
-        },
+        "step3_selection": dict(step3_choice),
         "user_alert": user_alert,
         "alignment_quality": alignment_quality,
         "rigid_alignability": rigid_alignability,
         "piecewise_diagnostics": piecewise_diag,
+        "case_diagnostics": case_diagnostics,
+        "orientation_diagnostics": orientation_diagnostics,
         "pose_metrics": pose_metrics,
         "sanity_check": sanity_metrics,
         "estimated_params": {
@@ -936,6 +1052,7 @@ def run_pipeline_modular(args, script_dir: Path):
             "t_max_diff": float(getattr(args, "t_max_diff", 0.02)),
             "t_start": None if getattr(args, "t_start", None) is None else float(args.t_start),
             "t_end": None if getattr(args, "t_end", None) is None else float(args.t_end),
+            "debug": debug_outputs,
             "step1_forced_candidate": bool(step1_forced_candidate),
             "step1_force_reason": str(step1_force_reason),
             "ape_pose_relation": str(getattr(args, "ape_pose_relation", "trans_part")),
@@ -951,6 +1068,16 @@ def run_pipeline_modular(args, script_dir: Path):
             "user_alert_level": alert_level,
             "user_alert_message": alert_message,
             "user_alert_reasons": alert_reasons,
+            "orientation_unstable": bool(orientation_diagnostics["orientation_unstable"]),
+            "orientation_warning": str(orientation_diagnostics["orientation_warning"]),
+            "orientation_ape_rmse_deg": float(orientation_diagnostics["orientation_ape_rmse_deg"]),
+            "orientation_rpe_rmse_deg": float(orientation_diagnostics["orientation_rpe_rmse_deg"]),
+            "orientation_rpe_time_1s_rmse_deg": float(
+                orientation_diagnostics["orientation_rpe_time_1s_rmse_deg"]
+            ),
+            "diagnosis_primary": str(case_diagnostics["diagnosis_primary"]),
+            "diagnosis_summary": str(case_diagnostics["diagnosis_summary"]),
+            "diagnosis_tags": ",".join(str(x) for x in case_diagnostics["diagnosis_tags"]),
             "rigid_check_max_path_ratio": float(rigid_check_max_path_ratio),
             "rigid_check_max_bbox_ratio": float(rigid_check_max_bbox_ratio),
             "rigid_check_max_global_local_ratio": float(rigid_check_max_global_local_ratio),
@@ -959,11 +1086,38 @@ def run_pipeline_modular(args, script_dir: Path):
             "output_dir": str(run_dir),
         },
     }
+    pose_state_csv = write_pose_state_csv(
+        run_dir / "pose_states.csv",
+        timestamps_s=t_gt,
+        stages={
+            "gt": (pos_gt, quat_gt),
+            "raw": (pr_sync, qr_sync),
+            "step2": (pr_corrected, q_step2),
+            "step3": (pr_final, q_step3),
+        },
+    )
+    metrics_payload["metadata"]["pose_state_csv"] = str(pose_state_csv)
     output_info = _write_outputs(
         run_dir=run_dir,
         plots_dir=plots_dir,
         metrics_payload=metrics_payload,
         args=args,
+        interactive_payload={
+            "title": f"EPA Interactive Report: {run_dir.name}",
+            "pos_gt": pos_gt,
+            "pr_sync": pr_sync,
+            "pr_corrected": pr_corrected,
+            "pr_final": pr_final,
+            "time_alignment": {
+                "t_uniform": t_uniform,
+                "sig_gt": sig_gt,
+                "sig_est": sig_est,
+                "corr": corr,
+                "lags": lags,
+                "dt_resample": dt_resample,
+                "calculated_offset": calculated_offset,
+            },
+        },
     )
     bundle_path = output_info["bundle_path"]
     report_zh_path = output_info["report_zh_path"]
@@ -973,7 +1127,9 @@ def run_pipeline_modular(args, script_dir: Path):
     if verbose:
         print(f"Saved figure: {fig_corr_path}")
         print(f"Saved figure: {fig1_path}")
-        print(f"Saved figure: {fig2_path}")
+        if fig2_path is not None:
+            print(f"Saved figure: {fig2_path}")
+        print(f"Saved figure: {fig_step3_map_path}")
     print(f"Saved outputs: {run_dir}")
     print(f"Saved plots: {plots_dir}")
     print(f"Saved metrics: {run_dir / 'metrics.json'}")

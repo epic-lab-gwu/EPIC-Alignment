@@ -5,6 +5,7 @@ import types
 import numpy as np
 
 from epa import ape_tool, rpe_tool
+from epa.metric_cli_common import sim3_scale_guard
 
 
 def _write_tum(path: Path, x_offset: float = 0.0, t_offset: float = 0.0) -> None:
@@ -57,6 +58,63 @@ def test_ape_tool_tum_eval_and_plots(tmp_path: Path) -> None:
     payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
     rmse = float(payload["pose_metrics"]["ape"]["raw"]["translation_part"]["rmse"])
     assert rmse > 0.5
+
+
+def test_sim3_scale_guard_marks_near_zero_scale_unreliable() -> None:
+    info = sim3_scale_guard(0.01)
+    assert info["sim3_scale_warning"] is True
+    assert info["sim3_scale_severe"] is True
+    assert info["sim3_reliable"] is False
+
+
+def test_ape_tool_sim3_writes_scale_reliability(tmp_path: Path) -> None:
+    ref = tmp_path / "ref.tum"
+    est = tmp_path / "est.tum"
+    ref.write_text(
+        "\n".join(
+            [
+                "0 0 0 0 0 0 0 1",
+                "1 1 0 0 0 0 0 1",
+                "2 2 0 0 0 0 0 1",
+                "3 3 0 0 0 0 0 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    est.write_text(
+        "\n".join(
+            [
+                "0 0 0 0 0 0 0 1",
+                "1 100 0 0 0 0 0 1",
+                "2 200 0 0 0 0 0 1",
+                "3 300 0 0 0 0 0 1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out_dir = tmp_path / "out_sim3"
+    args = ape_tool._build_parser().parse_args(
+        [
+            "--align",
+            "--correct_scale",
+            "--out_dir",
+            str(out_dir),
+            "tum",
+            str(ref),
+            str(est),
+        ]
+    )
+
+    assert ape_tool.run(args) == 0
+
+    payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
+    info = payload["metadata"]["eval_alignment"]
+    assert info["align_mode"] == "sim3"
+    assert info["sim3_reliable"] is False
+    assert info["sim3_scale_severe"] is True
+    assert info["sim3_scale"] == 0.01
 
 
 def test_ape_tool_accepts_options_after_subcommand(tmp_path: Path) -> None:

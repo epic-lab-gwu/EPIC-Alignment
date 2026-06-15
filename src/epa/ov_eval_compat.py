@@ -22,7 +22,7 @@ from epa.core.steps import (
     _run_time_alignment,
     _solve_step2_step3,
 )
-from epa.metric_cli_common import project_to_plane
+from epa.metric_cli_common import project_to_plane, sim3_scale_guard
 from epa.traj_tool import build_parser as build_traj_parser
 from epa.traj_tool import run as run_traj
 
@@ -295,6 +295,12 @@ def _evaluate_pair_ov_style(
         p_gt=p_gt_m,
         q_gt=q_gt_m,
     )
+    align_info = {
+        "align_mode": str(align_mode).lower(),
+        "align_scale": float(scale),
+    }
+    if str(align_mode).lower() == "sim3":
+        align_info.update(sim3_scale_guard(float(scale)))
     p_est_aligned, q_est_aligned = _apply_similarity(
         p_est=p_est_m,
         q_est=q_est_m,
@@ -335,6 +341,7 @@ def _evaluate_pair_ov_style(
         "ate3_pos": dict(ape3["translation_part"]),
         "ate2_ori": dict(ape2["rotation_angle_deg"]),
         "ate2_pos": dict(ape2["translation_part"]),
+        "eval_alignment": align_info,
     }
 
 
@@ -795,6 +802,13 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
             f"[WARN] Trajectory length ratio est/gt={eval_res['length_ratio']:.2f} "
             f"(est={eval_res['length_est']:.2f}m, gt={eval_res['length_gt']:.2f}m)"
         )
+    eval_alignment = eval_res.get("eval_alignment", {})
+    if isinstance(eval_alignment, dict) and eval_alignment.get("sim3_scale_severe"):
+        print(
+            "[WARN] "
+            f"{eval_alignment.get('sim3_warning')} "
+            f"scale={_fmt(float(eval_alignment.get('sim3_scale', np.nan)), 6)}"
+        )
 
     ate3_ori = eval_res["ate3_ori"]
     ate3_pos = eval_res["ate3_pos"]
@@ -865,6 +879,12 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         f"| rmse_pos = {_fmt(time_pos_stats['rmse'])} ({int(time_rpe['pair_count'])} samples)"
     )
     success = valid["success"]
+    if isinstance(eval_alignment, dict) and str(eval_alignment.get("align_mode", "")) == "sim3":
+        success["sim3_sr_distance_raw"] = success.get("success_rate_distance")
+        success["sim3_sr_time_raw"] = success.get("success_rate_time")
+        success["sim3_sr_reliable"] = bool(eval_alignment.get("sim3_reliable", True))
+        if eval_alignment.get("sim3_scale_severe"):
+            success["sim3_scale_warning"] = str(eval_alignment.get("sim3_warning", ""))
     resolved_threshold_m = float(success["threshold"]["threshold_m"])
     print(_fmt_sr_config(valid, np.asarray(eval_res["gt_t"], dtype=float), np.asarray(eval_res["gt_pos"], dtype=float)))
     print(
@@ -873,6 +893,12 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         f"| time = {_fmt(float(success['success_rate_time']) * 100.0, 2)}% "
         f"| valid_dist = {_fmt(success['valid_distance_m'])}/{_fmt(success['total_distance_m'])}m"
     )
+    if isinstance(eval_alignment, dict) and str(eval_alignment.get("align_mode", "")) == "sim3":
+        reliable = bool(eval_alignment.get("sim3_reliable", True))
+        print(
+            f"Sim3 scale = {_fmt(float(eval_alignment.get('sim3_scale', np.nan)), 6)} "
+            f"| reliable = {str(reliable).lower()}"
+        )
     print("======================================")
     print(f"Aligned pairs: {int(eval_res['matched'])}")
     if args.plot:

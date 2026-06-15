@@ -478,11 +478,12 @@ def test_compute_valid_segment_metrics_preserves_recovered_segment_between_failu
     np.testing.assert_array_equal(metrics["rpe"]["_pair_ids"], np.array([[3, 4], [7, 8]]))
 
 
-def test_compute_valid_segment_metrics_global_gate_marks_failed_case() -> None:
-    t = np.arange(5, dtype=float)
+def test_compute_valid_segment_metrics_global_gate_keeps_local_success_rate() -> None:
+    t = np.arange(10, dtype=float)
     pos_ref = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
     pos_est = pos_ref.copy()
     pos_est[:, 1] = 50.0
+    pos_est[5:, 1] = 70.0
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
 
     ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
@@ -511,9 +512,11 @@ def test_compute_valid_segment_metrics_global_gate_marks_failed_case() -> None:
         include_raw=True,
     )
 
-    assert metrics["success"]["case_status"] == "globally_failed"
-    assert metrics["success"]["success_rate_distance"] == 0.0
-    assert metrics["ape"]["_error_arrays"]["translation_part"].size == 0
+    assert metrics["success"]["case_status"] == "globally_unstable"
+    assert metrics["success"]["global_gate_failed"] is True
+    assert "global gate failed" in metrics["success"]["global_gate_warning"]
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 3.0 / 9.0)
+    assert metrics["ape"]["_error_arrays"]["translation_part"].size == 4
 
 
 def test_rpe_point_distance_ratio_keeps_pair_aligned_raw_arrays() -> None:

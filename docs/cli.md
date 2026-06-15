@@ -88,7 +88,7 @@ epa_config --help
 
 ## `epa` / `epica`
 
-`epa` / `epica` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots and summaries into a new run directory.
+`epa` / `epica` is the main entry point. It loads a reference trajectory and an estimated trajectory, runs the 3-step pipeline, computes metrics, and writes plots, reports, and `interactive_report.html` into a new run directory.
 
 Common options:
 
@@ -101,6 +101,7 @@ Common options:
 - `--t-max-diff`: maximum timestamp association gap
 - `--t-offset`: constant offset applied to estimation timestamps before sync
 - `--plot` and `--no-plot`: enable or disable metric plot generation
+- `--debug`: generate extra diagnostic figures, including raw/Step2/Step3 trajectory comparison
 - `--save-results`: write a bundled result zip
 - `--save-full-metrics`: keep full per-sample APE/RPE arrays in `metrics.json`
 - `--rerun`: enable Rerun logging
@@ -117,6 +118,22 @@ With result bundle export:
 epa example_data/example_groundtruth.csv example_data/example_estimation.txt \
   --save-results outputs/results/run_a.zip
 ```
+
+### Report Outputs
+
+Each run writes Markdown reports (`report_en.md`, `report_zh.md`) and a supplementary `interactive_report.html`.
+
+The default report is user-facing:
+
+- final Step-3 trajectory plots are emphasized
+- raw/Step2/Step3 comparison figures are hidden unless `--debug` is used
+- clipped/core metric plots are prioritized so outliers do not compress the readable range
+- full-scale metric plots remain available in the figure gallery
+- `pose_states.csv` exports per-timestamp position, orientation, linear velocity, and angular velocity
+
+Use `--debug` when you want intermediate-stage figures, especially the raw/Step2/Step3 trajectory comparison.
+
+Case diagnostics are written into the reports and metrics payload. Tags such as `time_alignment_weak`, `trajectory_jump`, `scale_or_unit_suspect`, and `gt_mapping_suspect` are warnings to guide inspection. `orientation_unstable` is also a warning and does not change the translation successful rate.
 
 <video class="doc-video" controls muted loop playsinline preload="metadata">
   <source src="../images/rerun.mp4" type="video/mp4">

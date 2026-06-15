@@ -412,6 +412,64 @@ def _collect_plot_images(output_dir: Path) -> list[Path]:
     return images
 
 
+def _filter_report_images(images: list[Path], *, include_debug: bool = False) -> list[Path]:
+    priority = {
+        "step3_alignment_map.png": 0,
+        "rpe_time_1s_translation_part_raw_p95.png": 1,
+        "rpe_time_1s_translation_part_raw_p99.png": 2,
+        "rpe_time_1s_translation_part_stats_core.png": 3,
+        "rpe_time_1s_translation_part_box_p95.png": 4,
+        "rpe_time_1s_translation_part_box_p99.png": 5,
+        "rpe_time_1s_translation_part_raw.png": 6,
+        "rpe_time_1s_translation_part_stats.png": 7,
+        "rpe_time_1s_translation_part_box.png": 8,
+        "ape_translation_part_raw_p95.png": 9,
+        "ape_translation_part_raw_p99.png": 10,
+        "ape_translation_part_stats_core.png": 11,
+        "ape_translation_part_hist_p95.png": 12,
+        "ape_translation_part_hist_p99.png": 13,
+        "ape_translation_part_box_p95.png": 14,
+        "ape_translation_part_box_p99.png": 15,
+        "ape_translation_part_violin_p95.png": 16,
+        "ape_translation_part_violin_p99.png": 17,
+        "rpe_translation_part_raw_p95.png": 18,
+        "rpe_translation_part_raw_p99.png": 19,
+        "rpe_translation_part_stats_core.png": 20,
+        "rpe_translation_part_hist_p95.png": 21,
+        "rpe_translation_part_hist_p99.png": 22,
+        "rpe_translation_part_box_p95.png": 23,
+        "rpe_translation_part_box_p99.png": 24,
+        "rpe_translation_part_violin_p95.png": 25,
+        "rpe_translation_part_violin_p99.png": 26,
+    }
+    debug_only_names = {
+        "debug_step123_trajectory_alignment_3d.png",
+        "step23_trajectory_alignment_3d.png",
+    }
+    report_images = [
+        img
+        for img in images
+        if include_debug or img.name not in debug_only_names
+    ]
+    report_images.sort(key=lambda img: (priority.get(img.name, 100), img.name))
+    return report_images
+
+
+def _append_image_gallery(lines: list[str], *, title: str, images: list[Path], empty_text: str) -> None:
+    lines.append(title)
+    lines.append("")
+    if not images:
+        lines.append(empty_text)
+        lines.append("")
+        return
+    for img in images:
+        rel = f"plots/{img.name}"
+        lines.append(f"### {img.name}")
+        lines.append("")
+        lines.append(f"![{img.name}]({rel})")
+        lines.append("")
+
+
 def _infer_case_name(metadata: dict) -> str:
     gt_path = Path(str(metadata.get("gt_path", "") or "")).expanduser()
     est_path = Path(str(metadata.get("est_path", "") or "")).expanduser()
@@ -472,10 +530,195 @@ def _append_report_metrics_en(lines: list[str], metrics_payload: dict) -> None:
         lines.append("")
 
 
+def _append_sim3_alignment_report(lines: list[str], *, metadata: dict, language: str) -> None:
+    if not isinstance(metadata, dict):
+        return
+    info = metadata.get("eval_alignment", {})
+    if not isinstance(info, dict) or str(info.get("align_mode", "")).lower() != "sim3":
+        return
+    scale = _fmt_report_value(float(info.get("sim3_scale", info.get("align_scale", np.nan))))
+    reliable = bool(info.get("sim3_reliable", True))
+    warning = str(info.get("sim3_warning", "") or "").strip()
+    if language == "zh":
+        lines.extend(
+            [
+                "## Sim3 对齐提示",
+                "",
+                f"- Sim3 scale：`{scale}`",
+                f"- 结果可靠：`{str(reliable).lower()}`",
+            ]
+        )
+        if warning:
+            lines.append(f"- 警告：{warning}")
+    else:
+        lines.extend(
+            [
+                "## Sim3 Alignment",
+                "",
+                f"- Sim3 scale: `{scale}`",
+                f"- Reliable: `{str(reliable).lower()}`",
+            ]
+        )
+        if warning:
+            lines.append(f"- Warning: {warning}")
+    lines.append("")
+
+
+def _append_orientation_report(lines: list[str], *, metadata: dict, language: str) -> None:
+    if not isinstance(metadata, dict) or not bool(metadata.get("orientation_unstable", False)):
+        return
+    ape = _fmt_report_value(float(metadata.get("orientation_ape_rmse_deg", np.nan)))
+    rpe = _fmt_report_value(float(metadata.get("orientation_rpe_rmse_deg", np.nan)))
+    rpe_time = _fmt_report_value(float(metadata.get("orientation_rpe_time_1s_rmse_deg", np.nan)))
+    warning = str(metadata.get("orientation_warning", "") or "").strip()
+    if language == "zh":
+        lines.extend(
+            [
+                "## Orientation Warning",
+                "",
+                "- 状态：`orientation_unstable`",
+                f"- APE rotation RMSE：`{ape}` deg",
+                f"- RPE rotation RMSE：`{rpe}` deg",
+                f"- RPE 1s rotation RMSE：`{rpe_time}` deg",
+            ]
+        )
+        if warning:
+            lines.append(f"- 说明：{warning}")
+    else:
+        lines.extend(
+            [
+                "## Orientation Warning",
+                "",
+                "- Status: `orientation_unstable`",
+                f"- APE rotation RMSE: `{ape}` deg",
+                f"- RPE rotation RMSE: `{rpe}` deg",
+                f"- RPE 1s rotation RMSE: `{rpe_time}` deg",
+            ]
+        )
+        if warning:
+            lines.append(f"- Note: {warning}")
+        lines.append("")
+
+
+def _nested_dict_value(block: dict, path: tuple[str, ...], default=None):
+    cur = block
+    for key in path:
+        if not isinstance(cur, dict) or key not in cur:
+            return default
+        cur = cur[key]
+    return cur
+
+
+def _append_time_rpe_report(lines: list[str], *, metrics_payload: dict, language: str) -> None:
+    trans = _nested_dict_value(
+        metrics_payload,
+        ("pose_metrics", "rpe_time_1s", "step3", "translation_part"),
+        {},
+    )
+    rot = _nested_dict_value(
+        metrics_payload,
+        ("pose_metrics", "rpe_time_1s", "step3", "rotation_angle_deg"),
+        {},
+    )
+    pair_count = _nested_dict_value(metrics_payload, ("pose_metrics", "rpe_time_1s", "step3", "pair_count"), np.nan)
+    success = _nested_dict_value(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success"), {})
+    if not isinstance(trans, dict) and not isinstance(rot, dict):
+        return
+    trans_rmse = _fmt_report_value(float(trans.get("rmse", np.nan))) if isinstance(trans, dict) else "nan"
+    trans_p95 = _fmt_report_value(float(trans.get("p95", np.nan))) if isinstance(trans, dict) else "nan"
+    trans_max = _fmt_report_value(float(trans.get("max", np.nan))) if isinstance(trans, dict) else "nan"
+    rot_rmse = _fmt_report_value(float(rot.get("rmse", np.nan))) if isinstance(rot, dict) else "nan"
+    drift_threshold = (
+        _fmt_report_value(float(success.get("drift_rpe_1s_m", np.nan))) if isinstance(success, dict) else "nan"
+    )
+    pair_text = str(int(pair_count)) if np.isfinite(float(pair_count)) else "nan"
+    if language == "zh":
+        lines.extend(
+            [
+                "## 1-second RPE（局部跳变）",
+                "",
+                f"- Step3 translation RMSE：`{trans_rmse}` m",
+                f"- Step3 translation p95 / max：`{trans_p95}` / `{trans_max}` m",
+                f"- Step3 rotation RMSE：`{rot_rmse}` deg",
+                f"- Pair count：`{pair_text}`",
+                f"- Local drift threshold：`{drift_threshold}` m",
+                "- 图：[`raw p95`](plots/rpe_time_1s_translation_part_raw_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "## 1-second RPE (Local Jumps)",
+                "",
+                f"- Step3 translation RMSE: `{trans_rmse}` m",
+                f"- Step3 translation p95 / max: `{trans_p95}` / `{trans_max}` m",
+                f"- Step3 rotation RMSE: `{rot_rmse}` deg",
+                f"- Pair count: `{pair_text}`",
+                f"- Local drift threshold: `{drift_threshold}` m",
+                "- Figures: [`raw p95`](plots/rpe_time_1s_translation_part_raw_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
+                "",
+            ]
+        )
+
+
+def _append_pose_state_export_report(lines: list[str], *, metadata: dict, language: str) -> None:
+    csv_path = str(metadata.get("pose_state_csv", "") or "").strip()
+    if not csv_path:
+        return
+    if language == "zh":
+        lines.extend(
+            [
+                "## Pose State CSV",
+                "",
+                "- [pose_states.csv](pose_states.csv)",
+                "- 每个 timestamp 输出 GT/raw/step2/step3 的 position、orientation、linear velocity 和 angular velocity。",
+                "",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "## Pose State CSV",
+                "",
+                "- [pose_states.csv](pose_states.csv)",
+                "- Per timestamp export for GT/raw/step2/step3 position, orientation, linear velocity, and angular velocity.",
+                "",
+            ]
+        )
+
+
+def _append_case_diagnostics_report(lines: list[str], *, metrics_payload: dict, language: str) -> None:
+    diag = metrics_payload.get("case_diagnostics", {}) if isinstance(metrics_payload, dict) else {}
+    if not isinstance(diag, dict):
+        return
+    primary = str(diag.get("diagnosis_primary", "") or "").strip()
+    summary = str(diag.get("diagnosis_summary", "") or "").strip()
+    tags = diag.get("diagnosis_tags", [])
+    reasons = diag.get("diagnosis_reasons", {})
+    if not primary and not summary and not tags:
+        return
+    tag_text = ", ".join(str(tag) for tag in tags) if isinstance(tags, list) else str(tags)
+    if language == "zh":
+        lines.extend(["## Case Diagnostics", "", f"- Primary：`{primary or 'none'}`", f"- Tags：`{tag_text or 'none'}`"])
+        if isinstance(reasons, dict) and reasons:
+            for tag, reason in reasons.items():
+                lines.append(f"- `{tag}`：{reason}")
+        lines.append("")
+    else:
+        lines.extend(["## Case Diagnostics", "", f"- Primary: `{primary or 'none'}`", f"- Tags: `{tag_text or 'none'}`"])
+        if isinstance(reasons, dict) and reasons:
+            for tag, reason in reasons.items():
+                lines.append(f"- `{tag}`: {reason}")
+        lines.append("")
+
+
 def write_run_reports(output_dir, metrics_payload):
     output_dir = Path(output_dir)
     metadata = metrics_payload.get("metadata", {}) if isinstance(metrics_payload, dict) else {}
     images = _collect_plot_images(output_dir)
+    include_debug = bool(metadata.get("debug", False)) if isinstance(metadata, dict) else False
+    report_images = _filter_report_images(images, include_debug=include_debug)
     case_name = _infer_case_name(metadata if isinstance(metadata, dict) else {})
 
     zh_lines = [
@@ -523,18 +766,23 @@ def write_run_reports(output_dir, metrics_payload):
         if alert_reasons:
             zh_lines.append(f"- 原因：{alert_reasons}")
         zh_lines.append("")
+    interactive_report = str(
+        metadata.get("interactive_report", metadata.get("interactive_html", "")) or ""
+    ).strip()
+    if interactive_report:
+        zh_lines.extend(["## 交互式报告", "", "- [interactive_report.html](interactive_report.html)", ""])
+    _append_sim3_alignment_report(zh_lines, metadata=metadata, language="zh")
+    _append_orientation_report(zh_lines, metadata=metadata, language="zh")
+    _append_case_diagnostics_report(zh_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="zh")
+    _append_time_rpe_report(zh_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="zh")
+    _append_pose_state_export_report(zh_lines, metadata=metadata, language="zh")
     _append_report_metrics_zh(zh_lines, metrics_payload if isinstance(metrics_payload, dict) else {})
-    zh_lines.append("## 图片总览")
-    zh_lines.append("")
-    if not images:
-        zh_lines.append("- 无图片输出。")
-    else:
-        for img in images:
-            rel = f"plots/{img.name}"
-            zh_lines.append(f"### {img.name}")
-            zh_lines.append("")
-            zh_lines.append(f"![{img.name}]({rel})")
-            zh_lines.append("")
+    _append_image_gallery(
+        zh_lines,
+        title="## 图片总览",
+        images=report_images,
+        empty_text="- 无图片输出。",
+    )
 
     en_lines = [
         f"# EPA Run Report (English): {case_name}",
@@ -579,18 +827,20 @@ def write_run_reports(output_dir, metrics_payload):
         if alert_reasons:
             en_lines.append(f"- Reasons: {alert_reasons}")
         en_lines.append("")
+    if interactive_report:
+        en_lines.extend(["## Interactive Report", "", "- [interactive_report.html](interactive_report.html)", ""])
+    _append_sim3_alignment_report(en_lines, metadata=metadata, language="en")
+    _append_orientation_report(en_lines, metadata=metadata, language="en")
+    _append_case_diagnostics_report(en_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="en")
+    _append_time_rpe_report(en_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="en")
+    _append_pose_state_export_report(en_lines, metadata=metadata, language="en")
     _append_report_metrics_en(en_lines, metrics_payload if isinstance(metrics_payload, dict) else {})
-    en_lines.append("## Figure Gallery")
-    en_lines.append("")
-    if not images:
-        en_lines.append("- No figures were generated.")
-    else:
-        for img in images:
-            rel = f"plots/{img.name}"
-            en_lines.append(f"### {img.name}")
-            en_lines.append("")
-            en_lines.append(f"![{img.name}]({rel})")
-            en_lines.append("")
+    _append_image_gallery(
+        en_lines,
+        title="## Figure Gallery",
+        images=report_images,
+        empty_text="- No figures were generated.",
+    )
 
     report_zh_path = output_dir / "report_zh.md"
     report_en_path = output_dir / "report_en.md"

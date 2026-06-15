@@ -11,6 +11,7 @@ from epa.core.pipeline_modular import (
     _search_direct_offset_from_matched_pairs,
 )
 from epa.core.calibration import solve_world_alignment
+from epa.core.steps import _solve_step2_step3_candidate
 
 
 def _make_ref(n: int = 200) -> np.ndarray:
@@ -216,3 +217,74 @@ def test_offset_match_diagnostics_keeps_global_ratio_when_overlap_is_too_small()
     assert float(out["ratio_overlap"]) > 0.99
     assert int(out["pair_cap_overlap"]) < int(out["overlap_gate_min_pairs"])
     np.testing.assert_allclose(float(out["ratio_gate"]), float(out["ratio_global"]))
+
+
+def test_step3_robust_trimmed_alignment_ignores_drift_for_transform_only() -> None:
+    n = 120
+    t = np.linspace(0.0, 1.0, n)
+    pos_gt = np.column_stack([8.0 * t, np.sin(5.0 * t), 0.4 * np.cos(4.0 * t)])
+    R_world = R.from_euler("zyx", [25.0, -5.0, 8.0], degrees=True).as_matrix()
+    t_world = np.array([2.0, -1.2, 0.6])
+    pr = (R_world.T @ (pos_gt - t_world).T).T
+    pr[80:] += np.column_stack(
+        [
+            np.linspace(0.0, 25.0, n - 80),
+            np.linspace(0.0, -18.0, n - 80),
+            np.zeros(n - 80),
+        ]
+    )
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (n, 1))
+
+    out = _solve_step2_step3_candidate(
+        name="base",
+        R_calc=np.eye(3),
+        pr_sync=pr,
+        qr_sync=quat,
+        pos_gt_solve=pos_gt,
+        quat_gt_solve=quat,
+        pr_solve=pr,
+        qr_solve=quat,
+    )
+
+    assert out["step3_alignment_mode"] == "robust_trimmed"
+    assert int(out["step3_rejected_count"]) > 0
+    early_rmse = float(
+        np.sqrt(np.mean(np.sum((out["pr_final"][:80] - pos_gt[:80]) ** 2, axis=1)))
+    )
+    late_rmse = float(
+        np.sqrt(np.mean(np.sum((out["pr_final"][80:] - pos_gt[80:]) ** 2, axis=1)))
+    )
+    assert early_rmse < 0.2
+    assert late_rmse > 5.0
+
+
+def test_step3_uses_stable_prefix_when_trajectory_jumps() -> None:
+    n = 90
+    t = np.linspace(0.0, 1.0, n)
+    pos_gt = np.column_stack([6.0 * t, np.sin(4.0 * t), 0.2 * np.cos(3.0 * t)])
+    R_world = R.from_euler("zyx", [18.0, 4.0, -6.0], degrees=True).as_matrix()
+    t_world = np.array([1.0, -0.7, 0.3])
+    pr = (R_world.T @ (pos_gt - t_world).T).T
+    pr[35:] += np.array([5000.0, -2000.0, 1000.0])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (n, 1))
+
+    out = _solve_step2_step3_candidate(
+        name="base",
+        R_calc=np.eye(3),
+        pr_sync=pr,
+        qr_sync=quat,
+        pos_gt_solve=pos_gt,
+        quat_gt_solve=quat,
+        pr_solve=pr,
+        qr_solve=quat,
+    )
+
+    assert np.isfinite(out["step3_candidate_stable_sr_proxy"])
+    assert out["step3_candidate_full_anchor_rmse_m"] > out["step3_candidate_stable_anchor_rmse_m"]
+    assert out["step3_stable_segment_used"] == 1.0
+    assert int(out["step3_stable_segment_start_index"]) == 0
+    assert int(out["step3_stable_segment_end_index"]) == 34
+    early_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][:35] - pos_gt[:35]) ** 2, axis=1))))
+    late_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][35:] - pos_gt[35:]) ** 2, axis=1))))
+    assert early_rmse < 0.2
+    assert late_rmse > 1000.0
