@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from .math_utils import compute_error_statistics, poses_se3_from_traj, relative_se3
+from .math_utils import compute_error_statistics, poses_se3_from_traj
 
 APE_RELATION_ALIASES = {
     "full": "full_transformation",

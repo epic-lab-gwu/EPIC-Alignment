@@ -58,7 +58,6 @@ from .diagnostics import (
 )
 from ..metric_cli_common import (
     align_for_eval_with_info,
-    align_for_eval,
     cum_distance,
     project_to_plane,
 )

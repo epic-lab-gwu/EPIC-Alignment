@@ -431,7 +431,6 @@ def _diagnosis_tags_from_metrics(
     rigid_reasons = str(rigid_alignability.get("_rigid_alignability_reasons", ""))
     orientation_unstable = strict_bool(orientation.get("orientation_unstable", False))
     orientation_warning = str(orientation.get("orientation_warning", "") or "").strip()
-    global_gate_failed = strict_bool(success.get("global_gate_failed", False))
     piecewise_ratio = finite_float(rigid_alignability.get("segment_global_local_rmse_ratio", np.nan))
     sim3_scale = finite_float(rigid_alignability.get("sim3_scale", np.nan))
     low_performance = case_status in {"globally_unstable", "globally_failed"} or (
