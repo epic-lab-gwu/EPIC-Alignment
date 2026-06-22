@@ -11,7 +11,7 @@ from epa.core.pipeline_modular import (
     _search_direct_offset_from_matched_pairs,
 )
 from epa.core.calibration import solve_world_alignment
-from epa.core.steps import _solve_step2_step3_candidate
+from epa.core.steps import _select_step3_solve_variant, _solve_step2_step3_candidate
 
 
 def _make_ref(n: int = 200) -> np.ndarray:
@@ -288,3 +288,37 @@ def test_step3_uses_stable_prefix_when_trajectory_jumps() -> None:
     late_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][35:] - pos_gt[35:]) ** 2, axis=1))))
     assert early_rmse < 0.2
     assert late_rmse > 1000.0
+
+
+def test_step3_motion_prefix_only_overrides_global_failures() -> None:
+    full_ok = {
+        "step3_solve_variant": "full",
+        "step3_sr_proxy": 0.13,
+        "step3_gate_proxy_m": 4.4,
+        "step3_stable_anchor_rmse_m": 64.0,
+    }
+    motion = {
+        "step3_solve_variant": "motion_stable_prefix",
+        "step3_sr_proxy": 0.38,
+        "step3_gate_proxy_m": 1.0,
+        "step3_stable_anchor_rmse_m": 59.0,
+        "step3_stable_solve_ratio": 0.38,
+    }
+
+    assert _select_step3_solve_variant([full_ok, motion]) is full_ok
+
+    full_failed = {
+        "step3_solve_variant": "full",
+        "step3_sr_proxy": 0.0,
+        "step3_gate_proxy_m": 639.0,
+        "step3_stable_anchor_rmse_m": 1093.0,
+    }
+    motion_recovery = {
+        "step3_solve_variant": "motion_stable_prefix",
+        "step3_sr_proxy": 0.25,
+        "step3_gate_proxy_m": 2.0,
+        "step3_stable_anchor_rmse_m": 5.5,
+        "step3_stable_solve_ratio": 0.16,
+    }
+
+    assert _select_step3_solve_variant([full_failed, motion_recovery]) is motion_recovery

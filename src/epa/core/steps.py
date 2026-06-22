@@ -245,6 +245,89 @@ def _select_step3_stable_solve_mask(
     }
 
 
+def _select_step3_motion_stable_prefix_mask(
+    pos_ref: np.ndarray,
+    pos_est: np.ndarray,
+    *,
+    min_prefix_len: int = 80,
+    min_prefix_ratio: float = 0.10,
+    window_len: int = 80,
+    max_bad_fraction: float = 0.15,
+    max_est_step_m: float = 10.0,
+    max_step_ratio: float = 80.0,
+    max_window_step_m: float = 3.0,
+    max_window_ratio: float = 20.0,
+) -> tuple[np.ndarray, dict[str, float]]:
+    pos_ref = np.asarray(pos_ref, dtype=float)
+    pos_est = np.asarray(pos_est, dtype=float)
+    n = int(min(pos_ref.shape[0], pos_est.shape[0]))
+    mask_all = np.ones(n, dtype=bool)
+    base_info = {
+        "step3_stable_segment_used": 0.0,
+        "step3_stable_segment_count": 1.0 if n > 0 else 0.0,
+        "step3_stable_solve_count": float(n),
+        "step3_stable_solve_ratio": 1.0 if n > 0 else 0.0,
+        "step3_stable_segment_start_index": 0.0,
+        "step3_stable_segment_end_index": float(max(0, n - 1)),
+    }
+    if n < max(3, int(min_prefix_len)):
+        return mask_all, base_info
+
+    ref_step = np.linalg.norm(np.diff(pos_ref[:n], axis=0), axis=1)
+    est_step = np.linalg.norm(np.diff(pos_est[:n], axis=0), axis=1)
+    finite = np.isfinite(ref_step) & np.isfinite(est_step)
+    transition_limit = np.maximum(
+        float(max_est_step_m),
+        float(max_step_ratio) * np.maximum(ref_step, 1e-3),
+    )
+    bad_transition = (~finite) | (est_step > transition_limit)
+    trans_n = int(bad_transition.size)
+    if trans_n < 2:
+        return mask_all, base_info
+
+    win = max(5, min(int(window_len), trans_n))
+    min_prefix = max(int(min_prefix_len), int(np.ceil(float(min_prefix_ratio) * float(n))))
+    start_scan = min(max(0, min_prefix - 1), max(0, trans_n - win))
+    cut_transition = None
+    for start in range(start_scan, trans_n - win + 1):
+        stop = start + win
+        ref_win = ref_step[start:stop]
+        est_win = est_step[start:stop]
+        finite_win = finite[start:stop]
+        bad_fraction = float(np.mean(bad_transition[start:stop]))
+        if np.any(finite_win):
+            ref_med = float(np.median(ref_win[finite_win]))
+            est_med = float(np.median(est_win[finite_win]))
+        else:
+            ref_med = 0.0
+            est_med = float("inf")
+        window_limit = max(
+            float(max_window_step_m),
+            float(max_window_ratio) * max(ref_med, 1e-3),
+        )
+        if bad_fraction >= float(max_bad_fraction) or est_med > window_limit:
+            cut_transition = start
+            break
+
+    if cut_transition is None:
+        return mask_all, base_info
+
+    end = int(cut_transition + 1)
+    if end < min_prefix or end >= int(0.95 * n):
+        return mask_all, base_info
+
+    mask = np.zeros(n, dtype=bool)
+    mask[:end] = True
+    return mask, {
+        "step3_stable_segment_used": 1.0,
+        "step3_stable_segment_count": 1.0,
+        "step3_stable_solve_count": float(end),
+        "step3_stable_solve_ratio": float(end / max(1, n)),
+        "step3_stable_segment_start_index": 0.0,
+        "step3_stable_segment_end_index": float(end - 1),
+    }
+
+
 def _limit_solve_mask(mask: np.ndarray, *, max_count: int = 100000) -> tuple[np.ndarray, float]:
     mask = np.asarray(mask, dtype=bool).reshape(-1)
     selected = np.flatnonzero(mask)
@@ -286,12 +369,52 @@ def _select_step3_solve_variant(variants: list[dict]) -> dict:
         return variants[0]
 
     full = variants[0]
-    stable = variants[1]
+    original_stable = next((item for item in variants[1:] if item["step3_solve_variant"] == "stable"), None)
+    motion_stable = next(
+        (item for item in variants[1:] if item["step3_solve_variant"] == "motion_stable_prefix"),
+        None,
+    )
+    stable = original_stable if original_stable is not None else motion_stable
+    if stable is None:
+        return full
+
+    def should_use_motion_prefix(candidate: dict) -> bool:
+        candidate_sr = float(candidate["step3_sr_proxy"])
+        candidate_gate = float(candidate["step3_gate_proxy_m"])
+        candidate_anchor = float(candidate["step3_stable_anchor_rmse_m"])
+        candidate_ratio = float(candidate.get("step3_stable_solve_ratio", 1.0))
+        return bool(
+            full_sr <= 0.02
+            and full_gate >= 30.0
+            and full_anchor >= 100.0
+            and 0.12 <= candidate_ratio <= 0.25
+            and candidate_sr >= full_sr + 0.02
+            and candidate_gate <= min(full_gate * 0.10, full_gate - 5.0)
+            and 2.0 <= candidate_anchor <= min(20.0, full_anchor * 0.10)
+        )
+
+    best_motion = min(
+        [item for item in variants[1:] if item["step3_solve_variant"] == "motion_stable_prefix"],
+        key=lambda item: (
+            -float(item["step3_sr_proxy"]),
+            float(item["step3_gate_proxy_m"]),
+            float(item["step3_stable_anchor_rmse_m"]),
+        ),
+        default=None,
+    )
     full_sr = float(full["step3_sr_proxy"])
-    stable_sr = float(stable["step3_sr_proxy"])
     full_gate = float(full["step3_gate_proxy_m"])
-    stable_gate = float(stable["step3_gate_proxy_m"])
     full_anchor = float(full["step3_stable_anchor_rmse_m"])
+
+    if best_motion is not None and should_use_motion_prefix(best_motion):
+        return best_motion
+
+    if original_stable is None:
+        return full
+
+    stable = original_stable
+    stable_sr = float(stable["step3_sr_proxy"])
+    stable_gate = float(stable["step3_gate_proxy_m"])
     stable_anchor = float(stable["step3_stable_anchor_rmse_m"])
     stable_ratio = float(stable.get("step3_stable_solve_ratio", 1.0))
 
@@ -338,6 +461,7 @@ def _solve_step2_step3_candidate(
     n_solve = int(np.asarray(pos_gt_solve).shape[0])
     full_mask = np.ones(n_solve, dtype=bool)
     stable_mask, stable_info = _select_step3_stable_solve_mask(pos_gt_solve, pr_solve)
+    motion_mask, motion_info = _select_step3_motion_stable_prefix_mask(pos_gt_solve, pr_solve)
     anchor_mask = stable_mask if float(stable_info.get("step3_stable_segment_used", 0.0)) == 1.0 else full_mask
     anchor_indices_all = np.flatnonzero(anchor_mask)
     anchor_count = max(3, min(int(np.ceil(0.2 * n_solve)), int(anchor_indices_all.size)))
@@ -420,6 +544,8 @@ def _solve_step2_step3_candidate(
     variants = [solve_variant("full", full_mask, full_info)]
     if float(stable_info.get("step3_stable_segment_used", 0.0)) == 1.0:
         variants.append(solve_variant("stable", stable_mask, stable_info))
+    if float(motion_info.get("step3_stable_segment_used", 0.0)) == 1.0:
+        variants.append(solve_variant("motion_stable_prefix", motion_mask, motion_info))
     selected_variant = _select_step3_solve_variant(variants)
 
     t_calc = selected_variant["t_calc"]
@@ -470,16 +596,28 @@ def _solve_step2_step3_candidate(
         "rot_res_median_deg": float(residual["rot_res_median_deg"]),
         "rot_res_p95_deg": float(residual["rot_res_p95_deg"]),
         "step3_solve_variant": str(selected_variant["step3_solve_variant"]),
-        "step3_solve_variant_code": float(1.0 if str(selected_variant["step3_solve_variant"]) == "stable" else 0.0),
+        "step3_solve_variant_code": float(
+            {
+                "full": 0.0,
+                "stable": 1.0,
+                "motion_stable_prefix": 2.0,
+            }.get(str(selected_variant["step3_solve_variant"]), -1.0)
+        ),
         "step3_full_rmse_selected_m": float(variants[0]["step3_rmse_selected_m"]),
         "step3_full_anchor_rmse_m": float(variants[0]["step3_stable_anchor_rmse_m"]),
         "step3_candidate_full_sr_proxy": float(variants[0]["step3_sr_proxy"]),
         "step3_candidate_full_gate_proxy_m": float(variants[0]["step3_gate_proxy_m"]),
         "step3_candidate_full_anchor_rmse_m": float(variants[0]["step3_stable_anchor_rmse_m"]),
-        "step3_candidate_stable_sr_proxy": float(variants[1]["step3_sr_proxy"]) if len(variants) > 1 else float("nan"),
-        "step3_candidate_stable_gate_proxy_m": float(variants[1]["step3_gate_proxy_m"]) if len(variants) > 1 else float("nan"),
+        "step3_candidate_stable_sr_proxy": (
+            max(float(v["step3_sr_proxy"]) for v in variants[1:]) if len(variants) > 1 else float("nan")
+        ),
+        "step3_candidate_stable_gate_proxy_m": (
+            min(float(v["step3_gate_proxy_m"]) for v in variants[1:]) if len(variants) > 1 else float("nan")
+        ),
         "step3_candidate_stable_anchor_rmse_m": (
-            float(variants[1]["step3_stable_anchor_rmse_m"]) if len(variants) > 1 else float("nan")
+            min(float(v["step3_stable_anchor_rmse_m"]) for v in variants[1:])
+            if len(variants) > 1
+            else float("nan")
         ),
         "step3_alignment_mode": str(selected_variant["step3_alignment_mode"]),
         "step3_standard_rmse_m": float(selected_variant["step3_standard_rmse_m"]),

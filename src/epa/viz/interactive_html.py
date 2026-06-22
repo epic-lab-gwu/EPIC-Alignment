@@ -9,6 +9,8 @@ import numpy as np
 
 from epa.core.evaluation import RELATION_UNITS
 
+DEFAULT_MAX_POINTS = 10000
+
 
 def _finite_or_none(value: Any) -> float | None:
     try:
@@ -18,7 +20,7 @@ def _finite_or_none(value: Any) -> float | None:
     return val if np.isfinite(val) else None
 
 
-def _to_float_list(values: Any, *, max_points: int = 8000) -> list[float | None]:
+def _to_float_list(values: Any, *, max_points: int = DEFAULT_MAX_POINTS) -> list[float | None]:
     arr = np.asarray(values, dtype=float).reshape(-1)
     if arr.size == 0:
         return []
@@ -28,7 +30,7 @@ def _to_float_list(values: Any, *, max_points: int = 8000) -> list[float | None]
     return [_finite_or_none(v) for v in arr]
 
 
-def _xyz_trace(pos: Any, *, max_points: int = 8000) -> dict[str, list[float]]:
+def _xyz_trace(pos: Any, *, max_points: int = DEFAULT_MAX_POINTS) -> dict[str, list[float]]:
     pts = np.asarray(pos, dtype=float)
     if pts.ndim != 2 or pts.shape[1] < 3 or pts.shape[0] == 0:
         return {"x": [], "y": [], "z": []}
@@ -45,13 +47,70 @@ def _xyz_trace(pos: Any, *, max_points: int = 8000) -> dict[str, list[float]]:
     }
 
 
-def _error_xyz(pos_ref: Any, pos_est: Any, *, max_points: int = 8000) -> list[float]:
+def _error_xyz(pos_ref: Any, pos_est: Any, *, max_points: int = DEFAULT_MAX_POINTS) -> list[float]:
     ref = np.asarray(pos_ref, dtype=float)
     est = np.asarray(pos_est, dtype=float)
     if ref.shape != est.shape or ref.ndim != 2 or ref.shape[1] < 3:
         return []
     err = np.linalg.norm(est[:, :3] - ref[:, :3], axis=1)
     return _to_float_list(err, max_points=max_points)
+
+
+def _speed_trace(timestamps: Any, pos: Any, *, label: str, max_points: int = DEFAULT_MAX_POINTS) -> dict[str, Any]:
+    pts = np.asarray(pos, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] < 3 or pts.shape[0] < 2:
+        return {"label": label, "x": [], "y": [], "xLabel": "index"}
+    pts = pts[:, :3]
+    t = np.asarray(timestamps, dtype=float).reshape(-1)
+    if t.size != pts.shape[0]:
+        t = np.arange(pts.shape[0], dtype=float)
+        x_label = "index"
+    else:
+        t = t - t[0] if t.size else t
+        x_label = "time (s)"
+    dt = np.diff(t)
+    dist = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    valid = np.isfinite(dt) & np.isfinite(dist) & (dt > 0.0)
+    if not np.any(valid):
+        return {"label": label, "x": [], "y": [], "xLabel": x_label}
+    x_vals = t[1:][valid]
+    speed = dist[valid] / dt[valid]
+    return {
+        "label": label,
+        "x": _to_float_list(x_vals, max_points=max_points),
+        "y": _to_float_list(speed, max_points=max_points),
+        "xLabel": x_label,
+    }
+
+
+def _speed_plot_data(
+    timestamps: Any,
+    *,
+    pos_gt: Any,
+    pr_sync: Any,
+    pr_corrected: Any,
+    pr_final: Any,
+    debug: bool,
+    max_points: int,
+) -> dict[str, Any]:
+    traces = [
+        _speed_trace(timestamps, pos_gt, label="ground truth", max_points=max_points),
+        _speed_trace(timestamps, pr_final, label="step3", max_points=max_points),
+    ]
+    if debug:
+        traces.extend(
+            [
+                _speed_trace(timestamps, pr_sync, label="raw", max_points=max_points),
+                _speed_trace(timestamps, pr_corrected, label="step2", max_points=max_points),
+            ]
+        )
+    x_label = next((trace["xLabel"] for trace in traces if trace.get("x")), "index")
+    return {
+        "title": "Linear velocity",
+        "xLabel": x_label,
+        "yLabel": "speed (m/s)",
+        "traces": traces,
+    }
 
 
 def _pick_x_axis(x_axis: dict[str, Any], errors: np.ndarray, x_dimension: str) -> tuple[np.ndarray, str]:
@@ -71,6 +130,7 @@ def _metric_plot_data(
     relation: str,
     x_dimension: str,
     max_points: int,
+    stages: tuple[str, ...] = ("step3",),
 ) -> dict[str, Any]:
     pose_metrics = metrics_payload.get("pose_metrics", {}) if isinstance(metrics_payload, dict) else {}
     metric_block = pose_metrics.get(metric_kind, {}) if isinstance(pose_metrics, dict) else {}
@@ -78,7 +138,7 @@ def _metric_plot_data(
     boxes = []
     stats_rows = []
     x_label = "index"
-    for stage in ("raw", "step2", "step3"):
+    for stage in stages:
         stage_block = metric_block.get(stage, {}) if isinstance(metric_block, dict) else {}
         arrays = stage_block.get("_error_arrays", {}) if isinstance(stage_block, dict) else {}
         errors = np.asarray(arrays.get(relation, []), dtype=float).reshape(-1)
@@ -258,6 +318,10 @@ def _figure_links(metrics_payload: dict, base_dir: Path) -> list[dict[str, str]]
         "_hist.png",
         "_hist_p95.png",
         "_hist_p99.png",
+        "_series.png",
+        "_series_p95.png",
+        "_series_p99.png",
+        "_raw.png",
         "_raw_p95.png",
         "_raw_p99.png",
         "_stats_core.png",
@@ -283,7 +347,7 @@ def _figure_links(metrics_payload: dict, base_dir: Path) -> list[dict[str, str]]
         seen.add(href)
         links.append({"label": name, "href": href})
     priority = {
-        "rpe_time_1s_translation_part_raw.png": 0,
+        "rpe_time_1s_translation_part_series.png": 0,
         "rpe_time_1s_translation_part_stats.png": 1,
         "rpe_time_1s_translation_part_box.png": 2,
         "ape_translation_part_hist.png": 3,
@@ -292,25 +356,32 @@ def _figure_links(metrics_payload: dict, base_dir: Path) -> list[dict[str, str]]
         "rpe_translation_part_hist.png": 6,
         "rpe_translation_part_hist_p95.png": 7,
         "rpe_translation_part_hist_p99.png": 8,
-        "ape_translation_part_raw_p95.png": 9,
-        "ape_translation_part_raw_p99.png": 10,
+        "ape_translation_part_series_p95.png": 9,
+        "ape_translation_part_series_p99.png": 10,
         "ape_translation_part_stats_core.png": 11,
         "ape_translation_part_box_p95.png": 12,
         "ape_translation_part_box_p99.png": 13,
         "ape_translation_part_violin_p95.png": 14,
         "ape_translation_part_violin_p99.png": 15,
-        "rpe_translation_part_raw_p95.png": 16,
-        "rpe_translation_part_raw_p99.png": 17,
+        "rpe_translation_part_series_p95.png": 16,
+        "rpe_translation_part_series_p99.png": 17,
         "rpe_translation_part_stats_core.png": 18,
         "rpe_translation_part_box_p95.png": 19,
         "rpe_translation_part_box_p99.png": 20,
         "rpe_translation_part_violin_p95.png": 21,
         "rpe_translation_part_violin_p99.png": 22,
-        "rpe_time_1s_translation_part_raw_p95.png": 23,
-        "rpe_time_1s_translation_part_raw_p99.png": 24,
+        "rpe_time_1s_translation_part_series_p95.png": 23,
+        "rpe_time_1s_translation_part_series_p99.png": 24,
         "rpe_time_1s_translation_part_stats_core.png": 25,
         "rpe_time_1s_translation_part_box_p95.png": 26,
         "rpe_time_1s_translation_part_box_p99.png": 27,
+        "rpe_time_1s_translation_part_raw.png": 50,
+        "ape_translation_part_raw_p95.png": 59,
+        "ape_translation_part_raw_p99.png": 60,
+        "rpe_translation_part_raw_p95.png": 66,
+        "rpe_translation_part_raw_p99.png": 67,
+        "rpe_time_1s_translation_part_raw_p95.png": 73,
+        "rpe_time_1s_translation_part_raw_p99.png": 74,
     }
     links.sort(key=lambda item: (priority.get(item["label"], 100), item["label"]))
     return links
@@ -325,30 +396,40 @@ def write_interactive_run_html(
     pr_sync: Any,
     pr_corrected: Any,
     pr_final: Any,
+    timestamps_s: Any | None = None,
     time_alignment: dict[str, Any] | None = None,
     x_dimension: str = "seconds",
-    max_points: int = 8000,
+    max_points: int = DEFAULT_MAX_POINTS,
 ) -> Path:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     plot_meta = metrics_payload.get("metadata", {}).get("plot", {}) if isinstance(metrics_payload, dict) else {}
+    metadata = metrics_payload.get("metadata", {}) if isinstance(metrics_payload, dict) else {}
     ape_relation = str(plot_meta.get("ape_relation", "translation_part"))
     rpe_relation = str(plot_meta.get("rpe_relation", "translation_part"))
     x_dimension = str(plot_meta.get("x_dimension", x_dimension))
+    debug_outputs = bool(metadata.get("debug", False))
+    metric_stages = ("raw", "step2", "step3") if debug_outputs else ("step3",)
     step3_selection = metrics_payload.get("step3_selection", {}) if isinstance(metrics_payload, dict) else {}
     trajectory = {
         "gt": _xyz_trace(pos_gt, max_points=max_points),
-        "raw": _xyz_trace(pr_sync, max_points=max_points),
-        "step2": _xyz_trace(pr_corrected, max_points=max_points),
         "step3": _xyz_trace(pr_final, max_points=max_points),
-        "rawErr": _error_xyz(pos_gt, pr_sync, max_points=max_points),
-        "step2Err": _error_xyz(pos_gt, pr_corrected, max_points=max_points),
         "step3Err": _error_xyz(pos_gt, pr_final, max_points=max_points),
     }
+    if debug_outputs:
+        trajectory.update(
+            {
+                "raw": _xyz_trace(pr_sync, max_points=max_points),
+                "step2": _xyz_trace(pr_corrected, max_points=max_points),
+                "rawErr": _error_xyz(pos_gt, pr_sync, max_points=max_points),
+                "step2Err": _error_xyz(pos_gt, pr_corrected, max_points=max_points),
+            }
+        )
     time_block = dict(time_alignment or {})
     lag_times = np.asarray(time_block.get("lags", []), dtype=float).reshape(-1) * float(time_block.get("dt_resample", 1.0))
     data = {
         "title": str(title or "EPA Interactive Report"),
+        "debug": debug_outputs,
         "trajectory": trajectory,
         "step3": {
             "mode": str(step3_selection.get("step3_alignment_mode", "")),
@@ -363,6 +444,15 @@ def write_interactive_run_html(
             "corr": _to_float_list(time_block.get("corr", []), max_points=max_points),
             "offset": _finite_or_none(time_block.get("calculated_offset")) or 0.0,
         },
+        "speed": _speed_plot_data(
+            timestamps_s,
+            pos_gt=pos_gt,
+            pr_sync=pr_sync,
+            pr_corrected=pr_corrected,
+            pr_final=pr_final,
+            debug=debug_outputs,
+            max_points=max_points,
+        ),
         "metrics": [
             _metric_plot_data(
                 metrics_payload,
@@ -370,6 +460,7 @@ def write_interactive_run_html(
                 relation=ape_relation,
                 x_dimension=x_dimension,
                 max_points=max_points,
+                stages=metric_stages,
             ),
             _metric_plot_data(
                 metrics_payload,
@@ -377,6 +468,7 @@ def write_interactive_run_html(
                 relation=rpe_relation,
                 x_dimension=x_dimension,
                 max_points=max_points,
+                stages=metric_stages,
             ),
             _metric_plot_data(
                 metrics_payload,
@@ -384,6 +476,7 @@ def write_interactive_run_html(
                 relation="translation_part",
                 x_dimension=x_dimension,
                 max_points=max_points,
+                stages=metric_stages,
             ),
         ],
         "metricSummary": _metric_summary_cards(
@@ -395,6 +488,20 @@ def write_interactive_run_html(
         "figureLinks": _figure_links(metrics_payload, out_path.parent),
     }
     payload_json = json.dumps(data, ensure_ascii=False, allow_nan=False)
+    debug_sections = (
+        """
+<section class="panel" data-panel="timeSignals">
+  <div class="panelHeader" draggable="true"><h2>Step 1 Signals</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="timeSignals">x</button></div>
+  <div id="timeSignals" class="plot small"></div>
+</section>
+<section class="panel" data-panel="timeCorrelation">
+  <div class="panelHeader" draggable="true"><h2>Step 1 Correlation</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="timeCorrelation">x</button></div>
+  <div id="timeCorrelation" class="plot small"></div>
+</section>
+"""
+        if debug_outputs
+        else ""
+    )
     html_text = f"""<!doctype html>
 <html>
 <head>
@@ -405,9 +512,18 @@ def write_interactive_run_html(
 body{{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;background:#f7f8fb;color:#17202a}}
 header{{padding:18px 22px;background:#fff;border-bottom:1px solid #dce3ed;position:sticky;top:0;z-index:2}}
 h1{{font-size:22px;margin:0 0 6px;overflow-wrap:anywhere;line-height:1.2}} .meta{{display:flex;gap:14px;color:#52606d;font-size:13px;flex-wrap:wrap}}
-main{{padding:18px 22px;display:grid;gap:18px}}
-.panel{{background:#fff;border:1px solid #dce3ed;border-radius:6px;padding:12px}}
-.panel h2{{font-size:16px;margin:0 0 10px}}
+main{{padding:18px 22px}}
+.toolbar{{display:flex;justify-content:flex-end;margin:0 0 12px}}
+.toolbar button,.panelClose{{border:1px solid #ccd5e1;background:#fff;color:#334155;border-radius:4px;cursor:pointer}}
+.toolbar button{{padding:7px 10px;font-size:13px}}
+.dashboard{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;align-items:start}}
+.panel{{background:#fff;border:1px solid #dce3ed;border-radius:6px;padding:12px;min-width:0}}
+.panel.dragging{{opacity:.55}}
+.panel.span2{{grid-column:span 2}}
+.panelHeader{{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 10px;cursor:grab;user-select:none}}
+.panelHeader:active{{cursor:grabbing}}
+.panel h2{{font-size:16px;margin:0;line-height:1.25;overflow-wrap:anywhere}}
+.panelClose{{width:26px;height:26px;line-height:20px;font-size:14px;flex:0 0 auto}}
 .plot{{height:560px}} .plot.small{{height:390px}}
 .trajectoryControls{{display:flex;align-items:center;gap:12px;margin:0 0 10px;color:#52606d;font-size:13px}}
 .trajectoryControls input{{flex:1;min-width:180px}}
@@ -426,9 +542,8 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:#334155;font-weight:600
 .metricTable td:last-child{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}}
 .figureLinks{{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}}
 .figureLinks a{{display:inline-block;border:1px solid #dce3ed;border-radius:4px;padding:6px 8px;color:#1d4ed8;text-decoration:none;background:#fbfcfe;font-size:13px}}
-.grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}}
 .fallback{{padding:12px;background:#fff3cd;border:1px solid #ffec99;border-radius:6px;display:none}}
-@media (max-width: 980px){{.grid{{grid-template-columns:1fr}}.plot{{height:460px}}}}
+@media (max-width: 980px){{.dashboard{{grid-template-columns:1fr}}.panel.span2{{grid-column:span 1}}.plot{{height:460px}}}}
 </style>
 </head>
 <body>
@@ -438,29 +553,51 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:#334155;font-weight:600
 </header>
 <main>
 <div id="plotlyFallback" class="fallback">Plotly did not load. Check network access or use a browser with access to cdn.plot.ly.</div>
-<section class="panel"><h2>Metrics Summary</h2><div id="metricCards" class="metricCards"></div><div id="figureLinks" class="figureLinks"></div><details><summary>Metrics details</summary><div id="metricDetails" class="detailsGrid"></div></details></section>
-<section class="panel"><h2>3D Trajectory</h2><div class="trajectoryControls"><span>progress</span><input id="trajectoryProgress" type="range" min="2" max="100" value="100"><output id="trajectoryProgressLabel">100%</output></div><div id="trajectory3d" class="plot"></div></section>
-<section class="grid">
-<div class="panel"><h2>Step 1 Signals</h2><div id="timeSignals" class="plot small"></div></div>
-<div class="panel"><h2>Step 1 Correlation</h2><div id="timeCorrelation" class="plot small"></div></div>
+<div class="toolbar"><button id="resetLayout" type="button">Reset layout</button></div>
+<div id="dashboard" class="dashboard">
+<section class="panel span2" data-panel="summary">
+  <div class="panelHeader" draggable="true"><h2>Metrics Summary</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="summary">x</button></div>
+  <div id="metricCards" class="metricCards"></div><div id="figureLinks" class="figureLinks"></div><details><summary>Metrics details</summary><div id="metricDetails" class="detailsGrid"></div></details>
 </section>
-<section class="grid">
-<div class="panel"><h2>APE</h2><div id="metric0" class="plot small"></div></div>
-<div class="panel"><h2>APE Distribution</h2><div id="metricBox0" class="plot small"></div></div>
+<section class="panel span2" data-panel="trajectory">
+  <div class="panelHeader" draggable="true"><h2>3D Trajectory</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="trajectory">x</button></div>
+  <div class="trajectoryControls"><span>progress</span><input id="trajectoryProgress" type="range" min="2" max="100" value="100"><output id="trajectoryProgressLabel">100%</output></div><div id="trajectory3d" class="plot"></div>
 </section>
-<section class="grid">
-<div class="panel"><h2>RPE</h2><div id="metric1" class="plot small"></div></div>
-<div class="panel"><h2>RPE Distribution</h2><div id="metricBox1" class="plot small"></div></div>
+<section class="panel span2" data-panel="speed">
+  <div class="panelHeader" draggable="true"><h2>Linear Velocity</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="speed">x</button></div>
+  <div id="linearVelocity" class="plot small"></div>
 </section>
-<section class="grid">
-<div class="panel"><h2>1s RPE</h2><div id="metric2" class="plot small"></div></div>
-<div class="panel"><h2>1s RPE Distribution</h2><div id="metricBox2" class="plot small"></div></div>
+<section class="panel" data-panel="ape">
+  <div class="panelHeader" draggable="true"><h2>APE</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="ape">x</button></div>
+  <div id="metric0" class="plot small"></div>
 </section>
+<section class="panel" data-panel="apeDistribution">
+  <div class="panelHeader" draggable="true"><h2>APE Distribution</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="apeDistribution">x</button></div>
+  <div id="metricBox0" class="plot small"></div>
+</section>
+<section class="panel" data-panel="rpe1s">
+  <div class="panelHeader" draggable="true"><h2>1s RPE</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="rpe1s">x</button></div>
+  <div id="metric2" class="plot small"></div>
+</section>
+<section class="panel" data-panel="rpe1sDistribution">
+  <div class="panelHeader" draggable="true"><h2>1s RPE Distribution</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="rpe1sDistribution">x</button></div>
+  <div id="metricBox2" class="plot small"></div>
+</section>
+<section class="panel" data-panel="rpe">
+  <div class="panelHeader" draggable="true"><h2>RPE</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="rpe">x</button></div>
+  <div id="metric1" class="plot small"></div>
+</section>
+<section class="panel" data-panel="rpeDistribution">
+  <div class="panelHeader" draggable="true"><h2>RPE Distribution</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="rpeDistribution">x</button></div>
+  <div id="metricBox1" class="plot small"></div>
+</section>
+{debug_sections}</div>
 </main>
 <script id="epaInteractiveData" type="application/json">{payload_json}</script>
 <script>
 const payload = JSON.parse(document.getElementById('epaInteractiveData').textContent);
 const config = {{responsive:true, scrollZoom:false, displaylogo:false}};
+const defaultPanelOrder = ['summary','trajectory','speed','ape','apeDistribution','rpe1s','rpe1sDistribution','rpe','rpeDistribution'].concat(payload.debug ? ['timeSignals','timeCorrelation'] : []);
 function layout(title, xTitle, yTitle) {{
   return {{title, margin:{{l:58,r:20,t:42,b:52}}, hovermode:'closest', dragmode:'pan', xaxis:{{title:xTitle}}, yaxis:{{title:yTitle}}, legend:{{orientation:'h'}}}};
 }}
@@ -479,16 +616,92 @@ function sliceArray(values, pct) {{
 function trajectoryTraces(pct) {{
   const tr = payload.trajectory;
   const gt = sliceTrace(tr.gt, pct);
-  const raw = sliceTrace(tr.raw, pct);
-  const step2 = sliceTrace(tr.step2, pct);
   const step3 = sliceTrace(tr.step3, pct);
-  return [
+  const traces = [
     line3d('ground truth', gt, '#20242a', true),
-    line3d('raw', raw, '#c44e52', 'legendonly'),
-    line3d('step2', step2, '#dd9c32', 'legendonly'),
     {{type:'scatter3d', mode:'lines', name:'step3', x:step3.x, y:step3.y, z:step3.z,
       line:{{color:sliceArray(tr.step3Err, pct), colorscale:'Jet', width:6, colorbar:{{title:'err m'}}}}}}
   ];
+  if (tr.raw && tr.step2) {{
+    traces.splice(1, 0,
+      line3d('raw', sliceTrace(tr.raw, pct), '#c44e52', 'legendonly'),
+      line3d('step2', sliceTrace(tr.step2, pct), '#dd9c32', 'legendonly')
+    );
+  }}
+  return traces;
+}}
+function currentTrajectoryCamera() {{
+  const plot = document.getElementById('trajectory3d');
+  const scene = (plot.layout && plot.layout.scene) || (plot._fullLayout && plot._fullLayout.scene);
+  if (!scene || !scene.camera) return null;
+  return JSON.parse(JSON.stringify(scene.camera));
+}}
+function trajectoryLayout(camera) {{
+  const scene = {{aspectmode:'data'}};
+  if (camera) scene.camera = camera;
+  return {{
+    title:'Trajectory alignment',
+    margin:{{l:0,r:0,t:36,b:0}},
+    scene,
+    legend:{{orientation:'h'}},
+    dragmode:'orbit',
+    uirevision:'trajectory-camera'
+  }};
+}}
+function panelById(panelId) {{
+  return document.querySelector(`[data-panel="${{panelId}}"]`);
+}}
+function resizePlots() {{
+  document.querySelectorAll('.plot').forEach(el => {{
+    if (el.offsetParent !== null && window.Plotly) Plotly.Plots.resize(el);
+  }});
+}}
+function setupDashboard() {{
+  const dashboard = document.getElementById('dashboard');
+  let draggedPanel = null;
+  document.querySelectorAll('.panelHeader').forEach(handle => {{
+    handle.addEventListener('dragstart', event => {{
+      draggedPanel = handle.closest('.panel');
+      draggedPanel.classList.add('dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', draggedPanel.dataset.panel);
+    }});
+    handle.addEventListener('dragend', () => {{
+      if (draggedPanel) draggedPanel.classList.remove('dragging');
+      draggedPanel = null;
+      setTimeout(resizePlots, 80);
+    }});
+  }});
+  document.querySelectorAll('.panel').forEach(panel => {{
+    panel.addEventListener('dragover', event => event.preventDefault());
+    panel.addEventListener('drop', event => {{
+      event.preventDefault();
+      if (!draggedPanel || draggedPanel === panel) return;
+      dashboard.insertBefore(draggedPanel, panel);
+    }});
+  }});
+  dashboard.addEventListener('dragover', event => event.preventDefault());
+  dashboard.addEventListener('drop', event => {{
+    if (!draggedPanel || event.target !== dashboard) return;
+    event.preventDefault();
+    dashboard.appendChild(draggedPanel);
+  }});
+  document.querySelectorAll('[data-close-panel]').forEach(button => {{
+    button.addEventListener('click', () => {{
+      const panel = panelById(button.dataset.closePanel);
+      if (panel) panel.hidden = true;
+    }});
+  }});
+  const reset = document.getElementById('resetLayout');
+  reset.addEventListener('click', () => {{
+    defaultPanelOrder.forEach(panelId => {{
+      const panel = panelById(panelId);
+      if (!panel) return;
+      panel.hidden = false;
+      dashboard.appendChild(panel);
+    }});
+    setTimeout(resizePlots, 80);
+  }});
 }}
 function renderMetrics() {{
   const cards = document.getElementById('metricCards');
@@ -507,35 +720,46 @@ function renderMetrics() {{
     </div>
   `).join('');
 }}
+function renderPlot(id, traces, plotLayout) {{
+  const el = document.getElementById(id);
+  if (!el || !traces || traces.length === 0) return;
+  Plotly.newPlot(id, traces, plotLayout, config);
+}}
 function render() {{
   if (!window.Plotly) {{
     document.getElementById('plotlyFallback').style.display = 'block';
     return;
   }}
+  setupDashboard();
   renderMetrics();
-  Plotly.newPlot('trajectory3d', trajectoryTraces(100), {{title:'Trajectory alignment', margin:{{l:0,r:0,t:36,b:0}}, scene:{{aspectmode:'data'}}, legend:{{orientation:'h'}}, dragmode:'orbit'}}, config);
+  renderPlot('trajectory3d', trajectoryTraces(100), trajectoryLayout(null));
   const progress = document.getElementById('trajectoryProgress');
   const progressLabel = document.getElementById('trajectoryProgressLabel');
   progress.addEventListener('input', () => {{
     const pct = Number(progress.value);
+    const camera = currentTrajectoryCamera();
     progressLabel.textContent = `${{pct}}%`;
-    Plotly.react('trajectory3d', trajectoryTraces(pct), {{title:'Trajectory alignment', margin:{{l:0,r:0,t:36,b:0}}, scene:{{aspectmode:'data'}}, legend:{{orientation:'h'}}, dragmode:'orbit'}}, config);
+    Plotly.react('trajectory3d', trajectoryTraces(pct), trajectoryLayout(camera), config);
   }});
 
-  Plotly.newPlot('timeSignals', [
+  const speedTraces = payload.speed.traces.map(t => ({{type:'scattergl', mode:'lines', name:t.label, x:t.x, y:t.y}}));
+  renderPlot('linearVelocity', speedTraces, layout(payload.speed.title, payload.speed.xLabel, payload.speed.yLabel));
+
+  renderPlot('timeSignals', [
     {{type:'scattergl', mode:'lines', name:'GT omega', x:payload.time.t, y:payload.time.gtOmega}},
     {{type:'scattergl', mode:'lines', name:'EST omega', x:payload.time.t, y:payload.time.estOmega}}
-  ], layout('Angular velocity norm', 'time (s)', 'omega norm'), config);
-  Plotly.newPlot('timeCorrelation', [
-    {{type:'scattergl', mode:'lines', name:'correlation', x:payload.time.lag, y:payload.time.corr}},
-    {{type:'scatter', mode:'lines', name:'selected offset', x:[payload.time.offset, payload.time.offset], y:[Math.min(...payload.time.corr), Math.max(...payload.time.corr)], line:{{dash:'dash', color:'#d62728'}}}}
-  ], layout('Cross-correlation vs lag', 'lag (s)', 'correlation'), config);
+  ], layout('Angular velocity norm', 'time (s)', 'omega norm'));
+  const corrTraces = [{{type:'scattergl', mode:'lines', name:'correlation', x:payload.time.lag, y:payload.time.corr}}];
+  if (payload.time.corr.length > 0) {{
+    corrTraces.push({{type:'scatter', mode:'lines', name:'selected offset', x:[payload.time.offset, payload.time.offset], y:[Math.min(...payload.time.corr), Math.max(...payload.time.corr)], line:{{dash:'dash', color:'#d62728'}}}});
+  }}
+  renderPlot('timeCorrelation', corrTraces, layout('Cross-correlation vs lag', 'lag (s)', 'correlation'));
 
   payload.metrics.forEach((metric, idx) => {{
     const traces = metric.traces.map(t => ({{type:'scattergl', mode:'lines', name:t.stage, x:t.x, y:t.y}}));
-    Plotly.newPlot(`metric${{idx}}`, traces, layout(metric.title, metric.xLabel, metric.yLabel), config);
+    renderPlot(`metric${{idx}}`, traces, layout(metric.title, metric.xLabel, metric.yLabel));
     const boxes = metric.boxes.map(t => ({{type:'box', name:t.stage, y:t.y, boxpoints:false}}));
-    Plotly.newPlot(`metricBox${{idx}}`, boxes, layout(`${{metric.title}} distribution`, 'stage', metric.yLabel), config);
+    renderPlot(`metricBox${{idx}}`, boxes, layout(`${{metric.title}} distribution`, 'stage', metric.yLabel));
   }});
 }}
 window.addEventListener('load', render);

@@ -278,7 +278,8 @@ def test_write_run_reports_keeps_gallery_but_hides_step123_by_default(tmp_path: 
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(parents=True)
     for name in [
-        "ape_translation_part_se3_raw.png",
+        "ape_translation_part_step3_series.png",
+        "debug_ape_translation_part_raw.png",
         "debug_step123_trajectory_alignment_3d.png",
         "step1_time_alignment.png",
         "step3_alignment_map.png",
@@ -301,9 +302,10 @@ def test_write_run_reports_keeps_gallery_but_hides_step123_by_default(tmp_path: 
     assert "## Figure Gallery" in report
     assert "## User-Facing Figures" not in report
     assert "## Debug Figures" not in report
-    assert report.index("step3_alignment_map.png") < report.index("ape_translation_part_se3_raw.png")
+    assert report.index("step3_alignment_map.png") < report.index("ape_translation_part_step3_series.png")
     assert "step1_time_alignment.png" in report
-    assert "ape_translation_part_se3_raw.png" in report
+    assert "ape_translation_part_step3_series.png" in report
+    assert "debug_ape_translation_part_raw.png" not in report
     assert "debug_step123_trajectory_alignment_3d.png" not in report
 
 
@@ -312,6 +314,7 @@ def test_write_run_reports_includes_step123_in_gallery_when_debug_enabled(tmp_pa
     plots_dir = out_dir / "plots"
     plots_dir.mkdir(parents=True)
     for name in [
+        "debug_ape_translation_part_raw.png",
         "debug_step123_trajectory_alignment_3d.png",
         "step1_time_alignment.png",
         "step3_alignment_map.png",
@@ -337,6 +340,7 @@ def test_write_run_reports_includes_step123_in_gallery_when_debug_enabled(tmp_pa
     assert "## Debug Figures" not in report
     assert report.index("step3_alignment_map.png") < report.index("debug_step123_trajectory_alignment_3d.png")
     assert "step1_time_alignment.png" in report
+    assert "debug_ape_translation_part_raw.png" in report
 
 
 def test_write_run_reports_includes_sim3_alignment_warning(tmp_path: Path) -> None:
@@ -399,17 +403,17 @@ def test_write_run_reports_highlights_time_rpe_and_pose_state_csv(tmp_path: Path
     plots_dir.mkdir(parents=True)
     for name in [
         "step3_alignment_map.png",
-        "rpe_time_1s_translation_part_raw.png",
+        "rpe_time_1s_translation_part_series.png",
         "rpe_time_1s_translation_part_stats.png",
         "rpe_time_1s_translation_part_box.png",
-        "rpe_time_1s_translation_part_raw_p95.png",
+        "rpe_time_1s_translation_part_series_p95.png",
         "rpe_time_1s_translation_part_stats_core.png",
         "rpe_time_1s_translation_part_box_p95.png",
         "ape_translation_part_hist.png",
         "ape_translation_part_hist_p95.png",
         "ape_translation_part_hist_p99.png",
-        "ape_translation_part_raw_p95.png",
-        "ape_translation_part_raw_p99.png",
+        "ape_translation_part_series_p95.png",
+        "ape_translation_part_series_p99.png",
     ]:
         (plots_dir / name).write_bytes(b"png")
     (out_dir / "pose_states.csv").write_text("timestamp_s\n", encoding="utf-8")
@@ -451,8 +455,10 @@ def test_write_run_reports_highlights_time_rpe_and_pose_state_csv(tmp_path: Path
     assert "Step3 translation RMSE: `1.200000` m" in report
     assert "[pose_states.csv](pose_states.csv)" in report
     assert report.index("ape_translation_part_hist_p95.png") < report.index("ape_translation_part_hist.png")
-    assert report.index("ape_translation_part_raw_p95.png") < report.index("ape_translation_part_hist.png")
-    assert report.index("rpe_time_1s_translation_part_raw_p95.png") < report.index("rpe_time_1s_translation_part_raw.png")
+    assert report.index("ape_translation_part_series_p95.png") < report.index("ape_translation_part_hist.png")
+    assert report.index("rpe_time_1s_translation_part_series_p95.png") < report.index(
+        "rpe_time_1s_translation_part_series.png"
+    )
     assert report.index("ape_translation_part_hist_p95.png") < report.index("ape_translation_part_hist.png")
 
 

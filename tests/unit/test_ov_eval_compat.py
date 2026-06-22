@@ -9,6 +9,7 @@ from epa.ov_eval_compat import _format_source_counts
 from epa.ov_eval_compat import (
     _build_error_dataset_parser,
     _build_error_comparison_parser,
+    _compute_rpe_segments,
     _compute_time_rpe_1s,
     _drift_rate_percent,
     _evaluate_pair,
@@ -21,7 +22,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.9"
+    assert epa.__version__ == "0.1.11"
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -56,6 +57,29 @@ def test_compute_time_rpe_1s_reports_translation_drift() -> None:
 def test_drift_rate_percent_normalizes_translation_by_segment_length() -> None:
     np.testing.assert_allclose(_drift_rate_percent([0.4, 0.8], 8.0), 7.5)
     assert np.isnan(_drift_rate_percent([], 8.0))
+
+
+def test_ov_eval_rpe_segments_use_fixed_half_meter_distance_window() -> None:
+    t = np.arange(11, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    est_pos = gt_pos.copy()
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+
+    out = _compute_rpe_segments(
+        gt_pos=gt_pos,
+        gt_quat=quat,
+        est_pos=est_pos,
+        est_quat=quat,
+        segments_m=[8.0, 40.0],
+    )
+
+    assert int(out[8.0]["pair_count"]) == 3
+    np.testing.assert_array_equal(np.asarray(out[8.0]["pair_ids"], dtype=int), np.array([[0, 8], [1, 9], [2, 10]]))
+    assert float(out[8.0]["ori_stats"]["median"]) == 0.0
+    assert float(out[8.0]["pos_stats"]["median"]) == 0.0
+    assert int(out[40.0]["pair_count"]) == 0
+    assert float(out[40.0]["ori_stats"]["median"]) == 0.0
+    assert float(out[40.0]["pos_stats"]["median"]) == 0.0
 
 
 def _write_tum(path: Path, t: np.ndarray, pos: np.ndarray, quat: np.ndarray) -> None:
@@ -101,6 +125,37 @@ def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(
     assert np.isfinite(float(epa["ate3_ori"]["rmse"]))
     assert np.isfinite(float(epa["ate3_pos"]["rmse"]))
     assert epa["eval_source"] == "epa_step3"
+
+
+def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) -> None:
+    n = 120
+    t = np.arange(n, dtype=float) * 0.1
+    pos_gt = np.column_stack(
+        [
+            2.0 * np.cos(0.15 * t),
+            1.5 * np.sin(0.2 * t),
+            0.2 * t,
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.1 * t, 0.05 * np.sin(t), 0.03 * t])).as_quat()
+
+    scale_true = 2.5
+    r_align = R.from_euler("zyx", [35.0, -12.0, 8.0], degrees=True)
+    t_align = np.array([0.6, -1.2, 0.4], dtype=float)
+    pos_est = (r_align.inv().as_matrix() @ ((pos_gt - t_align) / scale_true).T).T
+    quat_est = (r_align.inv() * R.from_quat(quat_gt)).as_quat()
+
+    gt_path = tmp_path / "gt.tum"
+    est_path = tmp_path / "est.tum"
+    _write_tum(gt_path, t, pos_gt, quat_gt)
+    _write_tum(est_path, t, pos_est, quat_est)
+
+    result = _evaluate_pair_ov_style(gt_path, est_path, "sim3", 0.02)
+
+    np.testing.assert_allclose(float(result["eval_alignment"]["align_scale"]), scale_true, rtol=1e-6)
+    assert float(result["ate3_pos"]["rmse"]) < 1e-6
+    assert float(result["ate3_ori"]["rmse"]) < 1e-6
+    assert result["eval_alignment"]["sim3_reliable"] is True
 
 
 def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
@@ -371,3 +426,56 @@ def test_error_dataset_skips_failed_small_trajectory_runs(
     assert "[warn] skipping bad_small.txt" in out
     assert "no valid runs for algo/seq" in out
     assert "failed_runs: bad_small.txt:failed" in out
+
+
+def test_error_dataset_reports_unreliable_rotation_with_high_translation_sr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat_gt = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    quat_bad = np.tile(R.from_euler("z", 120.0, degrees=True).as_quat(), (t.size, 1))
+    gt_path = tmp_path / "seq.txt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_path, t, gt_pos, quat_gt)
+    (run_dir / "bad_rotation.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**_kwargs):
+        return {
+            "matched": int(t.size),
+            "length_ratio": 1.0,
+            "ate3_ori": {"rmse": 120.0},
+            "ate3_pos": {"rmse": 0.0},
+            "ate2_ori": {"rmse": 120.0},
+            "ate2_pos": {"rmse": 0.0},
+            "eval_source": "ov_eval_style",
+            "gt_t": t,
+            "gt_pos": gt_pos,
+            "gt_quat": quat_gt,
+            "est_pos": gt_pos,
+            "est_quat": quat_bad,
+        }
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_dataset_parser().parse_args(
+        [
+            "sim3",
+            str(gt_path),
+            str(alg_root),
+            "--epa-success-threshold-mode",
+            "fixed",
+            "--epa-success-threshold-m",
+            "10",
+            "--epa-success-global-gate-m",
+            "30",
+        ]
+    )
+
+    assert run_error_dataset(args) == 0
+    out = capsys.readouterr().out
+    assert "unreliable_runs: bad_rotation.txt:" in out
+    assert "Translation SR is high but rotation error is unstable" in out

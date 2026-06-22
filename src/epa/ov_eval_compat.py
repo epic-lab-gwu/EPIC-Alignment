@@ -14,7 +14,6 @@ from epa.core.evaluation import (
     compute_path_length,
     compute_rpe,
     compute_valid_segment_metrics,
-    filter_rpe_block_by_valid_segments,
     resolve_success_threshold,
 )
 from epa.core.math_utils import compute_error_statistics, normalize_quat_array
@@ -33,6 +32,9 @@ _DEFAULT_EPA_DT_RESAMPLE = 0.001
 _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO = 0.3
 _DEFAULT_EPA_DOWNSAMPLE_HZ = 100.0
 _DEFAULT_EPA_QUAT_INTERP = "linear"
+_ORIENTATION_WARNING_MIN_SR = 0.99
+_ORIENTATION_WARNING_APE_RMSE_DEG = 45.0
+_ORIENTATION_WARNING_RPE_RMSE_DEG = 30.0
 
 
 def _fmt(v: float, nd: int = 3) -> str:
@@ -528,12 +530,169 @@ def _format_source_details(items: list[str]) -> str:
     return ", ".join(items)
 
 
+def _orientation_quality_warning(eval_res: dict, success: dict, time_rpe: dict) -> dict[str, object]:
+    sr_distance = float(success.get("success_rate_distance", 0.0))
+    ape_rmse = float(eval_res.get("ate3_ori", {}).get("rmse", np.nan))
+    rpe_rmse = float(time_rpe.get("ori_stats", {}).get("rmse", np.nan))
+    high_translation_sr = bool(np.isfinite(sr_distance) and sr_distance >= _ORIENTATION_WARNING_MIN_SR)
+    ape_bad = bool(np.isfinite(ape_rmse) and ape_rmse >= _ORIENTATION_WARNING_APE_RMSE_DEG)
+    rpe_bad = bool(np.isfinite(rpe_rmse) and rpe_rmse >= _ORIENTATION_WARNING_RPE_RMSE_DEG)
+    unstable = bool(high_translation_sr and (ape_bad or rpe_bad))
+    warning = ""
+    if unstable:
+        warning = (
+            "Translation SR is high but rotation error is unstable; "
+            "treat this run as evaluation-suspect until pose convention/data mapping is checked."
+        )
+    return {
+        "orientation_unstable": unstable,
+        "orientation_warning": warning,
+        "orientation_translation_sr_distance": sr_distance,
+        "orientation_ape_rmse_deg": ape_rmse,
+        "orientation_rpe_time_1s_rmse_deg": rpe_rmse,
+        "orientation_min_sr_for_warning": _ORIENTATION_WARNING_MIN_SR,
+        "orientation_ape_rmse_threshold_deg": _ORIENTATION_WARNING_APE_RMSE_DEG,
+        "orientation_rpe_time_1s_rmse_threshold_deg": _ORIENTATION_WARNING_RPE_RMSE_DEG,
+    }
+
+
+def _eval_quality_flags(eval_res: dict, success: dict, time_rpe: dict) -> dict[str, object]:
+    eval_alignment = eval_res.get("eval_alignment", {})
+    sim3_reliable = True
+    sim3_warning = ""
+    if isinstance(eval_alignment, dict) and str(eval_alignment.get("align_mode", "")).lower() == "sim3":
+        sim3_reliable = bool(eval_alignment.get("sim3_reliable", True))
+        sim3_warning = str(eval_alignment.get("sim3_warning", "") or "")
+
+    orientation = _orientation_quality_warning(eval_res, success, time_rpe)
+    orientation_unstable = bool(orientation["orientation_unstable"])
+    warnings: list[str] = []
+    if not sim3_reliable and sim3_warning:
+        warnings.append(sim3_warning)
+    if orientation_unstable and orientation["orientation_warning"]:
+        warnings.append(str(orientation["orientation_warning"]))
+
+    return {
+        **orientation,
+        "sim3_reliable": sim3_reliable,
+        "eval_reliable": bool(sim3_reliable and not orientation_unstable),
+        "eval_warning": " ".join(warnings),
+    }
+
+
 def _drift_rate_percent(values, segment_m: float) -> float:
     vals = np.asarray(values, dtype=float)
     vals = vals[np.isfinite(vals)]
     if vals.size == 0 or float(segment_m) <= 0.0:
         return float("nan")
     return float(np.mean(vals / float(segment_m)) * 100.0)
+
+
+def _compute_ov_eval_comparison_indices(accum_distances: np.ndarray, distance: float, max_dist_diff: float = 0.5) -> np.ndarray:
+    distances = np.asarray(accum_distances, dtype=float).reshape(-1)
+    comparisons = np.full(distances.size, -1, dtype=int)
+    target_delta = float(distance)
+    max_diff = float(max_dist_diff)
+    for idx in range(distances.size):
+        target = float(distances[idx]) + target_delta
+        best_error = max_diff
+        best_idx = -1
+        for end_idx in range(idx, distances.size):
+            err = abs(float(distances[end_idx]) - target)
+            if err < best_error:
+                best_idx = int(end_idx)
+                best_error = err
+        comparisons[idx] = best_idx
+    return comparisons
+
+
+def _ov_eval_error_statistics(values: np.ndarray) -> dict[str, float]:
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    if arr.size == 0:
+        return {
+            "rmse": 0.0,
+            "mean": 0.0,
+            "median": 0.0,
+            "std": 0.0,
+            "min": 0.0,
+            "max": 0.0,
+            "sse": 0.0,
+        }
+    return compute_error_statistics(arr)
+
+
+def _pose_matrix_ov_eval(pos: np.ndarray, quat_xyzw: np.ndarray) -> np.ndarray:
+    T = np.eye(4, dtype=float)
+    T[:3, :3] = R.from_quat(np.asarray(quat_xyzw, dtype=float)).as_matrix()
+    T[:3, 3] = np.asarray(pos, dtype=float).reshape(3)
+    return T
+
+
+def _compute_rpe_segments_ov_eval_style(
+    gt_pos: np.ndarray,
+    gt_quat: np.ndarray,
+    est_pos: np.ndarray,
+    est_quat: np.ndarray,
+    segments_m: list[float],
+    *,
+    valid_segment_mask: np.ndarray | None = None,
+) -> dict[float, dict[str, np.ndarray | dict[str, float] | int]]:
+    gt_pos = np.asarray(gt_pos, dtype=float)
+    est_pos = np.asarray(est_pos, dtype=float)
+    gt_quat = np.asarray(gt_quat, dtype=float)
+    est_quat = np.asarray(est_quat, dtype=float)
+    accum_distances = np.zeros(gt_pos.shape[0], dtype=float)
+    if gt_pos.shape[0] > 1:
+        accum_distances[1:] = np.cumsum(np.linalg.norm(np.diff(gt_pos, axis=0), axis=1))
+
+    valid_mask = None
+    if valid_segment_mask is not None:
+        valid_mask = np.asarray(valid_segment_mask, dtype=bool).reshape(-1)
+        if valid_mask.size != gt_pos.shape[0]:
+            valid_mask = None
+
+    out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
+    for seg in segments_m:
+        comparisons = _compute_ov_eval_comparison_indices(accum_distances, float(seg), max_dist_diff=0.5)
+        ori_vals: list[float] = []
+        pos_vals: list[float] = []
+        pair_ids: list[tuple[int, int]] = []
+        for id_start, id_end_raw in enumerate(comparisons):
+            id_end = int(id_end_raw)
+            if id_end == -1:
+                continue
+            if valid_mask is not None and not bool(np.all(valid_mask[id_start : id_end + 1])):
+                continue
+
+            T_c1 = _pose_matrix_ov_eval(est_pos[id_start], est_quat[id_start])
+            T_c2 = _pose_matrix_ov_eval(est_pos[id_end], est_quat[id_end])
+            T_m1 = _pose_matrix_ov_eval(gt_pos[id_start], gt_quat[id_start])
+            T_m2 = _pose_matrix_ov_eval(gt_pos[id_end], gt_quat[id_end])
+
+            T_c1_c2 = np.linalg.inv(T_c1) @ T_c2
+            T_m1_m2 = np.linalg.inv(T_m1) @ T_m2
+            T_error_in_c2 = np.linalg.inv(T_m1_m2) @ T_c1_c2
+            T_c2_rot = np.eye(4, dtype=float)
+            T_c2_rot[:3, :3] = T_c2[:3, :3]
+            T_c2_rot_inv = np.eye(4, dtype=float)
+            T_c2_rot_inv[:3, :3] = T_c2[:3, :3].T
+            T_error_in_w = T_c2_rot @ T_error_in_c2 @ T_c2_rot_inv
+
+            pos_vals.append(float(np.linalg.norm(T_error_in_w[:3, 3])))
+            ori_vals.append(float(np.degrees(R.from_matrix(T_error_in_w[:3, :3]).magnitude())))
+            pair_ids.append((int(id_start), int(id_end)))
+
+        ori_arr = np.asarray(ori_vals, dtype=float)
+        pos_arr = np.asarray(pos_vals, dtype=float)
+        out[float(seg)] = {
+            "ori_values": ori_arr,
+            "pos_values": pos_arr,
+            "ori_stats": _ov_eval_error_statistics(ori_arr),
+            "pos_stats": _ov_eval_error_statistics(pos_arr),
+            "pair_count": int(pos_arr.size),
+            "pair_ids": np.asarray(pair_ids, dtype=int).reshape(-1, 2) if pair_ids else np.empty((0, 2), dtype=int),
+        }
+    return out
 
 
 def _compute_rpe_segments(
@@ -543,30 +702,13 @@ def _compute_rpe_segments(
     est_quat: np.ndarray,
     segments_m: list[float],
 ) -> dict[float, dict[str, np.ndarray | dict[str, float] | int]]:
-    out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
-    for seg in segments_m:
-        tol_rel = min(1.0, 0.5 / float(seg)) if float(seg) > 0 else 0.1
-        blk = compute_rpe(
-            pos_ref=gt_pos,
-            quat_ref=gt_quat,
-            pos_est=est_pos,
-            quat_est=est_quat,
-            delta=float(seg),
-            delta_unit="m",
-            rel_delta_tol=float(tol_rel),
-            all_pairs=True,
-            include_raw=True,
-        )
-        ori_vals = np.asarray(blk["_error_arrays"]["rotation_angle_deg"], dtype=float)
-        pos_vals = np.asarray(blk["_error_arrays"]["translation_part"], dtype=float)
-        out[float(seg)] = {
-            "ori_values": ori_vals,
-            "pos_values": pos_vals,
-            "ori_stats": compute_error_statistics(ori_vals),
-            "pos_stats": compute_error_statistics(pos_vals),
-            "pair_count": int(blk.get("pair_count", int(pos_vals.size))),
-        }
-    return out
+    return _compute_rpe_segments_ov_eval_style(
+        gt_pos=gt_pos,
+        gt_quat=gt_quat,
+        est_pos=est_pos,
+        est_quat=est_quat,
+        segments_m=segments_m,
+    )
 
 
 def _compute_time_rpe_1s(
@@ -689,35 +831,14 @@ def _compute_valid_rpe_segments(
     valid_segment_mask: np.ndarray,
     segments_m: list[float],
 ) -> dict[float, dict[str, np.ndarray | dict[str, float] | int]]:
-    out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
-    for seg in segments_m:
-        tol_rel = min(1.0, 0.5 / float(seg)) if float(seg) > 0 else 0.1
-        blk = compute_rpe(
-            pos_ref=gt_pos,
-            quat_ref=gt_quat,
-            pos_est=est_pos,
-            quat_est=est_quat,
-            delta=float(seg),
-            delta_unit="m",
-            rel_delta_tol=float(tol_rel),
-            all_pairs=True,
-            include_raw=True,
-        )
-        valid_blk = filter_rpe_block_by_valid_segments(
-            blk,
-            valid_segment_mask=np.asarray(valid_segment_mask, dtype=bool),
-            include_raw=True,
-        )
-        ori_vals = np.asarray(valid_blk["_error_arrays"]["rotation_angle_deg"], dtype=float)
-        pos_vals = np.asarray(valid_blk["_error_arrays"]["translation_part"], dtype=float)
-        out[float(seg)] = {
-            "ori_values": ori_vals,
-            "pos_values": pos_vals,
-            "ori_stats": compute_error_statistics(ori_vals),
-            "pos_stats": compute_error_statistics(pos_vals),
-            "pair_count": int(valid_blk.get("pair_count", int(pos_vals.size))),
-        }
-    return out
+    return _compute_rpe_segments_ov_eval_style(
+        gt_pos=gt_pos,
+        gt_quat=gt_quat,
+        est_pos=est_pos,
+        est_quat=est_quat,
+        segments_m=segments_m,
+        valid_segment_mask=np.asarray(valid_segment_mask, dtype=bool),
+    )
 
 
 def _fmt_sr_config(valid: dict, gt_t: np.ndarray, gt_pos: np.ndarray) -> str:
@@ -885,6 +1006,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         success["sim3_sr_reliable"] = bool(eval_alignment.get("sim3_reliable", True))
         if eval_alignment.get("sim3_scale_severe"):
             success["sim3_scale_warning"] = str(eval_alignment.get("sim3_warning", ""))
+    quality = _eval_quality_flags(eval_res, success, time_rpe)
     resolved_threshold_m = float(success["threshold"]["threshold_m"])
     print(_fmt_sr_config(valid, np.asarray(eval_res["gt_t"], dtype=float), np.asarray(eval_res["gt_pos"], dtype=float)))
     print(
@@ -899,6 +1021,9 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
             f"Sim3 scale = {_fmt(float(eval_alignment.get('sim3_scale', np.nan)), 6)} "
             f"| reliable = {str(reliable).lower()}"
         )
+    print(f"Eval reliable = {str(bool(quality['eval_reliable'])).lower()}")
+    if quality["eval_warning"]:
+        print(f"[UNRELIABLE] {quality['eval_warning']}")
     print("======================================")
     print(f"Aligned pairs: {int(eval_res['matched'])}")
     if args.plot:
@@ -957,6 +1082,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
         time_pos_vals: list[float] = []
         sr_dist_vals: list[float] = []
         sr_time_vals: list[float] = []
+        unreliable_details: list[str] = []
         failed_details: list[str] = []
 
         for run_file in run_files:
@@ -1017,6 +1143,9 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 drift_ape_slope_mps=drift_ape_slope_mps,
                 drift_ape_jump_m=drift_ape_jump_m,
             )
+            quality = _eval_quality_flags(ev, valid["success"], time_rpe)
+            if not bool(quality["eval_reliable"]):
+                unreliable_details.append(f"{run_file.name}:{quality['eval_warning']}")
             sr_dist_vals.append(float(valid["success"]["success_rate_distance"]))
             sr_time_vals.append(float(valid["success"]["success_rate_time"]))
 
@@ -1047,6 +1176,8 @@ def run_error_dataset(args: argparse.Namespace) -> int:
         print(f"\tATE 2D: std_ori  = {_fmt(ate2_ori['std'], 5)} | std_pos  = {_fmt(ate2_pos['std'], 5)}")
         if failed_details:
             print(f"\tfailed_runs: {_format_source_details(failed_details)}")
+        if unreliable_details:
+            print(f"\tunreliable_runs: {_format_source_details(unreliable_details)}")
 
         for seg in segments:
             o_stats = compute_error_statistics(np.asarray(rpe_ori_vals[seg], dtype=float))
@@ -1122,6 +1253,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     source_total: dict[str, int] = {}
     source_details: list[str] = []
     failed_total: list[str] = []
+    unreliable_total: list[str] = []
 
     print("======================================")
     for algo_dir in algo_dirs:
@@ -1157,6 +1289,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
             ds_valid_ate_pos: list[float] = []
             ds_valid_time_ori: list[float] = []
             ds_valid_time_pos: list[float] = []
+            ds_unreliable: list[str] = []
 
             for run_file in run_files:
                 try:
@@ -1227,6 +1360,11 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     drift_ape_slope_mps=drift_ape_slope_mps,
                     drift_ape_jump_m=drift_ape_jump_m,
                 )
+                quality = _eval_quality_flags(ev, valid["success"], time_rpe)
+                if not bool(quality["eval_reliable"]):
+                    detail = f"{run_file.name}:{quality['eval_warning']}"
+                    ds_unreliable.append(detail)
+                    unreliable_total.append(f"{algo_dir.name}/{ds}/{detail}")
                 ds_sr_dist.append(float(valid["success"]["success_rate_distance"]))
                 ds_sr_time.append(float(valid["success"]["success_rate_time"]))
                 ds_valid_ate_ori.extend(
@@ -1296,6 +1434,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 print(f"\tnon_epa_runs: {_format_source_details(source_ds_details)}")
             if failed_ds:
                 print(f"\tfailed_runs: {_format_source_details(failed_ds)}")
+            if ds_unreliable:
+                print(f"\tunreliable_runs: {_format_source_details(ds_unreliable)}")
             for seg in segments:
                 o_stats = compute_error_statistics(np.asarray(ds_rpe_ori[seg], dtype=float))
                 p_stats = compute_error_statistics(np.asarray(ds_rpe_pos[seg], dtype=float))
@@ -1326,6 +1466,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
         print(f"EVAL SOURCE NON-EPA RUNS: {_format_source_details(source_details)}")
     if failed_total:
         print(f"FAILED RUNS: {_format_source_details(failed_total)}")
+    if unreliable_total:
+        print(f"UNRELIABLE RUNS: {_format_source_details(unreliable_total)}")
     print("============================================")
     print("============================================")
     print("FULL TRAJECTORY ATE LATEX TABLE (ROT DEG / TRANS M)")

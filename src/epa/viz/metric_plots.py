@@ -374,6 +374,24 @@ def _plot_violin(
         return
 
 
+def _resolve_stages(payload: dict, stages: tuple[str, ...] | list[str] | None) -> list[str]:
+    if stages is None:
+        return _discover_stages(payload)
+    wanted = [str(stage) for stage in stages]
+    available = set(_discover_stages(payload))
+    return [stage for stage in wanted if stage in available]
+
+
+def _line_plot_suffix(file_prefix: str) -> str:
+    return "raw" if str(file_prefix or "").startswith("debug_") else "series"
+
+
+def _line_plot_title(metric_name: str, relation: str, *, file_prefix: str, pct: int | None = None) -> str:
+    value_label = "raw values" if str(file_prefix or "").startswith("debug_") else "Step3 values"
+    clip_label = f", p{pct} clipped" if pct is not None else ""
+    return f"{metric_name} {value_label} ({relation}{clip_label})"
+
+
 def generate_metric_plots(
     metrics_payload: dict,
     out_dir: Path,
@@ -381,12 +399,18 @@ def generate_metric_plots(
     rpe_relation: str = "translation_part",
     x_dimension: str = "seconds",
     keep_open: bool = False,
+    stages: tuple[str, ...] | list[str] | None = ("step3",),
+    file_prefix: str = "",
 ) -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     produced: list[Path] = []
 
-    stages = _discover_stages(metrics_payload)
+    stages = _resolve_stages(metrics_payload, stages)
+    if not stages:
+        return produced
+    prefix = str(file_prefix or "")
+    line_suffix = _line_plot_suffix(prefix)
     for metric_kind, relation in (("ape", ape_relation), ("rpe", rpe_relation)):
         slug = _safe_label(relation)
         unit = RELATION_UNITS.get(relation, "")
@@ -402,10 +426,10 @@ def generate_metric_plots(
             stage_stats.append((stage, stats if isinstance(stats, dict) else {}))
             stage_errors.append((stage, errors))
 
-        raw_path = out_dir / f"{metric_kind}_{slug}_raw.png"
+        raw_path = out_dir / f"{prefix}{metric_kind}_{slug}_{line_suffix}.png"
         _plot_raw(
             traces,
-            title=f"{metric_kind.upper()} raw values ({relation})",
+            title=_line_plot_title(metric_kind.upper(), relation, file_prefix=prefix),
             ylabel=ylabel,
             xlabel=x_label,
             out_path=raw_path,
@@ -414,10 +438,11 @@ def generate_metric_plots(
         produced.append(raw_path)
 
         for pct in (95.0, 99.0):
-            clipped_raw_path = out_dir / f"{metric_kind}_{slug}_raw_p{int(pct)}.png"
+            pct_int = int(pct)
+            clipped_raw_path = out_dir / f"{prefix}{metric_kind}_{slug}_{line_suffix}_p{pct_int}.png"
             _plot_raw(
                 traces,
-                title=f"{metric_kind.upper()} raw values ({relation}, p{int(pct)} clipped)",
+                title=_line_plot_title(metric_kind.upper(), relation, file_prefix=prefix, pct=pct_int),
                 ylabel=ylabel,
                 xlabel=x_label,
                 out_path=clipped_raw_path,
@@ -427,7 +452,7 @@ def generate_metric_plots(
             if clipped_raw_path.exists():
                 produced.append(clipped_raw_path)
 
-        stats_path = out_dir / f"{metric_kind}_{slug}_stats.png"
+        stats_path = out_dir / f"{prefix}{metric_kind}_{slug}_stats.png"
         _plot_stats(
             stage_stats,
             title=f"{metric_kind.upper()} stats ({relation})",
@@ -436,7 +461,7 @@ def generate_metric_plots(
         )
         produced.append(stats_path)
 
-        stats_core_path = out_dir / f"{metric_kind}_{slug}_stats_core.png"
+        stats_core_path = out_dir / f"{prefix}{metric_kind}_{slug}_stats_core.png"
         _plot_stats(
             stage_stats,
             title=f"{metric_kind.upper()} core stats ({relation})",
@@ -446,7 +471,7 @@ def generate_metric_plots(
         )
         produced.append(stats_core_path)
 
-        hist_path = out_dir / f"{metric_kind}_{slug}_hist.png"
+        hist_path = out_dir / f"{prefix}{metric_kind}_{slug}_hist.png"
         _plot_hist(
             stage_errors,
             title=f"{metric_kind.upper()} distribution ({relation})",
@@ -457,7 +482,7 @@ def generate_metric_plots(
         produced.append(hist_path)
 
         for pct in (95.0, 99.0):
-            clipped_hist_path = out_dir / f"{metric_kind}_{slug}_hist_p{int(pct)}.png"
+            clipped_hist_path = out_dir / f"{prefix}{metric_kind}_{slug}_hist_p{int(pct)}.png"
             _plot_hist(
                 stage_errors,
                 title=f"{metric_kind.upper()} distribution ({relation}, p{int(pct)} clipped)",
@@ -469,7 +494,7 @@ def generate_metric_plots(
             if clipped_hist_path.exists():
                 produced.append(clipped_hist_path)
 
-        box_path = out_dir / f"{metric_kind}_{slug}_box.png"
+        box_path = out_dir / f"{prefix}{metric_kind}_{slug}_box.png"
         _plot_box(
             stage_errors,
             title=f"{metric_kind.upper()} box ({relation})",
@@ -481,7 +506,7 @@ def generate_metric_plots(
             produced.append(box_path)
 
         for pct in (95.0, 99.0):
-            clipped_box_path = out_dir / f"{metric_kind}_{slug}_box_p{int(pct)}.png"
+            clipped_box_path = out_dir / f"{prefix}{metric_kind}_{slug}_box_p{int(pct)}.png"
             _plot_box(
                 stage_errors,
                 title=f"{metric_kind.upper()} box ({relation}, p{int(pct)} clipped)",
@@ -493,7 +518,7 @@ def generate_metric_plots(
             if clipped_box_path.exists():
                 produced.append(clipped_box_path)
 
-        violin_path = out_dir / f"{metric_kind}_{slug}_violin.png"
+        violin_path = out_dir / f"{prefix}{metric_kind}_{slug}_violin.png"
         _plot_violin(
             stage_errors,
             title=f"{metric_kind.upper()} violin ({relation})",
@@ -505,7 +530,7 @@ def generate_metric_plots(
             produced.append(violin_path)
 
         for pct in (95.0, 99.0):
-            clipped_violin_path = out_dir / f"{metric_kind}_{slug}_violin_p{int(pct)}.png"
+            clipped_violin_path = out_dir / f"{prefix}{metric_kind}_{slug}_violin_p{int(pct)}.png"
             _plot_violin(
                 stage_errors,
                 title=f"{metric_kind.upper()} violin ({relation}, p{int(pct)} clipped)",
@@ -526,12 +551,18 @@ def generate_time_rpe_metric_plots(
     relation: str = "translation_part",
     x_dimension: str = "seconds",
     keep_open: bool = False,
+    stages: tuple[str, ...] | list[str] | None = ("step3",),
+    file_prefix: str = "",
 ) -> list[Path]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     produced: list[Path] = []
 
-    stages = _discover_stages(metrics_payload)
+    stages = _resolve_stages(metrics_payload, stages)
+    if not stages:
+        return produced
+    prefix = str(file_prefix or "")
+    line_suffix = _line_plot_suffix(prefix)
     slug = _safe_label(relation)
     unit = RELATION_UNITS.get(relation, "")
     ylabel = f"1s drift ({unit})" if unit else "1s drift"
@@ -546,10 +577,10 @@ def generate_time_rpe_metric_plots(
         stage_stats.append((stage, stats if isinstance(stats, dict) else {}))
         stage_errors.append((stage, errors))
 
-    raw_path = out_dir / f"rpe_time_1s_{slug}_raw.png"
+    raw_path = out_dir / f"{prefix}rpe_time_1s_{slug}_{line_suffix}.png"
     _plot_raw(
         traces,
-        title=f"1-second time RPE raw values ({relation})",
+        title=_line_plot_title("1-second time RPE", relation, file_prefix=prefix),
         ylabel=ylabel,
         xlabel=x_label,
         out_path=raw_path,
@@ -558,10 +589,11 @@ def generate_time_rpe_metric_plots(
     produced.append(raw_path)
 
     for pct in (95.0, 99.0):
-        clipped_raw_path = out_dir / f"rpe_time_1s_{slug}_raw_p{int(pct)}.png"
+        pct_int = int(pct)
+        clipped_raw_path = out_dir / f"{prefix}rpe_time_1s_{slug}_{line_suffix}_p{pct_int}.png"
         _plot_raw(
             traces,
-            title=f"1-second time RPE raw values ({relation}, p{int(pct)} clipped)",
+            title=_line_plot_title("1-second time RPE", relation, file_prefix=prefix, pct=pct_int),
             ylabel=ylabel,
             xlabel=x_label,
             out_path=clipped_raw_path,
@@ -571,7 +603,7 @@ def generate_time_rpe_metric_plots(
         if clipped_raw_path.exists():
             produced.append(clipped_raw_path)
 
-    stats_path = out_dir / f"rpe_time_1s_{slug}_stats.png"
+    stats_path = out_dir / f"{prefix}rpe_time_1s_{slug}_stats.png"
     _plot_stats(
         stage_stats,
         title=f"1-second time RPE stats ({relation})",
@@ -580,7 +612,7 @@ def generate_time_rpe_metric_plots(
     )
     produced.append(stats_path)
 
-    stats_core_path = out_dir / f"rpe_time_1s_{slug}_stats_core.png"
+    stats_core_path = out_dir / f"{prefix}rpe_time_1s_{slug}_stats_core.png"
     _plot_stats(
         stage_stats,
         title=f"1-second time RPE core stats ({relation})",
@@ -590,7 +622,7 @@ def generate_time_rpe_metric_plots(
     )
     produced.append(stats_core_path)
 
-    box_path = out_dir / f"rpe_time_1s_{slug}_box.png"
+    box_path = out_dir / f"{prefix}rpe_time_1s_{slug}_box.png"
     _plot_box(
         stage_errors,
         title=f"1-second time RPE box ({relation})",
@@ -602,7 +634,7 @@ def generate_time_rpe_metric_plots(
         produced.append(box_path)
 
     for pct in (95.0, 99.0):
-        clipped_box_path = out_dir / f"rpe_time_1s_{slug}_box_p{int(pct)}.png"
+        clipped_box_path = out_dir / f"{prefix}rpe_time_1s_{slug}_box_p{int(pct)}.png"
         _plot_box(
             stage_errors,
             title=f"1-second time RPE box ({relation}, p{int(pct)} clipped)",
@@ -645,7 +677,7 @@ def generate_ape_stage_raw_plot(
     if str(file_name).strip():
         out_path = out_dir / str(file_name).strip()
     else:
-        out_path = out_dir / f"ape_{_safe_label(ape_relation)}_{_safe_label(stage)}_raw.png"
+        out_path = out_dir / f"ape_{_safe_label(ape_relation)}_{_safe_label(stage)}_series.png"
 
     _plot_raw_with_stats(
         x_vals=x_vals,

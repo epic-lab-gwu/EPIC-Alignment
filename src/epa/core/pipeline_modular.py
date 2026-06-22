@@ -175,6 +175,7 @@ def _finalize_step1_failure(
         pr_sync=pr_sync,
         pr_corrected=pr_sync,
         pr_final=pr_sync,
+        timestamps_s=t_gt,
         time_alignment={
             "corr": corr,
             "lags": lag_times,
@@ -1107,6 +1108,7 @@ def run_pipeline_modular(args, script_dir: Path):
             "pr_sync": pr_sync,
             "pr_corrected": pr_corrected,
             "pr_final": pr_final,
+            "timestamps_s": t_gt,
             "time_alignment": {
                 "t_uniform": t_uniform,
                 "sig_gt": sig_gt,

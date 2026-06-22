@@ -415,16 +415,16 @@ def _collect_plot_images(output_dir: Path) -> list[Path]:
 def _filter_report_images(images: list[Path], *, include_debug: bool = False) -> list[Path]:
     priority = {
         "step3_alignment_map.png": 0,
-        "rpe_time_1s_translation_part_raw_p95.png": 1,
-        "rpe_time_1s_translation_part_raw_p99.png": 2,
+        "rpe_time_1s_translation_part_series_p95.png": 1,
+        "rpe_time_1s_translation_part_series_p99.png": 2,
         "rpe_time_1s_translation_part_stats_core.png": 3,
         "rpe_time_1s_translation_part_box_p95.png": 4,
         "rpe_time_1s_translation_part_box_p99.png": 5,
-        "rpe_time_1s_translation_part_raw.png": 6,
+        "rpe_time_1s_translation_part_series.png": 6,
         "rpe_time_1s_translation_part_stats.png": 7,
         "rpe_time_1s_translation_part_box.png": 8,
-        "ape_translation_part_raw_p95.png": 9,
-        "ape_translation_part_raw_p99.png": 10,
+        "ape_translation_part_series_p95.png": 9,
+        "ape_translation_part_series_p99.png": 10,
         "ape_translation_part_stats_core.png": 11,
         "ape_translation_part_hist_p95.png": 12,
         "ape_translation_part_hist_p99.png": 13,
@@ -432,8 +432,8 @@ def _filter_report_images(images: list[Path], *, include_debug: bool = False) ->
         "ape_translation_part_box_p99.png": 15,
         "ape_translation_part_violin_p95.png": 16,
         "ape_translation_part_violin_p99.png": 17,
-        "rpe_translation_part_raw_p95.png": 18,
-        "rpe_translation_part_raw_p99.png": 19,
+        "rpe_translation_part_series_p95.png": 18,
+        "rpe_translation_part_series_p99.png": 19,
         "rpe_translation_part_stats_core.png": 20,
         "rpe_translation_part_hist_p95.png": 21,
         "rpe_translation_part_hist_p99.png": 22,
@@ -441,6 +441,13 @@ def _filter_report_images(images: list[Path], *, include_debug: bool = False) ->
         "rpe_translation_part_box_p99.png": 24,
         "rpe_translation_part_violin_p95.png": 25,
         "rpe_translation_part_violin_p99.png": 26,
+        "rpe_time_1s_translation_part_raw_p95.png": 51,
+        "rpe_time_1s_translation_part_raw_p99.png": 52,
+        "rpe_time_1s_translation_part_raw.png": 56,
+        "ape_translation_part_raw_p95.png": 59,
+        "ape_translation_part_raw_p99.png": 60,
+        "rpe_translation_part_raw_p95.png": 68,
+        "rpe_translation_part_raw_p99.png": 69,
     }
     debug_only_names = {
         "debug_step123_trajectory_alignment_3d.png",
@@ -449,7 +456,7 @@ def _filter_report_images(images: list[Path], *, include_debug: bool = False) ->
     report_images = [
         img
         for img in images
-        if include_debug or img.name not in debug_only_names
+        if include_debug or (img.name not in debug_only_names and not img.name.startswith("debug_"))
     ]
     report_images.sort(key=lambda img: (priority.get(img.name, 100), img.name))
     return report_images
@@ -642,7 +649,7 @@ def _append_time_rpe_report(lines: list[str], *, metrics_payload: dict, language
                 f"- Step3 rotation RMSE：`{rot_rmse}` deg",
                 f"- Pair count：`{pair_text}`",
                 f"- Local drift threshold：`{drift_threshold}` m",
-                "- 图：[`raw p95`](plots/rpe_time_1s_translation_part_raw_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
+                "- 图：[`series p95`](plots/rpe_time_1s_translation_part_series_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
                 "",
             ]
         )
@@ -656,7 +663,7 @@ def _append_time_rpe_report(lines: list[str], *, metrics_payload: dict, language
                 f"- Step3 rotation RMSE: `{rot_rmse}` deg",
                 f"- Pair count: `{pair_text}`",
                 f"- Local drift threshold: `{drift_threshold}` m",
-                "- Figures: [`raw p95`](plots/rpe_time_1s_translation_part_raw_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
+                "- Figures: [`series p95`](plots/rpe_time_1s_translation_part_series_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
                 "",
             ]
         )

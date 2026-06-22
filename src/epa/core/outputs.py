@@ -351,6 +351,7 @@ def _generate_and_cleanup_metric_plots(
 ):
     plot_files = []
     plot_enabled = bool(getattr(args, "plot", True))
+    debug_outputs = bool(getattr(args, "debug", False))
     if plot_enabled:
         ape_plot_rel = str(getattr(args, "plot_ape_relation", "translation_part"))
         rpe_plot_rel = str(getattr(args, "plot_rpe_relation", "translation_part"))
@@ -362,6 +363,7 @@ def _generate_and_cleanup_metric_plots(
             ape_relation=plot_rel_ape,
             rpe_relation=plot_rel_rpe,
             x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+            stages=("step3",),
         )
         plot_files.extend(
             generate_time_rpe_metric_plots(
@@ -369,8 +371,31 @@ def _generate_and_cleanup_metric_plots(
                 out_dir=plots_dir,
                 relation="translation_part",
                 x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+                stages=("step3",),
             )
         )
+        if debug_outputs:
+            plot_files.extend(
+                generate_metric_plots(
+                    metrics_payload=metrics_payload,
+                    out_dir=plots_dir,
+                    ape_relation=plot_rel_ape,
+                    rpe_relation=plot_rel_rpe,
+                    x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+                    stages=None,
+                    file_prefix="debug_",
+                )
+            )
+            plot_files.extend(
+                generate_time_rpe_metric_plots(
+                    metrics_payload=metrics_payload,
+                    out_dir=plots_dir,
+                    relation="translation_part",
+                    x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
+                    stages=None,
+                    file_prefix="debug_",
+                )
+            )
         ape_slug = str(plot_rel_ape).replace("/", "_").replace(" ", "_")
         ape_stage_raw = generate_ape_stage_raw_plot(
             metrics_payload=metrics_payload,
@@ -378,7 +403,7 @@ def _generate_and_cleanup_metric_plots(
             ape_relation=plot_rel_ape,
             stage="step3",
             x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
-            file_name=f"ape_{ape_slug}_se3_raw.png",
+            file_name=f"ape_{ape_slug}_step3_series.png",
         )
         if ape_stage_raw is not None:
             plot_files.append(ape_stage_raw)
@@ -443,6 +468,7 @@ def _write_outputs(
             pr_sync=interactive_payload.get("pr_sync"),
             pr_corrected=interactive_payload.get("pr_corrected"),
             pr_final=interactive_payload.get("pr_final"),
+            timestamps_s=interactive_payload.get("timestamps_s"),
             time_alignment=interactive_payload.get("time_alignment"),
             x_dimension=str(getattr(args, "plot_x_dimension", "seconds")),
         )

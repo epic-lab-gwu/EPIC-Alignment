@@ -1,9 +1,11 @@
+import json
+import re
 from pathlib import Path
 
 import numpy as np
 
-from epa.viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots, generate_time_rpe_metric_plots
 from epa.viz.interactive_html import write_interactive_run_html
+from epa.viz.metric_plots import generate_ape_stage_raw_plot, generate_metric_plots, generate_time_rpe_metric_plots
 
 
 def _stats(values):
@@ -37,6 +39,12 @@ def _stage_block(values):
     }
 
 
+def _extract_interactive_payload(html: str) -> dict:
+    match = re.search(r'<script id="epaInteractiveData" type="application/json">(.*?)</script>', html, re.S)
+    assert match is not None
+    return json.loads(match.group(1))
+
+
 def test_generate_metric_plots(tmp_path: Path) -> None:
     payload = {
         "pose_metrics": {
@@ -66,13 +74,81 @@ def test_generate_metric_plots(tmp_path: Path) -> None:
     assert "ape_translation_part_hist_p95.png" in names
     assert "ape_translation_part_hist_p99.png" in names
     assert "rpe_translation_part_hist_p95.png" in names
-    assert "ape_translation_part_raw_p95.png" in names
-    assert "rpe_translation_part_raw_p95.png" in names
+    assert "ape_translation_part_series_p95.png" in names
+    assert "rpe_translation_part_series_p95.png" in names
+    assert "ape_translation_part_raw_p95.png" not in names
+    assert "rpe_translation_part_raw_p95.png" not in names
     assert "ape_translation_part_stats_core.png" in names
     assert "rpe_translation_part_stats_core.png" in names
     assert "ape_translation_part_box_p95.png" in names
     assert "rpe_translation_part_violin_p95.png" in names
     assert all(p.suffix == ".png" for p in produced)
+
+
+def test_generate_metric_plots_defaults_to_step3(monkeypatch, tmp_path: Path) -> None:
+    payload = {
+        "pose_metrics": {
+            "ape": {
+                "raw": _stage_block([100.0, 120.0, 140.0]),
+                "step2": _stage_block([40.0, 50.0, 60.0]),
+                "step3": _stage_block([0.5, 1.0, 1.5]),
+            },
+            "rpe": {
+                "raw": _stage_block([100.0, 120.0, 140.0]),
+                "step2": _stage_block([40.0, 50.0, 60.0]),
+                "step3": _stage_block([0.2, 0.25, 0.3]),
+            },
+        }
+    }
+    captured = []
+
+    def fake_plot_raw(traces, *args, **kwargs):
+        captured.append([label for label, _, _ in traces])
+        Path(kwargs["out_path"]).write_bytes(b"png")
+
+    monkeypatch.setattr("epa.viz.metric_plots._plot_raw", fake_plot_raw)
+
+    generate_metric_plots(
+        metrics_payload=payload,
+        out_dir=tmp_path,
+        ape_relation="translation_part",
+        rpe_relation="translation_part",
+        x_dimension="seconds",
+    )
+
+    assert captured
+    assert all(labels == ["step3"] for labels in captured)
+
+
+def test_generate_metric_plots_debug_can_include_all_stages(tmp_path: Path) -> None:
+    payload = {
+        "pose_metrics": {
+            "ape": {
+                "raw": _stage_block([1.0, 2.0, 3.0]),
+                "step2": _stage_block([0.9, 1.8, 2.7]),
+                "step3": _stage_block([0.5, 1.0, 1.5]),
+            },
+            "rpe": {
+                "raw": _stage_block([0.4, 0.5, 0.6]),
+                "step2": _stage_block([0.3, 0.4, 0.5]),
+                "step3": _stage_block([0.2, 0.25, 0.3]),
+            },
+        }
+    }
+
+    produced = generate_metric_plots(
+        metrics_payload=payload,
+        out_dir=tmp_path,
+        ape_relation="translation_part",
+        rpe_relation="translation_part",
+        x_dimension="seconds",
+        stages=None,
+        file_prefix="debug_",
+    )
+
+    names = {p.name for p in produced}
+    assert "debug_ape_translation_part_raw.png" in names
+    assert "debug_rpe_translation_part_stats_core.png" in names
 
 
 def test_generate_time_rpe_metric_plots(tmp_path: Path) -> None:
@@ -103,7 +179,8 @@ def test_generate_time_rpe_metric_plots(tmp_path: Path) -> None:
     )
 
     names = {p.name for p in produced}
-    assert "rpe_time_1s_translation_part_raw.png" in names
+    assert "rpe_time_1s_translation_part_series.png" in names
+    assert "rpe_time_1s_translation_part_raw.png" not in names
     assert "rpe_time_1s_translation_part_box.png" in names
     assert "rpe_time_1s_translation_part_stats.png" in names
     assert "rpe_time_1s_translation_part_hist.png" not in names
@@ -133,11 +210,11 @@ def test_generate_ape_stage_raw_plot(tmp_path: Path) -> None:
         ape_relation="translation_part",
         stage="step3",
         x_dimension="seconds",
-        file_name="ape_translation_part_se3_raw.png",
+        file_name="ape_translation_part_step3_series.png",
     )
     assert out is not None
     assert out.exists()
-    assert out.name == "ape_translation_part_se3_raw.png"
+    assert out.name == "ape_translation_part_step3_series.png"
 
 
 def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> None:
@@ -170,17 +247,121 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
         },
     )
     text = out.read_text(encoding="utf-8")
-    assert "Plotly.newPlot('trajectory3d'" in text
+    assert "renderPlot('trajectory3d'" in text
     assert "trajectoryProgress" in text
     assert "trajectoryTraces(pct)" in text
+    assert "currentTrajectoryCamera" in text
+    assert "trajectoryLayout(camera)" in text
+    assert "uirevision:'trajectory-camera'" in text
     assert "Metrics Summary" in text
+    assert "Linear Velocity" in text
+    assert "Step 1 Signals" not in text
+    assert "Step 1 Correlation" not in text
     assert "Metrics details" in text
     assert "metricSummary" in text
     assert "metricDetails" in text
     assert "renderMetrics" in text
+    assert "setupDashboard" in text
+    assert "resetLayout" in text
+    assert "data-close-panel" in text
     assert "scrollZoom:false" in text
     assert "dragmode:'pan'" in text
     assert "scatter3d" in text
     assert "scattergl" in text
     assert "epaInteractiveData" in text
     assert "NaN" not in text
+    embedded = _extract_interactive_payload(text)
+    assert all([trace["stage"] for trace in metric["traces"]] == ["step3"] for metric in embedded["metrics"])
+    assert "raw" not in embedded["trajectory"]
+    assert "step2" not in embedded["trajectory"]
+    assert embedded["speed"]["title"] == "Linear velocity"
+    assert [trace["label"] for trace in embedded["speed"]["traces"]] == ["ground truth", "step3"]
+
+
+def test_write_interactive_run_html_debug_keeps_metric_stages(tmp_path: Path) -> None:
+    payload = {
+        "pose_metrics": {
+            "ape": {
+                "raw": _stage_block([1.0, 2.0]),
+                "step2": _stage_block([0.8, 1.6]),
+                "step3": _stage_block([0.2, 0.4]),
+            },
+            "rpe": {
+                "raw": _stage_block([0.5, 0.6]),
+                "step2": _stage_block([0.4, 0.5]),
+                "step3": _stage_block([0.1, 0.2]),
+            },
+            "rpe_time_1s": {
+                "raw": _stage_block([0.7, 0.8]),
+                "step2": _stage_block([0.5, 0.6]),
+                "step3": _stage_block([0.2, 0.3]),
+            },
+        },
+        "metadata": {
+            "debug": True,
+            "plot": {
+                "ape_relation": "translation_part",
+                "rpe_relation": "translation_part",
+                "x_dimension": "seconds",
+            },
+        },
+        "step3_selection": {"step3_alignment_mode": "standard", "step3_inlier_count": 2, "step3_rejected_count": 0},
+    }
+    pos_gt = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+
+    out = write_interactive_run_html(
+        tmp_path / "interactive_report.html",
+        title="demo",
+        metrics_payload=payload,
+        pos_gt=pos_gt,
+        pr_sync=pos_gt + 1.0,
+        pr_corrected=pos_gt + 0.5,
+        pr_final=pos_gt + 0.1,
+    )
+
+    embedded = _extract_interactive_payload(out.read_text(encoding="utf-8"))
+    text = out.read_text(encoding="utf-8")
+    assert "Step 1 Signals" in text
+    assert "Step 1 Correlation" in text
+    assert "raw" in embedded["trajectory"]
+    assert "step2" in embedded["trajectory"]
+    assert [trace["label"] for trace in embedded["speed"]["traces"]] == ["ground truth", "step3", "raw", "step2"]
+    assert all(
+        [trace["stage"] for trace in metric["traces"]] == ["raw", "step2", "step3"]
+        for metric in embedded["metrics"]
+    )
+
+
+def test_write_interactive_run_html_defaults_to_10k_points(tmp_path: Path) -> None:
+    n = 12050
+    pos_gt = np.column_stack([np.arange(n, dtype=float), np.zeros(n), np.zeros(n)])
+    payload = {
+        "pose_metrics": {
+            "ape": {"step3": _stage_block(np.linspace(0.0, 1.0, n))},
+            "rpe": {"step3": _stage_block(np.linspace(0.0, 0.5, n))},
+            "rpe_time_1s": {"step3": _stage_block(np.linspace(0.0, 0.25, n))},
+        },
+        "metadata": {
+            "plot": {
+                "ape_relation": "translation_part",
+                "rpe_relation": "translation_part",
+                "x_dimension": "seconds",
+            },
+        },
+    }
+
+    out = write_interactive_run_html(
+        tmp_path / "interactive_report.html",
+        title="demo",
+        metrics_payload=payload,
+        pos_gt=pos_gt,
+        pr_sync=pos_gt,
+        pr_corrected=pos_gt,
+        pr_final=pos_gt,
+        timestamps_s=np.arange(n, dtype=float) * 0.05,
+    )
+
+    embedded = _extract_interactive_payload(out.read_text(encoding="utf-8"))
+    assert len(embedded["trajectory"]["step3"]["x"]) == 10000
+    assert len(embedded["metrics"][0]["traces"][0]["x"]) == 10000
+    assert len(embedded["speed"]["traces"][0]["x"]) == 10000
