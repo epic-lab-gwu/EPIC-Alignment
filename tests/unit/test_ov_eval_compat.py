@@ -22,7 +22,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.11"
+    assert epa.__version__ == "0.1.12"
 
 
 def test_format_source_counts_is_deterministic() -> None:

@@ -17,6 +17,7 @@ _KNOWN_ALIGN_MODES = {
     "epa_se3",
     "epa_se3_eval",
     "sim3",
+    "ov_sim3",
     "se3single",
     "posyaw",
     "posyawsingle",
@@ -45,7 +46,9 @@ def _map_align_mode_to_eval_align(mode: str) -> str:
     if m == "se3":
         return "epa_step3"
     if m == "sim3":
-        return "epa_sim3"
+        return "sim3"
+    if m == "ov_sim3":
+        return "ov_sim3"
     if m in {"se3single", "posyawsingle"}:
         return "origin"
     if m == "posyaw":

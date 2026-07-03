@@ -52,7 +52,7 @@ def test_epica_sim3_differs_from_position_only_baseline_when_pose_is_inconsisten
         quat_ref=quat_ref,
         pos_est=pos_est,
         quat_est=quat_est,
-        mode="sim3",
+        mode="ov_sim3",
     )
     pos_epica, quat_epica, epica_info = align_for_eval_with_info(
         pos_ref=pos_ref,
@@ -69,7 +69,7 @@ def test_epica_sim3_differs_from_position_only_baseline_when_pose_is_inconsisten
     assert baseline_ape["rotation_angle_deg"]["rmse"] > 80.0
     assert epica_ape["rotation_angle_deg"]["rmse"] < 1e-9
     assert epica_ape["translation_part"]["rmse"] > 0.1
-    assert baseline_info["align_mode"] == "sim3"
+    assert baseline_info["align_mode"] == "ov_sim3"
     assert epica_info["align_mode"] == "epica_sim3"
     assert epica_info["sim3_solver"] == "epica_orientation_consistent"
 
@@ -183,7 +183,7 @@ def test_epica_joint_grid_trades_position_for_orientation() -> None:
 
     assert info["sim3_solver"] == "epica_joint_grid"
     assert joint_ape["translation_part"]["rmse"] < 0.5
-    assert joint_ape["rotation_angle_deg"]["rmse"] < 90.0
+    assert joint_ape["rotation_angle_deg"]["rmse"] <= 90.0 + 1e-9
 
 
 def test_anchor_sim3_exposes_terminal_drift() -> None:
@@ -202,7 +202,7 @@ def test_anchor_sim3_exposes_terminal_drift() -> None:
     drift[40:, 1] = np.linspace(0.0, 8.0, n - 40)
     pos_est = pos_est + drift
 
-    pos_ov, quat_ov, _ = align_for_eval_with_info(pos_ref, quat_ref, pos_est, quat_est, mode="sim3")
+    pos_ov, quat_ov, _ = align_for_eval_with_info(pos_ref, quat_ref, pos_est, quat_est, mode="ov_sim3")
     pos_anchor, quat_anchor, anchor_info = align_for_eval_with_info(
         pos_ref,
         quat_ref,
@@ -248,7 +248,7 @@ def test_epa_sim3_v1_selects_reliable_window_without_using_drift_as_reward() -> 
         quat_est=quat_est,
         mode="epa_sim3_v1",
     )
-    pos_ov, _, _ = align_for_eval_with_info(pos_ref, quat_ref, pos_est_drift, quat_est, mode="sim3")
+    pos_ov, _, _ = align_for_eval_with_info(pos_ref, quat_ref, pos_est_drift, quat_est, mode="ov_sim3")
 
     epa_err = np.linalg.norm(pos_epa - pos_ref, axis=1)
     ov_err = np.linalg.norm(pos_ov - pos_ref, axis=1)

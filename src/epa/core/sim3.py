@@ -626,6 +626,9 @@ def solve_epa_sim3_v2(
     max_reliable_scale: float = 10.0,
     timestamps_s: np.ndarray | None = None,
     max_abs_est_speed_mps: float = 100.0,
+    max_solver_samples: int = 2500,
+    max_support_candidates: int = 48,
+    max_support_targets: int = 96,
 ) -> tuple[float, np.ndarray, np.ndarray, dict[str, object]]:
     """Consensus window-anchor Sim3 from estimate to reference.
 
@@ -635,12 +638,27 @@ def solve_epa_sim3_v2(
     receiving high or medium confidence.
     """
 
-    p_ref, q_ref, p_est, q_est = _validate_pose_pairs(pos_ref, quat_ref, pos_est, quat_est)
+    p_ref_full, q_ref_full, p_est_full, q_est_full = _validate_pose_pairs(pos_ref, quat_ref, pos_est, quat_est)
+    n_full = int(p_ref_full.shape[0])
+    sample_idx: np.ndarray | None = None
+    if int(max_solver_samples) > 0 and n_full > int(max_solver_samples):
+        sample_idx = np.unique(np.linspace(0, n_full - 1, int(max_solver_samples), dtype=int))
+        p_ref = p_ref_full[sample_idx]
+        q_ref = q_ref_full[sample_idx]
+        p_est = p_est_full[sample_idx]
+        q_est = q_est_full[sample_idx]
+        ts_work = None if timestamps_s is None else np.asarray(timestamps_s, dtype=float).reshape(-1)[sample_idx]
+    else:
+        p_ref = p_ref_full
+        q_ref = q_ref_full
+        p_est = p_est_full
+        q_est = q_est_full
+        ts_work = timestamps_s
     n = int(p_ref.shape[0])
     health = _motion_health_profile(
         p_ref,
         p_est,
-        timestamps_s=timestamps_s,
+        timestamps_s=ts_work,
         max_step_scale_deviation=float(max_step_scale_deviation),
         max_step_motion_deviation=float(max_step_motion_deviation),
         max_abs_est_speed_mps=float(max_abs_est_speed_mps),
@@ -742,10 +760,10 @@ def solve_epa_sim3_v2(
     if not reliable_candidates:
         info = _diagnostics(
             solver="epa_sim3_v2",
-            pos_ref=p_ref,
-            quat_ref=q_ref,
-            pos_est=p_est,
-            quat_est=q_est,
+            pos_ref=p_ref_full,
+            quat_ref=q_ref_full,
+            pos_est=p_est_full,
+            quat_est=q_est_full,
             scale=1.0,
             r_fit=np.eye(3),
             t_fit=np.zeros(3),
@@ -758,6 +776,10 @@ def solve_epa_sim3_v2(
                 "sim3_candidate_count": int(len(windows)),
                 "sim3_candidate_reliable_count": 0,
                 "sim3_candidate_rejected_count": int(len(rejected)),
+                "sim3_solver_sample_count": int(n),
+                "sim3_original_pair_count": int(n_full),
+                "sim3_solver_subsampled": bool(sample_idx is not None),
+                "sim3_max_solver_samples": int(max_solver_samples),
                 "sim3_window_stride_fraction": float(window_stride_fraction),
                 "sim3_window_fractions": ",".join(str(float(x)) for x in window_fractions),
                 "sim3_health_sample_ratio": float(health["healthy_sample_ratio"]),
@@ -781,8 +803,9 @@ def solve_epa_sim3_v2(
         and float(health["bad_step_ratio"]) <= float(max_global_bad_step_ratio)
         and float(health["est_speed_bad_ratio"]) <= float(max_global_speed_bad_ratio)
     )
-    support_targets = candidates
-    for item in reliable_candidates:
+    support_targets = sorted(candidates, key=lambda item: float(item["score"]))[: max(1, int(max_support_targets))]
+    support_eval_candidates = reliable_candidates[: max(1, int(max_support_candidates))]
+    for item in support_eval_candidates:
         item.update(
             _candidate_global_support(
                 item,
@@ -816,6 +839,7 @@ def solve_epa_sim3_v2(
         )
         item["support_scale_ok"] = scale_ok_i
 
+    reliable_candidates = support_eval_candidates
     reliable_candidates.sort(
         key=lambda item: (
             not bool(item.get("support_gate_ok", False)),
@@ -889,10 +913,10 @@ def solve_epa_sim3_v2(
 
     info = _diagnostics(
         solver="epa_sim3_v2",
-        pos_ref=p_ref,
-        quat_ref=q_ref,
-        pos_est=p_est,
-        quat_est=q_est,
+        pos_ref=p_ref_full,
+        quat_ref=q_ref_full,
+        pos_est=p_est_full,
+        quat_est=q_est_full,
         scale=applied_scale,
         r_fit=applied_r,
         t_fit=applied_t,
@@ -908,6 +932,12 @@ def solve_epa_sim3_v2(
             "sim3_candidate_fit_count": int(len(candidates)),
             "sim3_candidate_reliable_count": int(len(reliable_candidates)),
             "sim3_candidate_rejected_count": int(len(rejected)),
+            "sim3_solver_sample_count": int(n),
+            "sim3_original_pair_count": int(n_full),
+            "sim3_solver_subsampled": bool(sample_idx is not None),
+            "sim3_max_solver_samples": int(max_solver_samples),
+            "sim3_max_support_candidates": int(max_support_candidates),
+            "sim3_max_support_targets": int(max_support_targets),
             "sim3_window_stride_fraction": float(window_stride_fraction),
             "sim3_window_fractions": ",".join(str(float(x)) for x in window_fractions),
             "sim3_health_sample_ratio": float(health["healthy_sample_ratio"]),

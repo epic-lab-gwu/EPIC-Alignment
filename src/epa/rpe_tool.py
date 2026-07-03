@@ -284,6 +284,7 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
             "posyaw",
             "epa_posyaw",
             "sim3",
+            "ov_sim3",
             "epa_sim3",
             "origin",
             "scale",

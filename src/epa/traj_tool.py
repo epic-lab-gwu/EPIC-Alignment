@@ -818,6 +818,7 @@ def build_parser() -> argparse.ArgumentParser:
             "posyaw",
             "epa_posyaw",
             "sim3",
+            "ov_sim3",
             "epa_sim3",
             "scale",
         ],
@@ -1062,11 +1063,11 @@ def run(args: argparse.Namespace) -> int:
         print("Merged trajectories into: merged_trajectory")
 
     explicit_align = str(getattr(args, "eval_align", "") or "").strip().lower()
-    if explicit_align == "sim3":
-        explicit_align = "epa_sim3"
+    if explicit_align == "epa_sim3":
+        explicit_align = "sim3"
     align_mode = explicit_align
     if not align_mode and bool(args.align):
-        align_mode = "epa_sim3" if bool(args.correct_scale) else "se3"
+        align_mode = "sim3" if bool(args.correct_scale) else "se3"
     elif not align_mode and bool(args.correct_scale):
         align_mode = "scale"
     needs_sync = bool(args.sync or align_mode)

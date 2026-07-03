@@ -305,6 +305,7 @@ def _compute_pose_metrics_by_stage(
     eval_align_mode: str,
     eval_n_to_align: int,
     eval_project_to_plane: str,
+    eval_align_step3_only: bool = False,
     rpe_delta,
     rpe_delta_unit,
     rpe_delta_tol,
@@ -338,12 +339,15 @@ def _compute_pose_metrics_by_stage(
     )
 
     for stage_name, stage_data in stage_trajs.items():
+        stage_eval_align_mode = eval_align_mode
+        if bool(eval_align_step3_only) and stage_name != "step3":
+            stage_eval_align_mode = "none"
         eval_pos, eval_quat, eval_align_info = align_for_eval_with_info(
             pos_ref=pos_gt,
             quat_ref=quat_gt,
             pos_est=stage_data["pos"],
             quat_est=stage_data["quat"],
-            mode=eval_align_mode,
+            mode=stage_eval_align_mode,
             n_to_align=eval_n_to_align,
             t_ref=t_gt,
         )
@@ -485,6 +489,207 @@ def _finite_float(value, default=np.nan) -> float:
     except (TypeError, ValueError):
         return float(default)
     return out if np.isfinite(out) else float(default)
+
+
+def _fmt_ov_eval_terminal(value, nd: int = 3) -> str:
+    val = _finite_float(value)
+    if not np.isfinite(val):
+        return "nan"
+    return f"{val:.{int(nd)}f}"
+
+
+def _int_or_zero(value) -> int:
+    val = _finite_float(value, default=0.0)
+    return int(val) if np.isfinite(val) else 0
+
+
+def _stats_block(metrics: dict, key: str) -> dict:
+    block = metrics.get(key, {}) if isinstance(metrics, dict) else {}
+    return block if isinstance(block, dict) else {}
+
+
+def _latex_escape_terminal(text: object) -> str:
+    return (
+        str(text)
+        .replace("\\", r"\textbackslash{}")
+        .replace("&", r"\&")
+        .replace("%", r"\%")
+        .replace("$", r"\$")
+        .replace("#", r"\#")
+        .replace("_", r"\_")
+        .replace("{", r"\{")
+        .replace("}", r"\}")
+    )
+
+
+def _print_sim3_ov_eval_terminal_metrics(
+    *,
+    pose_metrics: dict,
+    ape_pose_relation: str,
+    rpe_pose_relation: str,
+    eval_source: str,
+    t_ref: np.ndarray,
+    pos_ref: np.ndarray,
+    mode_label: str,
+    stage: str = "step3",
+) -> None:
+    ape = pose_metrics.get("ape", {}).get(stage, {})
+    rpe = pose_metrics.get("rpe", {}).get(stage, {})
+    rpe_time = pose_metrics.get("rpe_time_1s", {}).get(stage, {})
+    success = pose_metrics.get("valid_segment", {}).get(stage, {}).get("success", {})
+    eval_alignment = pose_metrics.get("eval_alignment", {}).get(stage, {})
+
+    ate_ori = _stats_block(ape, "rotation_angle_deg")
+    ate_pos = _stats_block(ape, ape_pose_relation)
+    if not ate_pos:
+        ate_pos = _stats_block(ape, "translation_part")
+
+    print("======================================")
+    print("Absolute Trajectory Error")
+    print("======================================")
+    print(f"rmse_ori = {_fmt_ov_eval_terminal(ate_ori.get('rmse'))} | rmse_pos = {_fmt_ov_eval_terminal(ate_pos.get('rmse'))}")
+    print(f"mean_ori = {_fmt_ov_eval_terminal(ate_ori.get('mean'))} | mean_pos = {_fmt_ov_eval_terminal(ate_pos.get('mean'))}")
+    print(f"min_ori  = {_fmt_ov_eval_terminal(ate_ori.get('min'))} | min_pos  = {_fmt_ov_eval_terminal(ate_pos.get('min'))}")
+    print(f"max_ori  = {_fmt_ov_eval_terminal(ate_ori.get('max'))} | max_pos  = {_fmt_ov_eval_terminal(ate_pos.get('max'))}")
+    print(f"std_ori  = {_fmt_ov_eval_terminal(ate_ori.get('std'))} | std_pos  = {_fmt_ov_eval_terminal(ate_pos.get('std'))}")
+
+    rpe_ori = _stats_block(rpe, "rotation_angle_deg")
+    rpe_pos = _stats_block(rpe, rpe_pose_relation)
+    if not rpe_pos:
+        rpe_pos = _stats_block(rpe, "translation_part")
+    rpe_config = pose_metrics.get("rpe_config", {})
+    delta = rpe_config.get("delta", np.nan) if isinstance(rpe_config, dict) else np.nan
+    delta_unit = str(rpe_config.get("delta_unit", "")) if isinstance(rpe_config, dict) else ""
+    delta_label = "configured"
+    delta_val = _finite_float(delta)
+    if np.isfinite(delta_val):
+        delta_label = f"{delta_val:g}{delta_unit}"
+
+    time_ori = _stats_block(rpe_time, "rotation_angle_deg")
+    time_pos = _stats_block(rpe_time, "translation_part")
+
+    print("======================================")
+    print("Relative Pose Error")
+    print("======================================")
+    print(
+        f"{delta_label} - median_ori = {_fmt_ov_eval_terminal(rpe_ori.get('median'))} "
+        f"| median_pos = {_fmt_ov_eval_terminal(rpe_pos.get('median'))} "
+        f"({_int_or_zero(rpe.get('pair_count'))} samples)"
+    )
+    print(
+        f"1s time - rmse_ori = {_fmt_ov_eval_terminal(time_ori.get('rmse'))} "
+        f"| rmse_pos = {_fmt_ov_eval_terminal(time_pos.get('rmse'))} "
+        f"({_int_or_zero(rpe_time.get('pair_count'))} samples)"
+    )
+
+    threshold = success.get("threshold", {}) if isinstance(success, dict) else {}
+    threshold_m = _finite_float(threshold.get("threshold_m") if isinstance(threshold, dict) else np.nan)
+    if not np.isfinite(threshold_m):
+        threshold_m = _finite_float(success.get("threshold_m") if isinstance(success, dict) else np.nan)
+    threshold_mode = str(threshold.get("mode", "") if isinstance(threshold, dict) else "")
+    if not threshold_mode:
+        threshold_mode = str(success.get("threshold_mode", "unknown") if isinstance(success, dict) else "unknown")
+    total_distance_m = _finite_float(success.get("total_distance_m") if isinstance(success, dict) else np.nan)
+    duration_s = _finite_float(success.get("total_time_s") if isinstance(success, dict) else np.nan)
+    if not np.isfinite(total_distance_m):
+        total_distance_m = _finite_float(cum_distance(pos_ref)[-1] if np.asarray(pos_ref).shape[0] > 0 else np.nan)
+    if not np.isfinite(duration_s):
+        tref = np.asarray(t_ref, dtype=float).reshape(-1)
+        duration_s = _finite_float(tref[-1] - tref[0] if tref.size > 1 else np.nan)
+    global_gate_m = _finite_float(success.get("global_gate_m") if isinstance(success, dict) else np.nan)
+    global_gate_pct = _finite_float(success.get("global_gate_percentile") if isinstance(success, dict) else np.nan)
+    gate_value = _finite_float(success.get("global_gate_value_m") if isinstance(success, dict) else np.nan)
+
+    gate_desc = _fmt_ov_eval_terminal(global_gate_m, 2)
+    if np.isfinite(global_gate_pct):
+        gate_desc += f" / p{global_gate_pct:g}"
+    print(
+        f"SR config: GT path={_fmt_ov_eval_terminal(total_distance_m, 2)}m "
+        f"| time={_fmt_ov_eval_terminal(duration_s, 2)}s "
+        f"| threshold={_fmt_ov_eval_terminal(threshold_m, 2)}m({threshold_mode}) "
+        f"| gate={gate_desc}m"
+    )
+    print(
+        f"SR@{_fmt_ov_eval_terminal(threshold_m, 1)}m - distance = "
+        f"{_fmt_ov_eval_terminal(_finite_float(success.get('success_rate_distance')) * 100.0, 2)}% "
+        f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('success_rate_time')) * 100.0, 2)}% "
+        f"| valid_dist = {_fmt_ov_eval_terminal(success.get('valid_distance_m'))}/"
+        f"{_fmt_ov_eval_terminal(success.get('total_distance_m'))}m"
+    )
+
+    scale = _finite_float(eval_alignment.get("sim3_scale", eval_alignment.get("align_scale", np.nan)))
+    reliable = bool(eval_alignment.get("sim3_reliable", True))
+    if np.isfinite(scale):
+        print(f"Sim3 scale = {_fmt_ov_eval_terminal(scale, 6)} | reliable = {str(reliable).lower()}")
+
+    sr_status = str(success.get("sr_reliability_status", "ok") if isinstance(success, dict) else "ok")
+    eval_reliable = bool(reliable and sr_status != "failed")
+    print(f"Eval reliable = {str(eval_reliable).lower()}")
+    warning = str(success.get("sr_warning_explanation", "") if isinstance(success, dict) else "")
+    sim3_warning = str(eval_alignment.get("sim3_warning", "") if isinstance(eval_alignment, dict) else "")
+    if not eval_reliable:
+        warning_text = sim3_warning or warning
+        if warning_text:
+            print(f"[UNRELIABLE] {warning_text}")
+    print("======================================")
+    print(f"Aligned pairs: {_int_or_zero(eval_alignment.get('align_pair_count', ape.get('pair_count', 0)))}")
+    if np.isfinite(gate_value):
+        print(f"Global gate value = {_fmt_ov_eval_terminal(gate_value, 3)} m")
+    solver = str(eval_alignment.get("sim3_solver", "") if isinstance(eval_alignment, dict) else "")
+    if solver:
+        print(f"Sim3 solver = {solver}")
+    print(f"Eval source = {eval_source}")
+
+    ate_rmse_ori = _finite_float(ate_ori.get("rmse"))
+    ate_rmse_pos = _finite_float(ate_pos.get("rmse"))
+    rpe_1s_rmse_ori = _finite_float(time_ori.get("rmse"))
+    rpe_1s_rmse_pos = _finite_float(time_pos.get("rmse"))
+    sr_dist_pct = _finite_float(success.get("success_rate_distance")) * 100.0
+    sr_time_pct = _finite_float(success.get("success_rate_time")) * 100.0
+
+    print("======================================")
+    print("SINGLE-RUN LATEX TABLE")
+    print("======================================")
+    print(r"\begin{tabular}{lrrrrrl}")
+    print(r"\hline")
+    print(
+        r"Mode & ATE rot. & ATE pos. & 1s RPE rot. & 1s RPE pos. & SR dist. & Reliable \\"
+    )
+    print(r"\hline")
+    print(
+        f"{_latex_escape_terminal(mode_label)} "
+        f"& {_fmt_ov_eval_terminal(ate_rmse_ori)} "
+        f"& {_fmt_ov_eval_terminal(ate_rmse_pos)} "
+        f"& {_fmt_ov_eval_terminal(rpe_1s_rmse_ori)} "
+        f"& {_fmt_ov_eval_terminal(rpe_1s_rmse_pos)} "
+        f"& {_fmt_ov_eval_terminal(sr_dist_pct, 2)}\\% "
+        f"& {str(eval_reliable).lower()} \\\\"
+    )
+    print(r"\hline")
+    print(r"\end{tabular}")
+    print(
+        "% units: rotation=deg, position=m, SR=local drift-valid success rate; "
+        f"SR time={_fmt_ov_eval_terminal(sr_time_pct, 2)}\\%, "
+        f"scale={_fmt_ov_eval_terminal(scale, 6)}"
+    )
+
+
+def _apply_eval_alignment_from_info(pos: np.ndarray, quat: np.ndarray, info: dict) -> tuple[np.ndarray, np.ndarray]:
+    if not isinstance(info, dict):
+        raise ValueError("Alignment info is not available.")
+    if "align_rotation_matrix" not in info or "align_translation" not in info:
+        raise ValueError("Alignment transform is not stored in eval info.")
+    scale = _finite_float(info.get("align_scale", 1.0), default=1.0)
+    if not np.isfinite(scale):
+        scale = 1.0
+    r_eval = np.asarray(info["align_rotation_matrix"], dtype=float).reshape(3, 3)
+    t_eval = np.asarray(info["align_translation"], dtype=float).reshape(3)
+    q_est = np.asarray(quat, dtype=float)
+    pos_new = scale * (r_eval @ np.asarray(pos, dtype=float).T).T + t_eval
+    quat_new = (R.from_matrix(r_eval) * R.from_quat(q_est)).as_quat()
+    norms = np.linalg.norm(quat_new, axis=1, keepdims=True)
+    quat_new = quat_new / np.maximum(norms, 1e-12)
+    return pos_new, quat_new
 
 
 def _compute_orientation_diagnostics(pose_metrics: dict, stage: str = "step3") -> dict:
@@ -749,9 +954,9 @@ def _annotate_sr_reliability(
     explanation_map = {
         "global_gate_failed": "Global trajectory gate failed; local valid segments may not represent the whole run.",
         "orientation_unstable": "Translation SR is high while orientation is unstable; translation-only SR can be misleading.",
-        "sim3_unreliable": "EPA Sim3 reliability audit failed; Sim3-aligned SR should not be trusted.",
+        "sim3_unreliable": "Sim3 reliability audit failed; Sim3-aligned SR should not be trusted.",
         "sim3_may_mask_failure": "Sim3 may be masking a real trajectory failure by absorbing error through scale/alignment.",
-        "sim3_warning": "EPA Sim3 has a warning; inspect replay before treating SR as conclusive.",
+        "sim3_warning": "Sim3 has a warning; inspect replay before treating SR as conclusive.",
     }
     explanations = [explanation_map[reason] for reason in hard_reasons + soft_reasons if reason in explanation_map]
     if not explanations:
@@ -1148,6 +1353,8 @@ def run_pipeline_modular(args, script_dir: Path):
     requested_eval_align_mode = str(getattr(args, "eval_align", "none")).strip().lower()
     if requested_eval_align_mode == "epa_se3_eval":
         requested_eval_align_mode = "epa_se3"
+    elif requested_eval_align_mode == "epa_sim3":
+        requested_eval_align_mode = "sim3"
     eval_align_mode = requested_eval_align_mode
     if requested_eval_align_mode == "epa_step3":
         eval_align_mode = "none"
@@ -1163,6 +1370,7 @@ def run_pipeline_modular(args, script_dir: Path):
         eval_align_mode=eval_align_mode,
         eval_n_to_align=eval_n_to_align,
         eval_project_to_plane=eval_project_to_plane,
+        eval_align_step3_only=str(eval_align_mode).lower() in {"sim3", "epa_sim3_v1", "epa_sim3_v2"},
         rpe_delta=args.rpe_delta,
         rpe_delta_unit=args.rpe_delta_unit,
         rpe_delta_tol=args.rpe_delta_tol,
@@ -1205,37 +1413,57 @@ def run_pipeline_modular(args, script_dir: Path):
     )
 
     stage_order = ["raw", "step2", "step3"]
+    terminal_eval_source = (
+        "epa_step3" if str(eval_align_mode).lower() in {"", "none"} else "epa_eval_align"
+    )
 
-    print("\n--- METRICS (APE/RPE) ---")
-    display_stage_order = stage_order if verbose else ["step3"]
-    for stage_name in display_stage_order:
-        ape_t = pose_metrics["ape"][stage_name][ape_pose_relation]["rmse"]
-        ape_r = pose_metrics["ape"][stage_name]["rotation_angle_deg"]["rmse"]
-        rpe_t = pose_metrics["rpe"][stage_name][rpe_pose_relation]["rmse"]
-        rpe_r = pose_metrics["rpe"][stage_name]["rotation_angle_deg"]["rmse"]
-        pairs = pose_metrics["rpe"][stage_name]["pair_count"]
-        rpe_time_t = pose_metrics["rpe_time_1s"][stage_name]["translation_part"]["rmse"]
-        rpe_time_r = pose_metrics["rpe_time_1s"][stage_name]["rotation_angle_deg"]["rmse"]
-        time_pairs = pose_metrics["rpe_time_1s"][stage_name]["pair_count"]
-        success = pose_metrics["valid_segment"][stage_name]["success"]
-        valid_ape_t = pose_metrics["valid_segment"][stage_name]["ape"][ape_pose_relation]["rmse"]
-        valid_rpe_t = pose_metrics["valid_segment"][stage_name]["rpe"][rpe_pose_relation]["rmse"]
-        sr_dist_pct = float(success["success_rate_distance"]) * 100.0
-        success_threshold_m = float(success["threshold"]["threshold_m"])
-        print(
-            f"{stage_name}: "
-            f"APE_{ape_pose_relation}_rmse={ape_t:.6f}, "
-            f"APE_rot_rmse={ape_r:.6f} deg, "
-            f"RPE_{rpe_pose_relation}_rmse={rpe_t:.6f}, "
-            f"RPE_rot_rmse={rpe_r:.6f} deg, "
-            f"RPE_time_1s_trans_rmse={rpe_time_t:.6f}, "
-            f"RPE_time_1s_rot_rmse={rpe_time_r:.6f} deg, "
-            f"SR_valid_dist={sr_dist_pct:.2f}%, "
-            f"valid_APE_{ape_pose_relation}_rmse={valid_ape_t:.6f}, "
-            f"valid_RPE_{rpe_pose_relation}_rmse={valid_rpe_t:.6f}"
+    sim3_terminal_style = str(requested_eval_align_mode).lower() in {
+        "sim3",
+        "ov_sim3",
+        "epa_sim3_v1",
+        "epa_sim3_v2",
+    }
+    if sim3_terminal_style:
+        _print_sim3_ov_eval_terminal_metrics(
+            pose_metrics=pose_metrics,
+            ape_pose_relation=ape_pose_relation,
+            rpe_pose_relation=rpe_pose_relation,
+            eval_source=terminal_eval_source,
+            t_ref=t_gt,
+            pos_ref=pos_gt,
+            mode_label=requested_eval_align_mode,
         )
-        if verbose:
-            print(f"{stage_name}: pairs={pairs}, time_pairs={time_pairs}, threshold_m={success_threshold_m:g}")
+    else:
+        print("\n--- METRICS (APE/RPE) ---")
+        display_stage_order = stage_order if verbose else ["step3"]
+        for stage_name in display_stage_order:
+            ape_t = pose_metrics["ape"][stage_name][ape_pose_relation]["rmse"]
+            ape_r = pose_metrics["ape"][stage_name]["rotation_angle_deg"]["rmse"]
+            rpe_t = pose_metrics["rpe"][stage_name][rpe_pose_relation]["rmse"]
+            rpe_r = pose_metrics["rpe"][stage_name]["rotation_angle_deg"]["rmse"]
+            pairs = pose_metrics["rpe"][stage_name]["pair_count"]
+            rpe_time_t = pose_metrics["rpe_time_1s"][stage_name]["translation_part"]["rmse"]
+            rpe_time_r = pose_metrics["rpe_time_1s"][stage_name]["rotation_angle_deg"]["rmse"]
+            time_pairs = pose_metrics["rpe_time_1s"][stage_name]["pair_count"]
+            success = pose_metrics["valid_segment"][stage_name]["success"]
+            valid_ape_t = pose_metrics["valid_segment"][stage_name]["ape"][ape_pose_relation]["rmse"]
+            valid_rpe_t = pose_metrics["valid_segment"][stage_name]["rpe"][rpe_pose_relation]["rmse"]
+            sr_dist_pct = float(success["success_rate_distance"]) * 100.0
+            success_threshold_m = float(success["threshold"]["threshold_m"])
+            print(
+                f"{stage_name}: "
+                f"APE_{ape_pose_relation}_rmse={ape_t:.6f}, "
+                f"APE_rot_rmse={ape_r:.6f} deg, "
+                f"RPE_{rpe_pose_relation}_rmse={rpe_t:.6f}, "
+                f"RPE_rot_rmse={rpe_r:.6f} deg, "
+                f"RPE_time_1s_trans_rmse={rpe_time_t:.6f}, "
+                f"RPE_time_1s_rot_rmse={rpe_time_r:.6f} deg, "
+                f"SR_valid_dist={sr_dist_pct:.2f}%, "
+                f"valid_APE_{ape_pose_relation}_rmse={valid_ape_t:.6f}, "
+                f"valid_RPE_{rpe_pose_relation}_rmse={valid_rpe_t:.6f}"
+            )
+            if verbose:
+                print(f"{stage_name}: pairs={pairs}, time_pairs={time_pairs}, threshold_m={success_threshold_m:g}")
 
     debug_outputs = bool(getattr(args, "debug", False))
     fig2_path, fig_step3_map_path = _plot_stage_alignment_maps(
@@ -1355,9 +1583,7 @@ def run_pipeline_modular(args, script_dir: Path):
         },
     )
     metrics_payload["metadata"]["pose_state_csv"] = str(pose_state_csv)
-    metrics_payload["metadata"]["eval_source"] = (
-        "epa_step3" if str(eval_align_mode).lower() in {"", "none"} else "epa_eval_align"
-    )
+    metrics_payload["metadata"]["eval_source"] = terminal_eval_source
     metrics_payload["metadata"]["eval_alignment"] = pose_metrics.get("eval_alignment", {}).get("step3", {})
     interactive_step3_metrics = _compute_pose_metrics_by_stage(
         t_gt=t_gt,
@@ -1405,10 +1631,10 @@ def run_pipeline_modular(args, script_dir: Path):
         )
     }
     default_interactive_view = "step3"
-    if requested_eval_align_mode in {"sim3", "ov_sim3"}:
+    if requested_eval_align_mode == "ov_sim3":
         default_interactive_view = "ov_sim3"
-    elif requested_eval_align_mode in {"epa_sim3", "epa_sim3_v1", "epa_sim3_v2"}:
-        default_interactive_view = "epa_sim3"
+    elif requested_eval_align_mode in {"sim3", "epa_sim3_v1", "epa_sim3_v2"}:
+        default_interactive_view = "sim3"
     elif requested_eval_align_mode in {"posyaw", "epa_posyaw"}:
         default_interactive_view = "epa_posyaw"
 
@@ -1421,39 +1647,42 @@ def run_pipeline_modular(args, script_dir: Path):
 
     for view_key, align_mode, label in (
         ("epa_posyaw", "posyaw", "EPA PosYaw"),
-        ("ov_sim3", "sim3", "OV Sim3"),
-        ("epa_sim3", "epa_sim3", "EPA Sim3 Health"),
+        ("ov_sim3", "ov_sim3", "OV Sim3"),
+        ("sim3", "sim3", "Sim3"),
     ):
         try:
-            view_pose_metrics = _compute_pose_metrics_by_stage(
-                t_gt=t_gt,
-                pos_gt=pos_gt,
-                quat_gt=quat_gt,
-                stage_trajs={"step3": {"pos": pr_final, "quat": q_step3}},
-                eval_align_mode=align_mode,
-                eval_n_to_align=-1,
-                eval_project_to_plane=eval_project_to_plane,
-                rpe_delta=args.rpe_delta,
-                rpe_delta_unit=args.rpe_delta_unit,
-                rpe_delta_tol=args.rpe_delta_tol,
-                rpe_all_pairs=args.rpe_all_pairs,
-                rpe_pairs_from_reference=args.rpe_pairs_from_reference,
-                success_threshold_mode=str(getattr(args, "success_threshold_mode", "adaptive_knee")),
-                success_threshold_m=float(getattr(args, "success_threshold_m", 10.0)),
-                success_threshold_min_m=float(getattr(args, "success_threshold_min_m", 5.0)),
-                success_threshold_max_m=float(getattr(args, "success_threshold_max_m", 30.0)),
-                success_threshold_trim_percentile=float(getattr(args, "success_threshold_trim_percentile", 95.0)),
-                success_global_gate_m=float(getattr(args, "success_global_gate_m", 30.0)),
-                success_global_gate_percentile=float(getattr(args, "success_global_gate_percentile", 5.0)),
-                success_drift_rpe_1s_m=float(getattr(args, "success_drift_rpe_1s_m", 2.0)),
-                success_drift_ape_slope_mps=float(getattr(args, "success_drift_ape_slope_mps", 1.0)),
-                success_drift_ape_jump_m=float(getattr(args, "success_drift_ape_jump_m", 5.0)),
-                success_drift_threshold_mode=str(getattr(args, "success_drift_threshold_mode", "adaptive")),
-                t_max_diff=float(getattr(args, "t_max_diff", 0.02)),
-                t_offset=float(getattr(args, "t_offset", 0.0)),
-                t_start=getattr(args, "t_start", None),
-                t_end=getattr(args, "t_end", None),
-            )
+            if align_mode == eval_align_mode:
+                view_pose_metrics = pose_metrics
+            else:
+                view_pose_metrics = _compute_pose_metrics_by_stage(
+                    t_gt=t_gt,
+                    pos_gt=pos_gt,
+                    quat_gt=quat_gt,
+                    stage_trajs={"step3": {"pos": pr_final, "quat": q_step3}},
+                    eval_align_mode=align_mode,
+                    eval_n_to_align=-1,
+                    eval_project_to_plane=eval_project_to_plane,
+                    rpe_delta=args.rpe_delta,
+                    rpe_delta_unit=args.rpe_delta_unit,
+                    rpe_delta_tol=args.rpe_delta_tol,
+                    rpe_all_pairs=args.rpe_all_pairs,
+                    rpe_pairs_from_reference=args.rpe_pairs_from_reference,
+                    success_threshold_mode=str(getattr(args, "success_threshold_mode", "adaptive_knee")),
+                    success_threshold_m=float(getattr(args, "success_threshold_m", 10.0)),
+                    success_threshold_min_m=float(getattr(args, "success_threshold_min_m", 5.0)),
+                    success_threshold_max_m=float(getattr(args, "success_threshold_max_m", 30.0)),
+                    success_threshold_trim_percentile=float(getattr(args, "success_threshold_trim_percentile", 95.0)),
+                    success_global_gate_m=float(getattr(args, "success_global_gate_m", 30.0)),
+                    success_global_gate_percentile=float(getattr(args, "success_global_gate_percentile", 5.0)),
+                    success_drift_rpe_1s_m=float(getattr(args, "success_drift_rpe_1s_m", 2.0)),
+                    success_drift_ape_slope_mps=float(getattr(args, "success_drift_ape_slope_mps", 1.0)),
+                    success_drift_ape_jump_m=float(getattr(args, "success_drift_ape_jump_m", 5.0)),
+                    success_drift_threshold_mode=str(getattr(args, "success_drift_threshold_mode", "adaptive")),
+                    t_max_diff=float(getattr(args, "t_max_diff", 0.02)),
+                    t_offset=float(getattr(args, "t_offset", 0.0)),
+                    t_start=getattr(args, "t_start", None),
+                    t_end=getattr(args, "t_end", None),
+                )
             _annotate_sr_reliability(
                 view_pose_metrics,
                 stage="step3",
@@ -1461,15 +1690,19 @@ def run_pipeline_modular(args, script_dir: Path):
                 ape_relation=ape_pose_relation,
                 rpe_relation=rpe_pose_relation,
             )
-            view_pos, view_quat, view_info = align_for_eval_with_info(
-                pos_ref=pos_gt,
-                quat_ref=quat_gt,
-                pos_est=pr_final,
-                quat_est=q_step3,
-                mode=align_mode,
-                n_to_align=-1,
-                t_ref=t_gt,
-            )
+            view_info = view_pose_metrics.get("eval_alignment", {}).get("step3", {})
+            try:
+                view_pos, view_quat = _apply_eval_alignment_from_info(pr_final, q_step3, view_info)
+            except Exception:
+                view_pos, view_quat, view_info = align_for_eval_with_info(
+                    pos_ref=pos_gt,
+                    quat_ref=quat_gt,
+                    pos_est=pr_final,
+                    quat_est=q_step3,
+                    mode=align_mode,
+                    n_to_align=-1,
+                    t_ref=t_gt,
+                )
             interactive_trajectory_views[view_key] = {
                 "label": label,
                 "pos": view_pos,

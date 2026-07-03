@@ -299,7 +299,7 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
     assert "showMarked" in text
     assert "showAll" in text
     assert "localStorage" in text
-    assert "EPA Sim3 audit" in text
+    assert "Sim3 audit" in text
     assert "SR reliability" in text
     assert "1s RPE trans" in text
     assert "valid distance" in text
@@ -311,7 +311,7 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
     assert "1.200 m" in text
     assert 'data-case="case_a"' in text
     assert "Trajectory has jump or divergence" in text
-    assert "EPA Sim3 is not reliable" in text
+    assert "Sim3 is not reliable" in text
     assert "openImageViewer" not in text
 
 
@@ -333,7 +333,7 @@ def test_summary_html_hides_sim3_audit_for_non_sim3_mode(tmp_path: Path) -> None
         out,
     )
     text = out.read_text(encoding="utf-8")
-    assert "EPA Sim3 audit" not in text
+    assert "Sim3 audit" not in text
     assert "(epa_se3)" in text
     assert "raw / local / gated" not in text
 

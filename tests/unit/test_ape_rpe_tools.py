@@ -97,8 +97,8 @@ def test_ape_tool_sim3_writes_scale_reliability(tmp_path: Path) -> None:
     out_dir = tmp_path / "out_sim3"
     args = ape_tool._build_parser().parse_args(
         [
-            "--align",
-            "--correct_scale",
+            "--eval-align",
+            "ov_sim3",
             "--out_dir",
             str(out_dir),
             "tum",
@@ -111,7 +111,7 @@ def test_ape_tool_sim3_writes_scale_reliability(tmp_path: Path) -> None:
 
     payload = json.loads((out_dir / "metrics.json").read_text(encoding="utf-8"))
     info = payload["metadata"]["eval_alignment"]
-    assert info["align_mode"] == "sim3"
+    assert info["align_mode"] == "ov_sim3"
     assert info["sim3_reliable"] is False
     assert info["sim3_scale_severe"] is True
     assert info["sim3_scale"] == 0.01

@@ -297,6 +297,7 @@ def build_parser() -> argparse.ArgumentParser:
             "posyaw",
             "epa_posyaw",
             "sim3",
+            "ov_sim3",
             "epica_sim3",
             "epica_sim3_joint",
             "epica_sim3_trimmed",

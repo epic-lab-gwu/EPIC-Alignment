@@ -38,6 +38,7 @@ _VALID_ALIGN_MODES = {
     "epa_se3_eval",
     "se3single",
     "sim3",
+    "ov_sim3",
     "epica_sim3",
     "epica_sim3_joint",
     "epica_sim3_trimmed",
@@ -244,6 +245,9 @@ def _solve_alignment(
     if m == "none":
         return 1.0, np.eye(3, dtype=float), np.zeros(3, dtype=float)
 
+    if m == "ov_sim3":
+        return _umeyama(p_est, p_gt, known_scale=False, yaw_only=False)
+
     if m == "sim3":
         scale, r_fit, t_fit, _ = solve_epica_sim3_variant(
             pos_ref=p_gt,
@@ -338,7 +342,7 @@ def _evaluate_pair_ov_style(
     )
 
     requested_align_mode = str(align_mode).lower()
-    epa_align_mode = "epa_sim3" if requested_align_mode == "sim3" else requested_align_mode
+    epa_align_mode = "sim3" if requested_align_mode == "epa_sim3" else requested_align_mode
     p_est_aligned, q_est_aligned, align_info = align_for_eval_with_info(
         pos_ref=p_gt_m,
         quat_ref=q_gt_m,
@@ -1942,7 +1946,7 @@ def _build_error_singlerun_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
             "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
         ),
     )
@@ -1959,7 +1963,7 @@ def _build_error_dataset_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
             "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
         ),
     )
@@ -1976,7 +1980,7 @@ def _build_error_comparison_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
             "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
         ),
     )
@@ -1992,7 +1996,7 @@ def _build_plot_trajectories_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
             "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
         ),
     )

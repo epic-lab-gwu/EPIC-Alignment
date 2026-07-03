@@ -127,13 +127,14 @@ pipeline. The current EPA modes are:
 | mode | transform | scale | intended use |
 | --- | --- | --- | --- |
 | `epa_se3` | full 3D rotation + 3D translation | fixed `1.0` | metric-scale trajectories, especially VIO/odometry where GT and estimate should already share metric scale |
-| `epa_sim3` | 3D rotation + 3D translation + one global scale | estimated | scale-ambiguous visual SLAM / visual odometry cases, for example when GT is metric but the estimate may not be |
+| `sim3` | 3D rotation + 3D translation + one global scale | estimated | scale-ambiguous visual SLAM / visual odometry cases, for example when GT is metric but the estimate may not be |
+| `ov_sim3` | full-trajectory position-only Umeyama Sim3 | estimated | legacy OV/EVO-style Sim3 baseline for comparison |
 | `epa_posyaw` | yaw-only rotation + 3D translation | fixed `1.0` | gravity-aligned VIO cases where roll/pitch should be preserved and only global yaw/position should be aligned |
 
 Mode selection rule of thumb:
 
 - Use `epa_se3` by default for metric-scale VIO/odometry.
-- Use `epa_sim3` only when the estimate has unknown or unreliable scale.
+- Use `sim3` only when the estimate has unknown or unreliable scale.
 - Use `epa_posyaw` when yaw is the only unobservable global rotation and roll/pitch
   consistency must remain visible in the metrics.
 
@@ -159,15 +160,15 @@ epa \
 ```
 
 ```bash
-# EPA Sim3: scale-ambiguous visual SLAM / visual odometry
+# Sim3: scale-ambiguous visual SLAM / visual odometry
 epa \
   --gt /home/yifu/epa_data/AlignAnything2/AlignAnything2/GT/aqualoc/archaeo/archaeo1/archaeo_sequence_4.txt \
   --gt-format tum \
   --est /home/yifu/epa_data/AlignAnything2/AlignAnything2/benchmark/archaeo/pose/svo_stereo/archaeo_sequence_4/svo_poses.txt \
   --est-format tum \
-  --eval-align epa_sim3 \
+  --eval-align sim3 \
   --output-root outputs/mode_examples \
-  --run-label aqualoc_archaeo_sequence_4_svo_stereo_epa_sim3
+  --run-label aqualoc_archaeo_sequence_4_svo_stereo_sim3
 ```
 
 ```bash

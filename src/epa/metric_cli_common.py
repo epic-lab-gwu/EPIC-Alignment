@@ -167,8 +167,10 @@ def resolve_eval_align_mode(args) -> str:
         return "none"
     if explicit in {"epa_se3", "epa_se3_eval"}:
         return "se3"
+    if explicit == "epa_sim3":
+        return "sim3"
     if explicit:
-        return "epa_sim3" if explicit == "sim3" else explicit
+        return explicit
     if bool(getattr(args, "align_origin", False)):
         return "origin"
     align = bool(getattr(args, "align", False))
@@ -301,6 +303,8 @@ def align_for_eval_with_info(
     requested_mode = str(mode).lower()
     if requested_mode == "epa_se3_eval":
         requested_mode = "epa_se3"
+    elif requested_mode == "epa_sim3":
+        requested_mode = "sim3"
     mode = requested_mode
     if mode == "epa_step3":
         mode = "none"
@@ -330,6 +334,8 @@ def align_for_eval_with_info(
         pos_new = (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
         info["align_scale"] = 1.0
+        info["align_rotation_matrix"] = np.asarray(R_eval, dtype=float).tolist()
+        info["align_translation"] = np.asarray(t_eval, dtype=float).reshape(3).tolist()
         return pos_new, q_new, info
 
     if mode in {"posyaw", "epa_posyaw"}:
@@ -340,6 +346,8 @@ def align_for_eval_with_info(
             {
                 "align_mode": "posyaw",
                 "align_scale": 1.0,
+                "align_rotation_matrix": np.asarray(R_eval, dtype=float).tolist(),
+                "align_translation": np.asarray(t_eval, dtype=float).reshape(3).tolist(),
                 "posyaw_solver": "epa_yaw_only_umeyama",
                 "posyaw_yaw_deg": float(np.degrees(yaw)),
                 "posyaw_translation": [float(x) for x in np.asarray(t_eval, dtype=float)],
@@ -348,11 +356,14 @@ def align_for_eval_with_info(
         )
         return pos_new, q_new, info
 
-    if mode == "sim3":
+    if mode == "ov_sim3":
         s_eval, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=True)
         pos_new = s_eval * (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
         info["align_scale"] = float(s_eval)
+        info["align_rotation_matrix"] = np.asarray(R_eval, dtype=float).tolist()
+        info["align_translation"] = np.asarray(t_eval, dtype=float).reshape(3).tolist()
+        info["sim3_solver"] = "ov_position_only_umeyama"
         info.update(sim3_scale_guard(float(s_eval)))
         return pos_new, q_new, info
 
@@ -367,6 +378,8 @@ def align_for_eval_with_info(
         pos_new = s_eval * (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
         info["align_scale"] = float(s_eval)
+        info["align_rotation_matrix"] = np.asarray(R_eval, dtype=float).tolist()
+        info["align_translation"] = np.asarray(t_eval, dtype=float).reshape(3).tolist()
         info.update(sim3_info)
         scale_info = sim3_scale_guard(float(s_eval))
         scale_info["sim3_scale_reliable"] = bool(scale_info.get("sim3_reliable", True))
@@ -374,8 +387,9 @@ def align_for_eval_with_info(
         info.update(scale_info)
         return pos_new, q_new, info
 
-    if mode in {"epa_sim3", "epa_sim3_v1", "epa_sim3_v2"}:
+    if mode in {"sim3", "epa_sim3", "epa_sim3_v1", "epa_sim3_v2"}:
         solver_fn = {
+            "sim3": solve_epa_sim3,
             "epa_sim3": solve_epa_sim3,
             "epa_sim3_v1": solve_epa_sim3_v1,
             "epa_sim3_v2": solve_epa_sim3_v2,
@@ -385,11 +399,13 @@ def align_for_eval_with_info(
             quat_ref=np.asarray(quat_ref[:n_use], dtype=float),
             pos_est=pest,
             quat_est=np.asarray(quat_est[:n_use], dtype=float),
-            **({"timestamps_s": np.asarray(t_ref[:n_use], dtype=float)} if t_ref is not None and mode in {"epa_sim3", "epa_sim3_v2"} else {}),
+            **({"timestamps_s": np.asarray(t_ref[:n_use], dtype=float)} if t_ref is not None and mode in {"sim3", "epa_sim3", "epa_sim3_v2"} else {}),
         )
         pos_new = s_eval * (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
         info["align_scale"] = float(s_eval)
+        info["align_rotation_matrix"] = np.asarray(R_eval, dtype=float).tolist()
+        info["align_translation"] = np.asarray(t_eval, dtype=float).reshape(3).tolist()
         info.update(sim3_info)
         scale_info = sim3_scale_guard(float(s_eval))
         scale_info["sim3_scale_reliable"] = bool(scale_info.get("sim3_reliable", True))

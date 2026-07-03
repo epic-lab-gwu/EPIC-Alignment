@@ -36,9 +36,9 @@ def _metric_eval_align(align_mode: str) -> str:
         return "none"
     if mode in {"epa_se3", "epa_se3_eval"}:
         return "se3"
-    if mode == "sim3":
-        return "epa_sim3"
-    if mode in {"none", "se3", "posyaw"}:
+    if mode == "epa_sim3":
+        return "sim3"
+    if mode in {"none", "se3", "posyaw", "sim3", "ov_sim3"}:
         return mode
     raise ValueError(f"Unsupported align mode: {align_mode}")
 
@@ -62,7 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--align-mode",
-        choices=["none", "epa_step3", "epa_se3", "epa_se3_eval", "se3", "posyaw", "sim3"],
+        choices=["none", "epa_step3", "epa_se3", "epa_se3_eval", "se3", "posyaw", "sim3", "ov_sim3", "epa_sim3"],
         default="epa_step3",
         help=(
             "EPA alignment mode used by the direct metric/trajectory tools. "

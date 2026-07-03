@@ -1227,7 +1227,7 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
             "alignment_poor": "Alignment quality is poor; inspect replay.",
             "poor_align": "Alignment quality is poor; inspect replay.",
             "orientation_unstable": "Orientation is unstable; translation SR alone is not enough.",
-            "sim3_unreliable": "EPA Sim3 is not reliable here; inspect replay before trusting SR.",
+            "sim3_unreliable": "Sim3 is not reliable here; inspect replay before trusting SR.",
             "sim3_may_mask_failure": "Sim3 may be masking a real trajectory failure; treat SR as unreliable.",
         }
         ordered_codes = [
@@ -1497,7 +1497,7 @@ tr.caseStart td { border-top:2px solid #cbd5e1; }
             f"<th>valid distance<br><span class='muted'>({html.escape(method_hint)})</span></th>",
             f"<th>global gate<br><span class='muted'>({html.escape(method_hint)})</span></th>",
             f"<th>scale<br><span class='muted'>({html.escape(method_hint)})</span></th>",
-            "<th style='width:170px'>EPA Sim3 audit</th>" if has_sim3 else "",
+            "<th style='width:170px'>Sim3 audit</th>" if has_sim3 else "",
             "<th style='width:320px'>diagnosis</th>",
         ]
     doc = [

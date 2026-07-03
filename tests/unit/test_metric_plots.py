@@ -238,8 +238,8 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
         pr_final=pos_gt + 0.1,
         trajectory_views={
             "ov_sim3": {"label": "OV Sim3", "pos": pos_gt + 0.2, "meta": {"align_scale": 1.0}},
-            "epa_sim3": {
-                "label": "EPA Sim3",
+            "sim3": {
+                "label": "Sim3",
                 "pos": pos_gt + 0.4,
                 "meta": {"align_scale": 1.0, "solver": "epa_sim3_v2", "anchor_samples": 2, "anchor_status": "ok", "confidence": "high"},
             },
@@ -247,7 +247,7 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
         trajectory_view_metrics={
             "step3": {"sr_distance": 0.5, "ape_trans_rmse_m": 1.2, "case_status": "step3_status"},
             "ov_sim3": {"sr_distance": 0.75, "ape_trans_rmse_m": 0.8, "case_status": "ov_status"},
-            "epa_sim3": {
+            "sim3": {
                 "sr_distance": 0.35,
                 "ape_trans_rmse_m": 2.4,
                 "case_status": "epa_status",
@@ -303,20 +303,20 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
     assert "raw" not in embedded["trajectory"]
     assert "step2" not in embedded["trajectory"]
     assert "ov_sim3" in embedded["trajectory"]
-    assert "epa_sim3" in embedded["trajectory"]
-    assert [embedded["trajectoryViews"][key]["label"] for key in ["step3", "ov_sim3", "epa_sim3"]] == [
+    assert "sim3" in embedded["trajectory"]
+    assert [embedded["trajectoryViews"][key]["label"] for key in ["step3", "ov_sim3", "sim3"]] == [
         "EPA SE3",
         "OV Sim3",
-        "EPA Sim3",
+        "Sim3",
     ]
     assert embedded["trajectoryViewMetrics"]["ov_sim3"]["case_status"] == "ov_status"
-    assert embedded["trajectoryViewMetrics"]["epa_sim3"]["sim3_confidence"] == "high"
+    assert embedded["trajectoryViewMetrics"]["sim3"]["sim3_confidence"] == "high"
     assert embedded["speed"]["title"] == "Linear velocity"
     assert [trace["label"] for trace in embedded["speed"]["traces"]] == [
         "ground truth",
         "EPA SE3",
         "OV Sim3",
-        "EPA Sim3",
+        "Sim3",
     ]
 
 
