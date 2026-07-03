@@ -119,6 +119,69 @@ epa example_data/example_groundtruth.csv example_data/example_estimation.txt \
   --save-results outputs/results/run_a.zip
 ```
 
+### EPA Alignment Modes
+
+Use `--eval-align` to select the user-facing alignment mode reported by the main
+pipeline. The current EPA modes are:
+
+| mode | transform | scale | intended use |
+| --- | --- | --- | --- |
+| `epa_se3` | full 3D rotation + 3D translation | fixed `1.0` | metric-scale trajectories, especially VIO/odometry where GT and estimate should already share metric scale |
+| `epa_sim3` | 3D rotation + 3D translation + one global scale | estimated | scale-ambiguous visual SLAM / visual odometry cases, for example when GT is metric but the estimate may not be |
+| `epa_posyaw` | yaw-only rotation + 3D translation | fixed `1.0` | gravity-aligned VIO cases where roll/pitch should be preserved and only global yaw/position should be aligned |
+
+Mode selection rule of thumb:
+
+- Use `epa_se3` by default for metric-scale VIO/odometry.
+- Use `epa_sim3` only when the estimate has unknown or unreliable scale.
+- Use `epa_posyaw` when yaw is the only unobservable global rotation and roll/pitch
+  consistency must remain visible in the metrics.
+
+Important implementation note: the main `epa` report always runs Step1/Step2/Step3
+first. The `interactive_report.html` trajectory views are built from the EPA
+Step3 trajectory plus the selected view alignment. Therefore `epa_posyaw` and
+`epa_se3` can look nearly identical on the Step3 view if Step3 already solved the
+global SE3 alignment. To validate PosYaw itself, inspect raw/Step2 metrics or run
+a dedicated by-stage comparison.
+
+Representative one-case commands from the local AlignAnything2 layout:
+
+```bash
+# EPA SE3: metric-scale VIO / odometry
+epa \
+  --gt /home/yifu/epa_data/AlignAnything2/AlignAnything2/GT/lamaria/cp/R_11_5cp.txt \
+  --gt-format tum \
+  --est /home/yifu/epa_data/AlignAnything2/AlignAnything2/benchmark/lamaria/cp/pose/rovio/R_11_5cp/rovio_poses.txt \
+  --est-format tum \
+  --eval-align epa_se3 \
+  --output-root outputs/mode_examples \
+  --run-label lamaria_R_11_5cp_rovio_epa_se3
+```
+
+```bash
+# EPA Sim3: scale-ambiguous visual SLAM / visual odometry
+epa \
+  --gt /home/yifu/epa_data/AlignAnything2/AlignAnything2/GT/aqualoc/archaeo/archaeo1/archaeo_sequence_4.txt \
+  --gt-format tum \
+  --est /home/yifu/epa_data/AlignAnything2/AlignAnything2/benchmark/archaeo/pose/svo_stereo/archaeo_sequence_4/svo_poses.txt \
+  --est-format tum \
+  --eval-align epa_sim3 \
+  --output-root outputs/mode_examples \
+  --run-label aqualoc_archaeo_sequence_4_svo_stereo_epa_sim3
+```
+
+```bash
+# EPA PosYaw: gravity-aligned VIO, yaw + translation only
+epa \
+  --gt /home/yifu/epa_data/AlignAnything2/AlignAnything2/GT/euroc_mav/MH_04_difficult.txt \
+  --gt-format tum \
+  --est /home/yifu/epa_data/AlignAnything2/AlignAnything2/benchmark/euroc_mav/pose/rovio/MH_04_difficult/rovio_poses.txt \
+  --est-format tum \
+  --eval-align epa_posyaw \
+  --output-root outputs/mode_examples \
+  --run-label euroc_mav_MH_04_difficult_rovio_epa_posyaw
+```
+
 ### Report Outputs
 
 Each run writes Markdown reports (`report_en.md`, `report_zh.md`) and a supplementary `interactive_report.html`.

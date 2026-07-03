@@ -26,11 +26,13 @@ def test_package_version_matches_release() -> None:
 
 
 def test_format_source_counts_is_deterministic() -> None:
-    assert _format_source_counts({"ov_eval_style": 1, "epa_step3": 2}) == "epa=2, ov_eval=1"
-    assert _format_source_counts({}) == "epa=0, ov_eval=0"
-    assert _format_source_counts({"unknown": 1}) == "epa=0, ov_eval=0, unknown=1"
-    assert _format_source_details(["run1.txt:ov_eval_style", "run2.txt:unknown"]) == (
-        "run1.txt:ov_eval_style, run2.txt:unknown"
+    assert _format_source_counts({"epa_eval_align": 1, "epa_step3": 2, "failed": 3}) == (
+        "epa_step3=2, epa_eval=1, failed=3"
+    )
+    assert _format_source_counts({}) == "epa_step3=0, epa_eval=0, failed=0"
+    assert _format_source_counts({"unknown": 1}) == "epa_step3=0, epa_eval=0, failed=0, unknown=1"
+    assert _format_source_details(["run1.txt:epa_eval_align", "run2.txt:unknown"]) == (
+        "run1.txt:epa_eval_align, run2.txt:unknown"
     )
     assert _format_source_details([]) == "none"
 
@@ -248,7 +250,10 @@ def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Pat
         )
 
 
-def test_evaluate_pair_fallback_is_quiet_by_default(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_evaluate_pair_fails_without_ov_style_fallback_by_default(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     t = np.arange(20, dtype=float) * 0.05
     pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t.size, 1))
@@ -258,16 +263,16 @@ def test_evaluate_pair_fallback_is_quiet_by_default(tmp_path: Path, capsys: pyte
     _write_tum(gt_path, t, pos, quat)
     _write_tum(est_path, t, pos, quat)
 
-    result = _evaluate_pair(
-        file_gt=gt_path,
-        file_est=est_path,
-        align_mode="se3",
-        max_diff=0.02,
-    )
+    with pytest.raises(RuntimeError, match="EPA Step3 evaluation failed"):
+        _evaluate_pair(
+            file_gt=gt_path,
+            file_est=est_path,
+            align_mode="se3",
+            max_diff=0.02,
+        )
 
     captured = capsys.readouterr()
     assert "[warn] EPA Step3 evaluation failed" not in captured.out
-    assert result["eval_source"] == "ov_eval_style"
 
 
 def test_evaluate_pair_epa_step3_step1_fallback_is_quiet_by_default(
@@ -331,7 +336,7 @@ def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(
         else:
             est_pos = gt_pos.copy()
             est_pos[:, 1] = 50.0
-            source = "ov_eval_style"
+            source = "epa_eval_align"
             pos_rmse = 50.0
         return {
             "ate3_ori": {"rmse": 0.0},
@@ -362,9 +367,9 @@ def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(
     assert run_error_comparison(args) == 0
     out = capsys.readouterr().out
 
-    assert "eval_source: epa=1, ov_eval=1" in out
-    assert "TOOL SOURCE: epa=1, ov_eval=1" in out
-    assert "EVAL SOURCE NON-EPA RUNS: algo/seq/run_ov.txt:ov_eval_style" in out
+    assert "eval_source: epa_step3=1, epa_eval=1, failed=0" in out
+    assert "TOOL SOURCE: epa_step3=1, epa_eval=1, failed=0" in out
+    assert "EVAL SOURCE NON-EPA RUNS" not in out
     assert "DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)" in out
     assert "& \\textbf{Average} \\\\hline" in out
     assert "(2/2 valid runs)" in out

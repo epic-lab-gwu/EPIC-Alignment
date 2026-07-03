@@ -122,6 +122,33 @@ def test_traj_tool_sync_with_reference(tmp_path: Path) -> None:
     assert int(est_row["matched_samples"]) == 3
 
 
+def test_traj_tool_explicit_eval_align_posyaw(tmp_path: Path) -> None:
+    ref = tmp_path / "ref.tum"
+    est = tmp_path / "est.tum"
+    _write_tum(ref, x_offset=0.0)
+    _write_tum(est, x_offset=1.0)
+    out_dir = tmp_path / "out_posyaw"
+    args = traj_tool.build_parser().parse_args(
+        [
+            "--format",
+            "tum",
+            "--sync",
+            "--sync-max-diff",
+            "0.05",
+            "--eval-align",
+            "posyaw",
+            "--ref",
+            "1",
+            "--out-dir",
+            str(out_dir),
+            str(ref),
+            str(est),
+        ]
+    )
+    assert traj_tool.run(args) == 0
+    assert (out_dir / "traj_summary.csv").exists()
+
+
 def test_traj_tool_downsample_and_merge(tmp_path: Path) -> None:
     t1 = tmp_path / "a.tum"
     t2 = tmp_path / "b.tum"

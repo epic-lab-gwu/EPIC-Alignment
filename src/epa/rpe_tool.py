@@ -273,6 +273,25 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
     algo.add_argument("-a", "--align", action="store_true", default=dflt(False), help="SE(3) Umeyama alignment")
     algo.add_argument("-s", "--correct_scale", action="store_true", default=dflt(False), help="enable scale correction")
     algo.add_argument(
+        "--eval-align",
+        choices=[
+            "",
+            "none",
+            "epa_step3",
+            "se3",
+            "epa_se3",
+            "epa_se3_eval",
+            "posyaw",
+            "epa_posyaw",
+            "sim3",
+            "epa_sim3",
+            "origin",
+            "scale",
+        ],
+        default=dflt(""),
+        help="Explicit EPA alignment mode; overrides --align/--correct_scale/--align_origin.",
+    )
+    algo.add_argument(
         "--align_origin",
         action="store_true",
         default=dflt(False),

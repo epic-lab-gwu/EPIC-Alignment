@@ -571,6 +571,59 @@ def _append_sim3_alignment_report(lines: list[str], *, metadata: dict, language:
     lines.append("")
 
 
+def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, language: str) -> None:
+    success = _nested_dict_value(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success"), {})
+    if not isinstance(success, dict):
+        return
+    raw_dist = _fmt_report_value(float(success.get("raw_success_rate_distance", np.nan)) * 100.0)
+    local_dist = _fmt_report_value(float(success.get("local_success_rate_distance", success.get("success_rate_distance", np.nan))) * 100.0)
+    gated_dist = _fmt_report_value(float(success.get("success_rate_distance_reliability_gated", np.nan)) * 100.0)
+    raw_time = _fmt_report_value(float(success.get("raw_success_rate_time", np.nan)) * 100.0)
+    local_time = _fmt_report_value(float(success.get("local_success_rate_time", success.get("success_rate_time", np.nan))) * 100.0)
+    gated_time = _fmt_report_value(float(success.get("success_rate_time_reliability_gated", np.nan)) * 100.0)
+    status = str(success.get("sr_reliability_status", "ok") or "ok")
+    explanation = str(success.get("sr_warning_explanation", "") or "No SR reliability issue was detected.")
+    hard = success.get("sr_reliability_hard_reasons", [])
+    soft = success.get("sr_reliability_soft_reasons", [])
+    hard_text = ", ".join(str(item) for item in hard) if isinstance(hard, list) else str(hard)
+    soft_text = ", ".join(str(item) for item in soft) if isinstance(soft, list) else str(soft)
+    may_mask = bool(success.get("sim3_may_mask_failure", False))
+
+    if language == "zh":
+        lines.extend(
+            [
+                "## Successful Rate 可靠性",
+                "",
+                f"- 状态：`{status}`",
+                f"- SR distance raw / local / reliability-gated：`{raw_dist}%` / `{local_dist}%` / `{gated_dist}%`",
+                f"- SR time raw / local / reliability-gated：`{raw_time}%` / `{local_time}%` / `{gated_time}%`",
+                f"- Sim3 是否可能掩盖失败：`{str(may_mask).lower()}`",
+                f"- 说明：{explanation}",
+            ]
+        )
+        if hard_text:
+            lines.append(f"- Hard reasons：`{hard_text}`")
+        if soft_text:
+            lines.append(f"- Soft reasons：`{soft_text}`")
+    else:
+        lines.extend(
+            [
+                "## Successful Rate Reliability",
+                "",
+                f"- Status: `{status}`",
+                f"- SR distance raw / local / reliability-gated: `{raw_dist}%` / `{local_dist}%` / `{gated_dist}%`",
+                f"- SR time raw / local / reliability-gated: `{raw_time}%` / `{local_time}%` / `{gated_time}%`",
+                f"- Sim3 may mask failure: `{str(may_mask).lower()}`",
+                f"- Explanation: {explanation}",
+            ]
+        )
+        if hard_text:
+            lines.append(f"- Hard reasons: `{hard_text}`")
+        if soft_text:
+            lines.append(f"- Soft reasons: `{soft_text}`")
+    lines.append("")
+
+
 def _append_orientation_report(lines: list[str], *, metadata: dict, language: str) -> None:
     if not isinstance(metadata, dict) or not bool(metadata.get("orientation_unstable", False)):
         return
@@ -779,6 +832,7 @@ def write_run_reports(output_dir, metrics_payload):
     if interactive_report:
         zh_lines.extend(["## 交互式报告", "", "- [interactive_report.html](interactive_report.html)", ""])
     _append_sim3_alignment_report(zh_lines, metadata=metadata, language="zh")
+    _append_sr_reliability_report(zh_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="zh")
     _append_orientation_report(zh_lines, metadata=metadata, language="zh")
     _append_case_diagnostics_report(zh_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="zh")
     _append_time_rpe_report(zh_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="zh")
@@ -837,6 +891,7 @@ def write_run_reports(output_dir, metrics_payload):
     if interactive_report:
         en_lines.extend(["## Interactive Report", "", "- [interactive_report.html](interactive_report.html)", ""])
     _append_sim3_alignment_report(en_lines, metadata=metadata, language="en")
+    _append_sr_reliability_report(en_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="en")
     _append_orientation_report(en_lines, metadata=metadata, language="en")
     _append_case_diagnostics_report(en_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="en")
     _append_time_rpe_report(en_lines, metrics_payload=metrics_payload if isinstance(metrics_payload, dict) else {}, language="en")

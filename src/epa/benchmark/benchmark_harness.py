@@ -493,6 +493,13 @@ def _run_epa_case(
         "evo_matches_equivalent": float("nan"),
         "sr_distance": float("nan"),
         "sr_time": float("nan"),
+        "sr_distance_raw": float("nan"),
+        "sr_time_raw": float("nan"),
+        "sr_distance_gated": float("nan"),
+        "sr_time_gated": float("nan"),
+        "sr_reliability_status": "",
+        "sr_warning_explanation": "",
+        "sim3_may_mask_failure": "",
         "case_status": "",
         "global_gate_failed": "",
         "global_gate_value_m": float("nan"),
@@ -512,6 +519,8 @@ def _run_epa_case(
         "orientation_ape_rmse_deg": float("nan"),
         "orientation_rpe_rmse_deg": float("nan"),
         "orientation_rpe_time_1s_rmse_deg": float("nan"),
+        "rpe_time_1s_trans_rmse_m": float("nan"),
+        "rpe_time_1s_rot_rmse_deg": float("nan"),
         "orientation_warning": "",
         "diagnosis_primary": "",
         "diagnosis_summary": "",
@@ -545,6 +554,11 @@ def _run_epa_case(
         .get("eval_alignment", {})
         .get("step3", {})
     )
+    rpe_time_1s_step3 = (
+        payload.get("pose_metrics", {})
+        .get("rpe_time_1s", {})
+        .get("step3", {})
+    )
     orientation = payload.get("orientation_diagnostics", {})
     case_diagnostics = payload.get("case_diagnostics", {})
     metadata = payload.get("metadata", {})
@@ -559,6 +573,13 @@ def _run_epa_case(
     result["evo_matches_equivalent"] = _as_float(time_block.get("evo_matches_equivalent"))
     result["sr_distance"] = _as_float(valid_step3.get("success_rate_distance"))
     result["sr_time"] = _as_float(valid_step3.get("success_rate_time"))
+    result["sr_distance_raw"] = _as_float(valid_step3.get("raw_success_rate_distance"))
+    result["sr_time_raw"] = _as_float(valid_step3.get("raw_success_rate_time"))
+    result["sr_distance_gated"] = _as_float(valid_step3.get("success_rate_distance_reliability_gated"))
+    result["sr_time_gated"] = _as_float(valid_step3.get("success_rate_time_reliability_gated"))
+    result["sr_reliability_status"] = str(valid_step3.get("sr_reliability_status", ""))
+    result["sr_warning_explanation"] = str(valid_step3.get("sr_warning_explanation", ""))
+    result["sim3_may_mask_failure"] = str(bool(valid_step3.get("sim3_may_mask_failure", False)))
     result["case_status"] = str(valid_step3.get("case_status", ""))
     result["global_gate_failed"] = _as_bool(valid_step3.get("global_gate_failed"))
     result["global_gate_value_m"] = _as_float(valid_step3.get("global_gate_value_m"))
@@ -572,7 +593,7 @@ def _run_epa_case(
     result["step3_stable_segment_used"] = _as_float(step3_selection.get("step3_stable_segment_used"))
     result["step3_stable_solve_ratio"] = _as_float(step3_selection.get("step3_stable_solve_ratio"))
     result["sim3_scale"] = _as_float(eval_step3.get("sim3_scale", eval_step3.get("align_scale")))
-    if str(eval_step3.get("align_mode", "")).lower() == "sim3":
+    if "sim3" in str(eval_step3.get("align_mode", "")).lower():
         result["sim3_reliable"] = str(bool(eval_step3.get("sim3_reliable", True)))
         result["sim3_warning"] = str(eval_step3.get("sim3_warning", ""))
     result["orientation_unstable"] = str(
@@ -586,6 +607,12 @@ def _run_epa_case(
     )
     result["orientation_rpe_time_1s_rmse_deg"] = _as_float(
         orientation.get("orientation_rpe_time_1s_rmse_deg", metadata.get("orientation_rpe_time_1s_rmse_deg"))
+    )
+    result["rpe_time_1s_trans_rmse_m"] = _as_float(
+        rpe_time_1s_step3.get("translation_part", {}).get("rmse")
+    )
+    result["rpe_time_1s_rot_rmse_deg"] = _as_float(
+        rpe_time_1s_step3.get("rotation_angle_deg", {}).get("rmse")
     )
     result["orientation_warning"] = str(
         orientation.get("orientation_warning", metadata.get("orientation_warning", ""))
@@ -798,7 +825,13 @@ def _fmt(value: object, ndigits: int = 3) -> str:
     text = str(value)
     if text.strip().lower() in {"none", "nan"}:
         return ""
-    return str(value)
+    try:
+        x = float(text)
+    except ValueError:
+        return str(value)
+    if math.isnan(x):
+        return ""
+    return f"{x:.{ndigits}f}"
 
 
 def _write_csv(rows: list[dict[str, object]], path: Path) -> None:
@@ -978,166 +1011,568 @@ def _summary_filter_options(rows: list[dict[str, object]], key: str) -> str:
 
 def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    total = len(rows)
-    epa_ok = sum(1 for row in rows if row.get("status") == "ok")
-    status_counts: dict[str, int] = {}
+    method_labels: list[str] = []
     for row in rows:
-        key = str(row.get("epa_case_status", "unknown") or "unknown")
-        status_counts[key] = status_counts.get(key, 0) + 1
-    status_bits = " ".join(
-        f"<span><b>{html.escape(key)}</b>: {value}</span>"
-        for key, value in sorted(status_counts.items())
+        method = str(row.get("method", "") or "method")
+        if method not in method_labels:
+            method_labels.append(method)
+    method_hint = " / ".join(method_labels) if method_labels else "methods"
+    has_sim3 = any(
+        "sim3" in str(row.get("method", "")).lower()
+        or "sim3" in str(row.get("epa_eval_align", "")).lower()
+        for row in rows
     )
+    matrix_layout = len(method_labels) > 3
 
-    table_rows = []
+    grouped: dict[str, list[dict[str, object]]] = {}
     for row in rows:
-        sr_dist = _as_float(row.get("epa_sr_distance")) * 100.0
-        sr_time = _as_float(row.get("epa_sr_time")) * 100.0
-        reject_pct = _as_float(row.get("epa_step3_rejection_ratio")) * 100.0
-        stable_pct = _as_float(row.get("epa_step3_stable_solve_ratio")) * 100.0
-        sr_data = "" if not math.isfinite(sr_dist) else f"{sr_dist:.12g}"
-        gate_failed = str(row.get("epa_global_gate_failed", ""))
-        case_status = str(row.get("epa_case_status", ""))
-        dataset = str(row.get("dataset", ""))
-        method = str(row.get("method", ""))
-        step3_mode = str(row.get("epa_step3_alignment_mode", ""))
-        sim3_reliable = str(row.get("epa_sim3_reliable", ""))
-        orientation_unstable = str(row.get("epa_orientation_unstable", ""))
-        diagnosis_primary = str(row.get("epa_case_diagnosis_primary", ""))
-        diagnosis_summary = str(row.get("epa_case_diagnosis_summary", ""))
-        status_class = "ok" if case_status == "valid_segment" else "warn"
-        if case_status == "globally_failed" or row.get("status") != "ok":
-            status_class = "bad"
-        table_rows.append(
-            "<tr "
-            f'data-dataset="{html.escape(dataset, quote=True)}" '
-            f'data-method="{html.escape(method, quote=True)}" '
-            f'data-status="{html.escape(case_status, quote=True)}" '
-            f'data-step3="{html.escape(step3_mode, quote=True)}" '
-            f'data-sim3-reliable="{html.escape(sim3_reliable, quote=True)}" '
-            f'data-orientation="{html.escape(orientation_unstable, quote=True)}" '
-            f'data-diagnosis="{html.escape(diagnosis_primary, quote=True)}" '
-            f'data-sr="{html.escape(sr_data, quote=True)}">'
-            f"<td>{html.escape(str(row.get('case', '')))}</td>"
-            f"<td>{html.escape(dataset)}</td>"
-            f"<td>{html.escape(method)}</td>"
-            f"<td class='{status_class}'>{html.escape(case_status)}</td>"
-            f"<td>{_fmt(sr_dist, 2)}</td>"
-            f"<td>{_fmt(sr_time, 2)}</td>"
-            f"<td>{html.escape(gate_failed)}</td>"
-            f"<td>{_fmt(row.get('epa_global_gate_value_m'), 3)}</td>"
-            f"<td>{_fmt(row.get('epa_valid_distance_m'), 3)}</td>"
-            f"<td>{html.escape(step3_mode)}</td>"
-            f"<td>{_fmt(stable_pct, 2)}</td>"
-            f"<td>{_fmt(reject_pct, 2)}</td>"
-            f"<td>{_fmt(row.get('epa_sim3_scale'), 6)}</td>"
-            f"<td>{html.escape(sim3_reliable)}</td>"
-            f"<td>{html.escape(str(row.get('epa_sim3_warning', '')))}</td>"
-            f"<td>{html.escape(orientation_unstable)}</td>"
-            f"<td>{html.escape(diagnosis_primary)}</td>"
-            f"<td>{html.escape(diagnosis_summary)}</td>"
-            f"<td>{_fmt(row.get('epa_orientation_ape_rmse_deg'), 2)}</td>"
-            f"<td>{_fmt(row.get('epa_orientation_rpe_rmse_deg'), 2)}</td>"
-            f"<td>{_fmt(row.get('epa_orientation_rpe_time_1s_rmse_deg'), 2)}</td>"
-            f"<td>{html.escape(str(row.get('epa_orientation_warning', '')))}</td>"
-            f"<td>{_fmt(row.get('epa_ate_rmse_step3_m'), 3)}</td>"
-            f"<td>{_interactive_thumb(row.get('epa_run_dir', ''), path.parent)}</td>"
-            f"<td>{_rel_link(row.get('epa_run_dir', ''), path.parent)}</td>"
-            "</tr>"
+        grouped.setdefault(str(row.get("case", "") or "case"), []).append(row)
+
+    def _row_for_method(case_rows: list[dict[str, object]], method: str) -> dict[str, object] | None:
+        for item in case_rows:
+            if str(item.get("method", "") or "method") == method:
+                return item
+        return None
+
+    def _metric_values(
+        case_rows: list[dict[str, object]],
+        key: str,
+        *,
+        fallback_key: str = "",
+        scale: float = 1.0,
+        ndigits: int = 3,
+        unit: str = "",
+    ) -> str:
+        vals: list[str] = []
+        for method in method_labels:
+            item = _row_for_method(case_rows, method)
+            if item is None:
+                vals.append("-")
+                continue
+            value = _as_float(item.get(key))
+            if fallback_key and not math.isfinite(value):
+                value = _as_float(item.get(fallback_key))
+            value *= float(scale)
+            text = _fmt(value, ndigits)
+            if unit and text:
+                text = f"{text}%" if unit == "%" else f"{text} {unit}"
+            vals.append(text or "-")
+        return " / ".join(vals)
+
+    def _text_values(case_rows: list[dict[str, object]], key: str) -> str:
+        vals: list[str] = []
+        for method in method_labels:
+            item = _row_for_method(case_rows, method)
+            if item is None:
+                vals.append("-")
+                continue
+            text = str(item.get(key, "") or "").strip()
+            vals.append(text or "-")
+        return " / ".join(vals)
+
+    def _valid_distance_values(case_rows: list[dict[str, object]]) -> str:
+        vals: list[str] = []
+        for method in method_labels:
+            item = _row_for_method(case_rows, method)
+            if item is None:
+                vals.append("-")
+                continue
+            valid = _fmt(item.get("epa_valid_distance_m"), 1)
+            total = _fmt(item.get("epa_total_distance_m"), 1)
+            if valid and total:
+                vals.append(f"{valid}/{total} m")
+            elif valid:
+                vals.append(f"{valid} m")
+            else:
+                vals.append("-")
+        return " / ".join(vals)
+
+    def _global_gate_values(case_rows: list[dict[str, object]]) -> str:
+        vals: list[str] = []
+        for method in method_labels:
+            item = _row_for_method(case_rows, method)
+            if item is None:
+                vals.append("-")
+                continue
+            failed = str(item.get("epa_global_gate_failed", "") or "").lower() == "true"
+            value = _fmt(item.get("epa_global_gate_value_m"), 3)
+            vals.append(f"{'fail' if failed else 'pass'} {value} m" if value else ("fail" if failed else "pass"))
+        return " / ".join(vals)
+
+    def _sr_key(axis: str, scope: str) -> str:
+        if scope == "gated":
+            return f"epa_sr_{axis}_gated"
+        return f"epa_sr_{axis}"
+
+    def _sr_values(case_rows: list[dict[str, object]], *, axis: str, scope: str = "local") -> str:
+        vals: list[str] = []
+        key = _sr_key(axis, scope)
+        for method in method_labels:
+            item = _row_for_method(case_rows, method)
+            if item is None:
+                vals.append("-")
+                continue
+            value = _as_float(item.get(key))
+            vals.append(_fmt(value * 100.0, 1) + "%" if math.isfinite(value) else "-")
+        return " | ".join(vals)
+
+    def _sr_text(row: dict[str, object], *, axis: str, scope: str = "local") -> str:
+        value = _as_float(row.get(_sr_key(axis, scope)))
+        return _fmt(value * 100.0, 1) + "%" if math.isfinite(value) else "-"
+
+    def _valid_distance_text(row: dict[str, object]) -> str:
+        valid = _fmt(row.get("epa_valid_distance_m"), 1)
+        total = _fmt(row.get("epa_total_distance_m"), 1)
+        if valid and total:
+            return f"{valid}/{total} m"
+        if valid:
+            return f"{valid} m"
+        return "-"
+
+    def _global_gate_text(row: dict[str, object]) -> str:
+        failed = str(row.get("epa_global_gate_failed", "") or "").lower() == "true"
+        value = _fmt(row.get("epa_global_gate_value_m"), 3)
+        if value:
+            return f"{'fail' if failed else 'pass'} {value} m"
+        return "fail" if failed else "pass"
+
+    def _row_status(row: dict[str, object]) -> tuple[str, str]:
+        if (
+            str(row.get("status", "")) != "ok"
+            or str(row.get("epa_case_status", "")) == "globally_failed"
+            or str(row.get("epa_sr_reliability_status", "")).lower() == "failed"
+        ):
+            return "failed", "bad"
+        if (
+            str(row.get("epa_case_status", "")) != "valid_segment"
+            or str(row.get("epa_sr_reliability_status", "")).lower() == "warning"
+            or str(row.get("epa_sim3_reliable", "")).lower() == "false"
+            or str(row.get("epa_sim3_warning", "")).strip()
+            or str(row.get("epa_orientation_unstable", "")).lower() == "true"
+            or str(row.get("epa_case_diagnosis_primary", "")).strip()
+        ):
+            return "warning", "warn"
+        return "ok", ""
+
+    def _case_status(case_rows: list[dict[str, object]]) -> tuple[str, str]:
+        if any(str(row.get("status", "")) != "ok" or str(row.get("epa_case_status", "")) == "globally_failed" for row in case_rows):
+            return "failed", "bad"
+        if any(
+            str(row.get("epa_case_status", "")) != "valid_segment"
+            or str(row.get("epa_sr_reliability_status", "")).lower() in {"failed", "warning"}
+            or str(row.get("epa_sim3_reliable", "")).lower() == "false"
+            or str(row.get("epa_sim3_warning", "")).strip()
+            or str(row.get("epa_orientation_unstable", "")).lower() == "true"
+            or str(row.get("epa_case_diagnosis_primary", "")).strip()
+            for row in case_rows
+        ):
+            return "warning", "warn"
+        return "ok", ""
+
+    report_dir = path.parent / "reports"
+
+    def _safe_report_slug(text: str) -> str:
+        slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", str(text)).strip("_")
+        return slug[:140] or "report"
+
+    def _short_report_href(row: dict[str, object]) -> str:
+        run_dir = Path(str(row.get("epa_run_dir", "") or ""))
+        interactive = run_dir / "interactive_report.html"
+        if not interactive.exists():
+            return ""
+        case_name = _safe_report_slug(str(row.get("case", "") or "case"))
+        method = _safe_report_slug(str(row.get("method", "") or "method"))
+        report_dir.mkdir(parents=True, exist_ok=True)
+        target = report_dir / f"{case_name}__{method}.html"
+        try:
+            shutil.copy2(interactive, target)
+            return os.path.relpath(target, path.parent)
+        except Exception:
+            try:
+                return os.path.relpath(interactive, path.parent)
+            except ValueError:
+                return str(interactive)
+
+    def _case_link(case_name: str, case_rows: list[dict[str, object]]) -> str:
+        target = ""
+        preferred_rows = sorted(
+            case_rows,
+            key=lambda row: (
+                "health" not in str(row.get("method", "")).lower(),
+                "original" in str(row.get("method", "")).lower(),
+            ),
         )
+        for row in preferred_rows:
+            target = _short_report_href(row)
+            if target:
+                break
+        if not target:
+            return html.escape(case_name)
+        return f'<a class="caseLink" href="{html.escape(target, quote=True)}">{html.escape(case_name)}</a>'
+
+    def _run_link(row: dict[str, object], label: str) -> str:
+        target = _short_report_href(row)
+        if target:
+            return f'<a class="methodPill" href="{html.escape(target, quote=True)}">{html.escape(label)}</a>'
+        return f'<span class="methodPill">{html.escape(label)}</span>'
+
+    def _diagnosis_text(case_rows: list[dict[str, object]]) -> str:
+        code_to_sentence = {
+            "time_alignment_weak": "Time sync is weak; inspect replay before trusting small differences.",
+            "step3_no_reliable_stable_segment": "No reliable stable segment was found for alignment.",
+            "global_gate_too_large": "Global position error is too large; this case is likely failed.",
+            "trajectory_jump": "Trajectory has jump or divergence; SR may be misleading.",
+            "scale_or_unit_suspect": "Scale or unit looks suspicious; do not trust position SR alone.",
+            "gt_mapping_suspect": "GT mapping may be imperfect for this sequence.",
+            "alignment_poor": "Alignment quality is poor; inspect replay.",
+            "poor_align": "Alignment quality is poor; inspect replay.",
+            "orientation_unstable": "Orientation is unstable; translation SR alone is not enough.",
+            "sim3_unreliable": "EPA Sim3 is not reliable here; inspect replay before trusting SR.",
+            "sim3_may_mask_failure": "Sim3 may be masking a real trajectory failure; treat SR as unreliable.",
+        }
+        ordered_codes = [
+            "sim3_may_mask_failure",
+            "sim3_unreliable",
+            "trajectory_jump",
+            "global_gate_too_large",
+            "time_alignment_weak",
+            "step3_no_reliable_stable_segment",
+            "orientation_unstable",
+            "scale_or_unit_suspect",
+            "gt_mapping_suspect",
+            "alignment_poor",
+            "poor_align",
+        ]
+        codes: set[str] = set()
+        has_unmapped_warning = False
+        for row in case_rows:
+            for key in (
+                "epa_case_diagnosis_primary",
+                "epa_case_diagnosis_summary",
+                "epa_case_diagnosis_tags",
+            ):
+                text = str(row.get(key, "") or "")
+                for token in re.split(r"[,;\s]+", text):
+                    token = token.strip()
+                    if token:
+                        codes.add(token)
+            if str(row.get("epa_sim3_reliable", "") or "").lower() == "false":
+                codes.add("sim3_unreliable")
+            if str(row.get("epa_sim3_may_mask_failure", "") or "").lower() == "true":
+                codes.add("sim3_may_mask_failure")
+            if str(row.get("epa_orientation_unstable", "") or "").lower() == "true":
+                codes.add("orientation_unstable")
+            if str(row.get("epa_sim3_warning", "") or "").strip() or str(row.get("epa_orientation_warning", "") or "").strip():
+                has_unmapped_warning = True
+        notes = [code_to_sentence[code] for code in ordered_codes if code in codes and code in code_to_sentence]
+        if not notes and has_unmapped_warning:
+            notes.append("Alignment warning is present; inspect replay before trusting SR.")
+        if not notes:
+            return "No obvious alignment issue was detected."
+        deduped = list(dict.fromkeys(notes))
+        return " ".join(deduped[:3])
+
+    def _diagnosis_brief(row: dict[str, object]) -> str:
+        summary = " ".join(
+            str(row.get(key, "") or "")
+            for key in (
+                "epa_case_diagnosis_primary",
+                "epa_case_diagnosis_summary",
+                "epa_case_diagnosis_tags",
+            )
+        )
+        sr_status = str(row.get("epa_sr_reliability_status", "") or "").lower()
+        if sr_status == "failed":
+            return "SR gated failed"
+        if str(row.get("epa_sim3_reliable", "") or "").lower() == "false":
+            return "Sim3 unreliable"
+        if str(row.get("epa_global_gate_failed", "") or "").lower() == "true":
+            return "Global gate failed"
+        if "trajectory_jump" in summary:
+            return "Trajectory jump"
+        if "time_alignment_weak" in summary:
+            return "Time sync weak"
+        if "scale_or_unit_suspect" in summary:
+            return "Scale/unit suspect"
+        if "gt_mapping_suspect" in summary:
+            return "GT mapping suspect"
+        if str(row.get("epa_orientation_unstable", "") or "").lower() == "true":
+            return "Orientation unstable"
+        return "OK"
+
+    def _diagnosis_title(row: dict[str, object]) -> str:
+        notes = [
+            _diagnosis_text([row]),
+            str(row.get("epa_sr_warning_explanation", "") or "").strip(),
+            str(row.get("epa_sim3_warning", "") or "").strip(),
+            str(row.get("epa_orientation_warning", "") or "").strip(),
+        ]
+        return " ".join(note for note in notes if note)
+
+    def _sim3_audit(case_rows: list[dict[str, object]]) -> str:
+        sim3_rows = [
+            row for row in case_rows
+            if "sim3" in str(row.get("method", "")).lower()
+            or str(row.get("epa_eval_align", "")).lower().endswith("sim3")
+        ]
+        if not sim3_rows:
+            return '<div class="muted">-</div>'
+        lines: list[str] = []
+        for row in sim3_rows:
+            method = str(row.get("method", "") or "sim3")
+            reliable = str(row.get("epa_sim3_reliable", "") or "unknown")
+            scale = _fmt(row.get("epa_sim3_scale"), 6) or "-"
+            lines.append(
+                f'<div class="auditLine">{_run_link(row, method)} '
+                f'{html.escape(reliable)} <span class="muted">scale {html.escape(scale)}</span></div>'
+            )
+        return "".join(lines)
+
+    total = len(grouped)
+    table_rows: list[str] = []
+    status_counts = {"ok": 0, "warning": 0, "failed": 0}
+    for case_name, case_rows in grouped.items():
+        status_label, row_class = _case_status(case_rows)
+        status_counts[status_label] = status_counts.get(status_label, 0) + 1
+        dataset = str(case_rows[0].get("dataset", ""))
+        search_text = " ".join(str(row.get(key, "")) for row in case_rows for key in (
+            "case", "dataset", "method", "epa_case_status", "epa_case_diagnosis_summary",
+            "epa_case_diagnosis_primary", "epa_sim3_reliable", "epa_sim3_warning",
+            "epa_step3_alignment_mode", "epa_orientation_warning", "epa_sr_reliability_status",
+            "epa_sr_warning_explanation",
+        ))
+        pill = {
+            "ok": "okPill",
+            "warning": "warnPill",
+            "failed": "badPill",
+        }.get(status_label, "warnPill")
+        if matrix_layout:
+            for idx, row in enumerate(case_rows):
+                row_status, row_class = _row_status(row)
+                rel_status = str(row.get("epa_sr_reliability_status", "") or row_status)
+                rel_pill = {"ok": "okPill", "warning": "warnPill", "failed": "badPill"}.get(
+                    rel_status.lower(), "warnPill"
+                )
+                case_cell = (
+                    '<td class="caseCell">'
+                    '<button class="caseMarker" title="Mark this case" type="button"></button>'
+                    f'<div>{_case_link(case_name, case_rows)}'
+                    f'<div class="caseSub"><span class="pill {pill}">{html.escape(status_label)}</span>'
+                    f'<span class="muted"> {html.escape(dataset)}</span></div></div>'
+                    '</td>'
+                    if idx == 0
+                    else '<td class="caseCell caseRepeat"><button class="caseMarker" title="Mark this case" type="button"></button></td>'
+                )
+                method = str(row.get("method", "") or "method")
+                is_sim3_row = "sim3" in method.lower() or "sim3" in str(row.get("epa_eval_align", "")).lower()
+                sim3_text = (
+                    f'<b>{html.escape(str(row.get("epa_sim3_reliable", "") or "unknown"))}</b>'
+                    f'<div class="muted">scale {html.escape(_fmt(row.get("epa_sim3_scale"), 6) or "-")}</div>'
+                    if is_sim3_row and has_sim3
+                    else '<span class="muted">-</span>'
+                )
+                diag_title = _diagnosis_title(row)
+                diag = _diagnosis_brief(row)
+                row_sim3_cell = f'<td>{sim3_text}</td>' if has_sim3 else ""
+                table_rows.append(
+                    f'<tr class="{html.escape(row_class)} {"caseStart" if idx == 0 else ""}" '
+                    f'data-case="{html.escape(case_name, quote=True)}" '
+                    f'data-search="{html.escape((search_text + " " + method + " " + diag_title).lower(), quote=True)}" '
+                    f'data-status="{html.escape(row_status, quote=True)}">'
+                    f'{case_cell}'
+                    f'<td>{_run_link(row, method)}</td>'
+                    f'<td><span class="metricVals">{html.escape(_sr_text(row, axis="distance", scope="local"))}</span></td>'
+                    f'<td><span class="metricVals">{html.escape(_sr_text(row, axis="time", scope="local"))}</span></td>'
+                    f'<td><span class="pill {rel_pill}">{html.escape(rel_status)}</span></td>'
+                    f'<td><span class="metricVals">{html.escape((_fmt(row.get("epa_ate_rmse_step3_m"), 3) or "-") + " m")}</span></td>'
+                    f'<td><span class="metricVals">{html.escape((_fmt(row.get("epa_rpe_time_1s_trans_rmse_m"), 3) or "-") + " m")}'
+                    f'<div class="muted">rot {html.escape((_fmt(row.get("epa_rpe_time_1s_rot_rmse_deg"), 3) or _fmt(row.get("epa_orientation_rpe_time_1s_rmse_deg"), 3) or "-"))} deg</div></span></td>'
+                    f'<td><span class="metricVals">{html.escape(_valid_distance_text(row))}</span></td>'
+                    f'<td><span class="metricVals">{html.escape(_global_gate_text(row))}</span></td>'
+                    f'{row_sim3_cell}'
+                    f'<td title="{html.escape(diag_title, quote=True)}">{html.escape(diag)}</td>'
+                    '</tr>'
+                )
+        else:
+            sim3_cell = f'<td>{_sim3_audit(case_rows)}</td>' if has_sim3 else ""
+            table_rows.append(
+                f'<tr class="{html.escape(row_class)}" data-case="{html.escape(case_name, quote=True)}" '
+                f'data-search="{html.escape(search_text.lower(), quote=True)}" data-status="{html.escape(status_label, quote=True)}">'
+                '<td class="caseCell">'
+                '<button class="caseMarker" title="Mark this case" type="button"></button>'
+                f'<div>{_case_link(case_name, case_rows)}'
+                f'<div class="caseSub"><span class="pill {pill}">{html.escape(status_label)}</span>'
+                f'<span class="muted"> {html.escape(dataset)}</span></div></div>'
+                '</td>'
+                f'<td><span class="metricVals">{html.escape(_sr_values(case_rows, axis="distance", scope="local"))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_sr_values(case_rows, axis="time", scope="local"))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_text_values(case_rows, "epa_sr_reliability_status"))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_metric_values(case_rows, "epa_ate_rmse_step3_m", ndigits=3, unit="m"))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_metric_values(case_rows, "epa_rpe_time_1s_trans_rmse_m", ndigits=3, unit="m"))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_metric_values(case_rows, "epa_rpe_time_1s_rot_rmse_deg", fallback_key="epa_orientation_rpe_time_1s_rmse_deg", ndigits=3, unit="deg"))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_valid_distance_values(case_rows))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_global_gate_values(case_rows))}</span></td>'
+                f'<td><span class="metricVals">{html.escape(_metric_values(case_rows, "epa_sim3_scale", ndigits=6))}</span></td>'
+                f'{sim3_cell}'
+                f'<td>{html.escape(_diagnosis_text(case_rows))}<div class="muted">{html.escape(_text_values(case_rows, "epa_sr_warning_explanation"))}</div></td>'
+                '</tr>'
+            )
+
     css = """
-body{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:24px;color:#17202a;background:#fafafa}
-h1{font-size:24px;margin:0 0 12px}
-.summary{display:flex;gap:18px;margin:0 0 18px;color:#445}
-.filters{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0 0 16px;padding:12px;background:#fff;border:1px solid #d7dee8}
-.filterGroup{display:flex;flex-direction:column;gap:4px}
-.filterGroup label{font-size:11px;color:#526070;text-transform:uppercase}
-.filterGroup select,.filterGroup input{height:30px;border:1px solid #c9d3df;background:#fff;padding:4px 7px;font-size:13px;min-width:112px}
-.filters button{height:30px;border:1px solid #9fb1c5;background:#eef3f8;padding:4px 10px;font-size:13px;cursor:pointer}
-.resultCount{font-size:13px;color:#445;margin-left:auto}
-table{border-collapse:collapse;width:100%;background:white;border:1px solid #d7dee8}
-th,td{padding:7px 9px;border-bottom:1px solid #e6ebf2;text-align:left;font-size:13px;white-space:nowrap}
-th{position:sticky;top:0;background:#eef3f8;z-index:1}
-tr:hover{background:#f6f9fc}
-.thumbLink{position:relative;display:block;width:180px;height:132px}
-.thumb{width:180px;height:132px;object-fit:contain;border:1px solid #d7dee8;background:#fff;display:block}
-.plotCount{position:absolute;right:6px;bottom:6px;padding:2px 6px;border-radius:3px;background:rgba(23,32,42,.78);color:white;font-size:11px}
-.ok{color:#146c43;font-weight:600}.warn{color:#9a6700;font-weight:600}.bad{color:#b42318;font-weight:600}
+:root {
+  --bg:#f7f9fc; --panel:#ffffff; --text:#172033; --muted:#667085; --line:#dde5f0;
+  --head:#f1f5f9; --ok:#e8f7ef; --okText:#166534; --warn:#fff6df; --warnText:#92400e;
+  --bad:#ffecec; --badText:#b42318; --accent:#2563eb; --mark:#e11d48;
+}
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font-family:Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif; }
+.page { padding:24px; }
+.topbar { display:flex; justify-content:space-between; gap:16px; align-items:flex-end; margin-bottom:16px; }
+h1 { font-size:22px; line-height:1.2; margin:0 0 6px; letter-spacing:0; }
+.summary { color:var(--muted); margin:0; font-size:13px; }
+.stats { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.stat { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:8px 10px; min-width:74px; text-align:center; }
+.stat b { display:block; font-size:18px; }
+.stat span { color:var(--muted); font-size:12px; }
+.toolbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+input { width:min(420px, 100%); height:34px; border:1px solid var(--line); border-radius:8px; padding:0 10px; background:#fff; color:var(--text); }
+button { height:34px; border:1px solid var(--line); background:#fff; color:#344054; border-radius:8px; padding:0 10px; cursor:pointer; }
+button:hover { border-color:#b6c2d2; background:#f8fafc; }
+.tableWrap { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:auto; box-shadow:0 1px 2px rgba(15,23,42,.04); }
+table { border-collapse:separate; border-spacing:0; width:100%; min-width:1120px; font-size:13px; }
+th, td { border-bottom:1px solid var(--line); padding:10px 12px; vertical-align:top; text-align:left; }
+th { position:sticky; top:0; z-index:1; background:var(--head); color:#475467; font-weight:650; }
+tbody tr:last-child td { border-bottom:0; }
+tr.warn { background:#fffaf0; }
+tr.bad { background:#fff7f7; }
+tr.caseStart td { border-top:2px solid #cbd5e1; }
+.caseCell { display:flex; gap:9px; align-items:flex-start; min-width:230px; }
+.caseRepeat { min-width:130px; }
+.caseMarker { width:14px; height:14px; min-width:14px; padding:0; border-radius:50%; margin-top:2px; border:1px solid #cbd5e1; background:#fff; }
+.caseMarker.marked { background:var(--mark); border-color:var(--mark); box-shadow:0 0 0 3px rgba(225,29,72,.12); }
+.caseLink { color:var(--accent); text-decoration:underline; text-underline-offset:3px; font-weight:650; }
+.caseSub { margin-top:6px; }
+.metricVals { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; line-height:1.45; white-space:nowrap; }
+.muted { color:var(--muted); font-size:12px; line-height:1.45; }
+.auditLine { margin-bottom:3px; }
+.pill { display:inline-flex; align-items:center; height:22px; padding:0 8px; border-radius:999px; font-size:12px; font-weight:650; }
+.methodPill { display:inline-flex; align-items:center; height:24px; padding:0 8px; border-radius:7px; background:#eef2ff; color:#344054; font-weight:650; white-space:nowrap; text-decoration:none; }
+.okPill { background:var(--ok); color:var(--okText); }
+.warnPill { background:#fdecc8; color:var(--warnText); }
+.badPill { background:#ffd6d6; color:var(--badText); }
+.hint { color:var(--muted); font-size:12px; margin-top:10px; }
 """
+    if matrix_layout:
+        summary_text = (
+            f"Matrix layout: <b>{len(method_labels)}</b> methods, one row per method. "
+            "Local SR is after drift/jump valid-segment filtering; reliability is shown separately."
+        )
+        header_cells = [
+            "<th style='width:250px'>case</th>",
+            "<th style='width:132px'>method</th>",
+            "<th>local SR distance</th>",
+            "<th>local SR time</th>",
+            "<th>SR reliability</th>",
+            "<th>APE RMSE</th>",
+            "<th>1s RPE<br><span class='muted'>trans + rot</span></th>",
+            "<th>valid distance</th>",
+            "<th>global gate</th>",
+            "<th>Sim3</th>" if has_sim3 else "",
+            "<th style='width:190px'>diagnosis</th>",
+        ]
+    else:
+        summary_text = (
+            f"Metrics are grouped as <b>{html.escape(method_hint)}</b>. "
+            "Local SR is after drift/jump valid-segment filtering; reliability is shown separately. "
+            "Click a case name to open its interactive replay."
+        )
+        header_cells = [
+            "<th style='width:270px'>case</th>",
+            f"<th>local SR distance<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>local SR time<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>SR reliability<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>APE RMSE<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>1s RPE trans<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>1s RPE rot<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>valid distance<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>global gate<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>scale<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            "<th style='width:170px'>EPA Sim3 audit</th>" if has_sim3 else "",
+            "<th style='width:320px'>diagnosis</th>",
+        ]
     doc = [
-        "<!doctype html><html><head><meta charset='utf-8'>",
+        "<!doctype html>",
+        "<html>",
+        "<head>",
+        "<meta charset='utf-8'>",
         "<title>EPA Benchmark Summary</title>",
         f"<style>{css}</style>",
-        "</head><body>",
+        "</head>",
+        "<body>",
+        "<main class='page'>",
+        "<div class='topbar'>",
+        "<div>",
         "<h1>EPA Benchmark Summary</h1>",
-        f"<div class='summary'><span><b>total</b>: {total}</span><span><b>epa_ok</b>: {epa_ok}</span>{status_bits}</div>",
-        "<div class='filters'>",
-        f"<div class='filterGroup'><label for='filterDataset'>dataset</label><select id='filterDataset'>{_summary_filter_options(rows, 'dataset')}</select></div>",
-        f"<div class='filterGroup'><label for='filterMethod'>method</label><select id='filterMethod'>{_summary_filter_options(rows, 'method')}</select></div>",
-        f"<div class='filterGroup'><label for='filterStatus'>case_status</label><select id='filterStatus'>{_summary_filter_options(rows, 'epa_case_status')}</select></div>",
-        f"<div class='filterGroup'><label for='filterStep3'>Step3 mode</label><select id='filterStep3'>{_summary_filter_options(rows, 'epa_step3_alignment_mode')}</select></div>",
-        f"<div class='filterGroup'><label for='filterSim3'>Sim3 reliable</label><select id='filterSim3'>{_summary_filter_options(rows, 'epa_sim3_reliable')}</select></div>",
-        f"<div class='filterGroup'><label for='filterOrientation'>orientation</label><select id='filterOrientation'>{_summary_filter_options(rows, 'epa_orientation_unstable')}</select></div>",
-        f"<div class='filterGroup'><label for='filterDiagnosis'>diagnosis</label><select id='filterDiagnosis'>{_summary_filter_options(rows, 'epa_case_diagnosis_primary')}</select></div>",
-        "<div class='filterGroup'><label for='filterSrMin'>SR min %</label><input id='filterSrMin' type='number' min='0' max='100' step='0.01'></div>",
-        "<div class='filterGroup'><label for='filterSrMax'>SR max %</label><input id='filterSrMax' type='number' min='0' max='100' step='0.01'></div>",
-        "<button id='resetFilters' type='button'>reset</button>",
-        f"<span class='resultCount'><b id='visibleCount'>{total}</b> / {total}</span>",
+        f"<p class='summary'>{summary_text}</p>",
         "</div>",
-        "<table><thead><tr>",
-        "<th>case</th><th>dataset</th><th>method</th><th>case_status</th><th>SR_dist_%</th><th>SR_time_%</th><th>global_gate_failed</th><th>gate_value_m</th><th>valid_distance_m</th><th>step3_mode</th><th>stable_solve_%</th><th>rejected_%</th><th>sim3_scale</th><th>sim3_reliable</th><th>sim3_warning</th><th>orientation_unstable</th><th>diagnosis</th><th>diagnosis_summary</th><th>APE_rot_deg</th><th>RPE_rot_deg</th><th>RPE_1s_rot_deg</th><th>orientation_warning</th><th>step3_rmse_m</th><th>interactive</th><th>run</th>",
-        "</tr></thead><tbody id='summaryBody'>",
+        "<div class='stats'>",
+        f"<div class='stat'><b>{total}</b><span>cases</span></div>",
+        f"<div class='stat'><b>{status_counts.get('ok', 0)}</b><span>ok</span></div>",
+        f"<div class='stat'><b>{status_counts.get('warning', 0)}</b><span>warn</span></div>",
+        f"<div class='stat'><b>{status_counts.get('failed', 0)}</b><span>failed</span></div>",
+        "</div>",
+        "</div>",
+        "<div class='toolbar'>",
+        "<input id='filter' placeholder='Filter by case, status, diagnosis, confidence'>",
+        "<button id='showMarked' type='button'>Marked</button>",
+        "<button id='showAll' type='button'>All</button>",
+        "</div>",
+        "<div class='tableWrap'>",
+        "<table>",
+        "<thead><tr>",
+        *header_cells,
+        "</tr></thead><tbody>",
         *table_rows,
-        "</tbody></table>",
+        "</tbody>",
+        "</table>",
+        "</div>",
+        "<p class='hint'>The red marker is stored in this browser via localStorage, so you can flag cases while reviewing.</p>",
+        "</main>",
         """<script>
-(function(){
-  const controls = {
-    dataset: document.getElementById('filterDataset'),
-    method: document.getElementById('filterMethod'),
-    status: document.getElementById('filterStatus'),
-    step3: document.getElementById('filterStep3'),
-    sim3: document.getElementById('filterSim3'),
-    orientation: document.getElementById('filterOrientation'),
-    diagnosis: document.getElementById('filterDiagnosis'),
-    srMin: document.getElementById('filterSrMin'),
-    srMax: document.getElementById('filterSrMax')
-  };
-  const rows = Array.from(document.querySelectorAll('#summaryBody tr'));
-  const visibleCount = document.getElementById('visibleCount');
-  function matchSelect(row, name, control) {
-    return !control.value || row.dataset[name] === control.value;
-  }
-  function applyFilters() {
-    const minText = controls.srMin.value.trim();
-    const maxText = controls.srMax.value.trim();
-    const minSr = minText === '' ? -Infinity : Number(minText);
-    const maxSr = maxText === '' ? Infinity : Number(maxText);
-    let shown = 0;
-    rows.forEach(row => {
-      const sr = Number(row.dataset.sr);
-      const hasSr = row.dataset.sr !== '' && Number.isFinite(sr);
-      let ok = true;
-      ok = ok && matchSelect(row, 'dataset', controls.dataset);
-      ok = ok && matchSelect(row, 'method', controls.method);
-      ok = ok && matchSelect(row, 'status', controls.status);
-      ok = ok && matchSelect(row, 'step3', controls.step3);
-      ok = ok && matchSelect(row, 'sim3Reliable', controls.sim3);
-      ok = ok && matchSelect(row, 'orientation', controls.orientation);
-      ok = ok && matchSelect(row, 'diagnosis', controls.diagnosis);
-      if (minText !== '' || maxText !== '') ok = ok && hasSr && sr >= minSr && sr <= maxSr;
-      row.style.display = ok ? '' : 'none';
-      if (ok) shown += 1;
-    });
-    visibleCount.textContent = shown;
-  }
-  Object.values(controls).forEach(control => control.addEventListener('input', applyFilters));
-  document.getElementById('resetFilters').addEventListener('click', () => {
-    Object.values(controls).forEach(control => { control.value = ''; });
-    applyFilters();
+const KEY = 'epaSummaryMarkers:' + location.pathname;
+const marked = new Set(JSON.parse(localStorage.getItem(KEY) || '[]'));
+function save() { localStorage.setItem(KEY, JSON.stringify([...marked].sort())); }
+function paint() {
+  document.querySelectorAll('tr[data-case]').forEach(tr => {
+    const btn = tr.querySelector('.caseMarker');
+    if (btn) btn.classList.toggle('marked', marked.has(tr.dataset.case));
   });
-})();
+}
+function applyFilter(markedOnly=false) {
+  const q = (document.getElementById('filter').value || '').toLowerCase();
+  document.querySelectorAll('tbody tr[data-case]').forEach(tr => {
+    const text = (tr.dataset.search || tr.innerText || '').toLowerCase();
+    const textMatch = !q || text.includes(q);
+    const markMatch = !markedOnly || marked.has(tr.dataset.case);
+    tr.style.display = (textMatch && markMatch) ? '' : 'none';
+  });
+}
+document.querySelectorAll('.caseMarker').forEach(btn => btn.addEventListener('click', event => {
+  const tr = event.target.closest('tr[data-case]');
+  const key = tr.dataset.case;
+  marked.has(key) ? marked.delete(key) : marked.add(key);
+  save(); paint();
+}));
+document.getElementById('filter').addEventListener('input', () => applyFilter(false));
+document.getElementById('showMarked').addEventListener('click', () => applyFilter(true));
+document.getElementById('showAll').addEventListener('click', () => {
+  document.getElementById('filter').value = '';
+  applyFilter(false);
+});
+paint();
 </script>""",
-        "</body></html>",
+        "</body>",
+        "</html>",
     ]
     path.write_text("\n".join(doc) + "\n", encoding="utf-8")
 
@@ -1374,6 +1809,13 @@ def _failed_summary_row(
         "epa_matches_equivalent": float("nan"),
         "epa_sr_distance": float("nan"),
         "epa_sr_time": float("nan"),
+        "epa_sr_distance_raw": float("nan"),
+        "epa_sr_time_raw": float("nan"),
+        "epa_sr_distance_gated": float("nan"),
+        "epa_sr_time_gated": float("nan"),
+        "epa_sr_reliability_status": "",
+        "epa_sr_warning_explanation": "",
+        "epa_sim3_may_mask_failure": "",
         "epa_case_status": "",
         "epa_global_gate_failed": "",
         "epa_global_gate_value_m": float("nan"),
@@ -1393,6 +1835,8 @@ def _failed_summary_row(
         "epa_orientation_ape_rmse_deg": float("nan"),
         "epa_orientation_rpe_rmse_deg": float("nan"),
         "epa_orientation_rpe_time_1s_rmse_deg": float("nan"),
+        "epa_rpe_time_1s_trans_rmse_m": float("nan"),
+        "epa_rpe_time_1s_rot_rmse_deg": float("nan"),
         "epa_orientation_warning": "",
         "epa_case_diagnosis_primary": "",
         "epa_case_diagnosis_summary": "",
@@ -1542,6 +1986,13 @@ def _run_benchmark_case(
         "epa_matches_equivalent": _as_float(epa_result.get("evo_matches_equivalent")),
         "epa_sr_distance": _as_float(epa_result.get("sr_distance")),
         "epa_sr_time": _as_float(epa_result.get("sr_time")),
+        "epa_sr_distance_raw": _as_float(epa_result.get("sr_distance_raw")),
+        "epa_sr_time_raw": _as_float(epa_result.get("sr_time_raw")),
+        "epa_sr_distance_gated": _as_float(epa_result.get("sr_distance_gated")),
+        "epa_sr_time_gated": _as_float(epa_result.get("sr_time_gated")),
+        "epa_sr_reliability_status": str(epa_result.get("sr_reliability_status", "")),
+        "epa_sr_warning_explanation": str(epa_result.get("sr_warning_explanation", "")),
+        "epa_sim3_may_mask_failure": str(epa_result.get("sim3_may_mask_failure", "")),
         "epa_case_status": str(epa_result.get("case_status", "")),
         "epa_global_gate_failed": str(epa_result.get("global_gate_failed", "")),
         "epa_global_gate_value_m": _as_float(epa_result.get("global_gate_value_m")),
@@ -1563,6 +2014,8 @@ def _run_benchmark_case(
         "epa_orientation_rpe_time_1s_rmse_deg": _as_float(
             epa_result.get("orientation_rpe_time_1s_rmse_deg")
         ),
+        "epa_rpe_time_1s_trans_rmse_m": _as_float(epa_result.get("rpe_time_1s_trans_rmse_m")),
+        "epa_rpe_time_1s_rot_rmse_deg": _as_float(epa_result.get("rpe_time_1s_rot_rmse_deg")),
         "epa_orientation_warning": str(epa_result.get("orientation_warning", "")),
         "epa_case_diagnosis_primary": str(epa_result.get("diagnosis_primary", "")),
         "epa_case_diagnosis_summary": str(epa_result.get("diagnosis_summary", "")),
@@ -1642,6 +2095,13 @@ def _summary_row_from_case_payload(
         "epa_matches_equivalent": _as_float(epa_result.get("evo_matches_equivalent")),
         "epa_sr_distance": _as_float(epa_result.get("sr_distance")),
         "epa_sr_time": _as_float(epa_result.get("sr_time")),
+        "epa_sr_distance_raw": _as_float(epa_result.get("sr_distance_raw")),
+        "epa_sr_time_raw": _as_float(epa_result.get("sr_time_raw")),
+        "epa_sr_distance_gated": _as_float(epa_result.get("sr_distance_gated")),
+        "epa_sr_time_gated": _as_float(epa_result.get("sr_time_gated")),
+        "epa_sr_reliability_status": str(epa_result.get("sr_reliability_status", "")),
+        "epa_sr_warning_explanation": str(epa_result.get("sr_warning_explanation", "")),
+        "epa_sim3_may_mask_failure": str(epa_result.get("sim3_may_mask_failure", "")),
         "epa_case_status": str(epa_result.get("case_status", "")),
         "epa_global_gate_failed": str(epa_result.get("global_gate_failed", "")),
         "epa_global_gate_value_m": _as_float(epa_result.get("global_gate_value_m")),
@@ -1663,6 +2123,8 @@ def _summary_row_from_case_payload(
         "epa_orientation_rpe_time_1s_rmse_deg": _as_float(
             epa_result.get("orientation_rpe_time_1s_rmse_deg")
         ),
+        "epa_rpe_time_1s_trans_rmse_m": _as_float(epa_result.get("rpe_time_1s_trans_rmse_m")),
+        "epa_rpe_time_1s_rot_rmse_deg": _as_float(epa_result.get("rpe_time_1s_rot_rmse_deg")),
         "epa_orientation_warning": str(epa_result.get("orientation_warning", "")),
         "epa_case_diagnosis_primary": str(epa_result.get("diagnosis_primary", "")),
         "epa_case_diagnosis_summary": str(epa_result.get("diagnosis_summary", "")),

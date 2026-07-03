@@ -251,11 +251,18 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
         {
             "case": "case_a",
             "dataset": "demo",
-            "method": "sys",
+            "method": "epa_sim3",
             "status": "ok",
             "epa_case_status": "globally_unstable",
+            "epa_sr_distance_raw": 0.9,
             "epa_sr_distance": 0.42,
+            "epa_sr_distance_gated": 0.0,
+            "epa_sr_time_raw": 0.91,
             "epa_sr_time": 0.5,
+            "epa_sr_time_gated": 0.0,
+            "epa_sr_reliability_status": "failed",
+            "epa_sr_warning_explanation": "Sim3 may be masking a real trajectory failure.",
+            "epa_sim3_may_mask_failure": "True",
             "epa_global_gate_failed": "True",
             "epa_global_gate_value_m": 50.0,
             "epa_valid_distance_m": 4.2,
@@ -269,6 +276,8 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
             "epa_orientation_ape_rmse_deg": 80.0,
             "epa_orientation_rpe_rmse_deg": 35.0,
             "epa_orientation_rpe_time_1s_rmse_deg": 32.0,
+            "epa_rpe_time_1s_trans_rmse_m": 1.2,
+            "epa_rpe_time_1s_rot_rmse_deg": 31.0,
             "epa_orientation_warning": "rotation unstable",
             "epa_ate_rmse_step3_m": 3.0,
             "epa_case_diagnosis_primary": "trajectory_jump",
@@ -284,31 +293,49 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
 
     assert "globally_unstable" in text
     assert "robust_trimmed" in text
-    assert "step3_alignment_map.png" in text
-    assert "interactive_report.html" in text
-    assert "thumbLink" in text
-    assert "filterDataset" in text
-    assert "filterMethod" in text
-    assert "filterStatus" in text
-    assert "filterSrMin" in text
-    assert "filterSrMax" in text
-    assert "filterStep3" in text
-    assert "filterSim3" in text
-    assert "filterOrientation" in text
-    assert "filterDiagnosis" in text
-    assert "resetFilters" in text
-    assert "stable_solve_%" in text
-    assert "42.00" in text
-    assert 'data-dataset="demo"' in text
-    assert 'data-method="sys"' in text
-    assert 'data-status="globally_unstable"' in text
-    assert 'data-step3="robust_trimmed"' in text
-    assert 'data-sim3-reliable="False"' in text
-    assert 'data-orientation="True"' in text
-    assert 'data-diagnosis="trajectory_jump"' in text
-    assert "Sim3 scale warning" in text
-    assert "rotation unstable" in text
+    assert "reports/case_a__epa_sim3.html" in text
+    assert "caseMarker" in text
+    assert "caseLink" in text
+    assert "showMarked" in text
+    assert "showAll" in text
+    assert "localStorage" in text
+    assert "EPA Sim3 audit" in text
+    assert "SR reliability" in text
+    assert "1s RPE trans" in text
+    assert "valid distance" in text
+    assert "global gate" in text
+    assert "42.0%" in text
+    assert "raw / local / gated" not in text
+    assert "90.0% / 42.0% / 0.0%" not in text
+    assert "Sim3 may be masking a real trajectory failure" in text
+    assert "1.200 m" in text
+    assert 'data-case="case_a"' in text
+    assert "Trajectory has jump or divergence" in text
+    assert "EPA Sim3 is not reliable" in text
     assert "openImageViewer" not in text
+
+
+def test_summary_html_hides_sim3_audit_for_non_sim3_mode(tmp_path: Path) -> None:
+    out = tmp_path / "summary.html"
+    _write_summary_html(
+        [
+            {
+                "case": "case_a",
+                "dataset": "demo",
+                "method": "epa_se3",
+                "status": "ok",
+                "epa_case_status": "valid_segment",
+                "epa_sr_distance": 1.0,
+                "epa_sr_time": 1.0,
+                "epa_ate_rmse_step3_m": 0.1,
+            }
+        ],
+        out,
+    )
+    text = out.read_text(encoding="utf-8")
+    assert "EPA Sim3 audit" not in text
+    assert "(epa_se3)" in text
+    assert "raw / local / gated" not in text
 
 
 def test_benchmark_case_does_not_run_evo_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -117,6 +117,29 @@ def test_ape_tool_sim3_writes_scale_reliability(tmp_path: Path) -> None:
     assert info["sim3_scale"] == 0.01
 
 
+def test_ape_and_rpe_tools_accept_explicit_eval_align_posyaw(tmp_path: Path) -> None:
+    ref = tmp_path / "ref.tum"
+    est = tmp_path / "est.tum"
+    _write_tum(ref, x_offset=0.0, t_offset=0.0)
+    _write_tum(est, x_offset=1.0, t_offset=0.0)
+
+    ape_out = tmp_path / "ape_posyaw"
+    ape_args = ape_tool._build_parser().parse_args(
+        ["--eval-align", "posyaw", "--out_dir", str(ape_out), "tum", str(ref), str(est)]
+    )
+    assert ape_tool.run(ape_args) == 0
+    ape_payload = json.loads((ape_out / "metrics.json").read_text(encoding="utf-8"))
+    assert ape_payload["metadata"]["eval_alignment"]["align_mode"] == "posyaw"
+
+    rpe_out = tmp_path / "rpe_posyaw"
+    rpe_args = rpe_tool._build_parser().parse_args(
+        ["--eval-align", "posyaw", "--out_dir", str(rpe_out), "tum", str(ref), str(est)]
+    )
+    assert rpe_tool.run(rpe_args) == 0
+    rpe_payload = json.loads((rpe_out / "metrics.json").read_text(encoding="utf-8"))
+    assert rpe_payload["metadata"]["eval_alignment"]["align_mode"] == "posyaw"
+
+
 def test_ape_tool_accepts_options_after_subcommand(tmp_path: Path) -> None:
     ref = tmp_path / "ref.tum"
     est = tmp_path / "est.tum"

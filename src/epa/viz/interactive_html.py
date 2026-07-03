@@ -90,13 +90,16 @@ def _speed_plot_data(
     pr_sync: Any,
     pr_corrected: Any,
     pr_final: Any,
+    extra_traces: dict[str, Any] | None = None,
     debug: bool,
     max_points: int,
 ) -> dict[str, Any]:
     traces = [
         _speed_trace(timestamps, pos_gt, label="ground truth", max_points=max_points),
-        _speed_trace(timestamps, pr_final, label="step3", max_points=max_points),
+        _speed_trace(timestamps, pr_final, label="EPA SE3", max_points=max_points),
     ]
+    for label, pos in (extra_traces or {}).items():
+        traces.append(_speed_trace(timestamps, pos, label=label, max_points=max_points))
     if debug:
         traces.extend(
             [
@@ -226,17 +229,26 @@ def _metric_summary_cards(metrics_payload: dict, *, ape_relation: str, rpe_relat
             percent=True,
         ),
         _summary_card(
+            "SR gated",
+            _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "success_rate_distance_reliability_gated")),
+            percent=True,
+        ),
+        _summary_card(
+            "SR reliability",
+            _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "sr_reliability_status")),
+        ),
+        _summary_card(
             "SR time",
             _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "success_rate_time")),
             percent=True,
         ),
         _summary_card(
-            "APE step3 RMSE",
+            "APE EPA SE3 RMSE",
             _lookup(metrics_payload, ("pose_metrics", "ape", "step3", ape_relation, "rmse")),
             "m",
         ),
         _summary_card(
-            "RPE step3 RMSE",
+            "RPE EPA SE3 RMSE",
             _lookup(metrics_payload, ("pose_metrics", "rpe", "step3", rpe_relation, "rmse")),
             "m",
         ),
@@ -245,9 +257,9 @@ def _metric_summary_cards(metrics_payload: dict, *, ape_relation: str, rpe_relat
             _lookup(metrics_payload, ("pose_metrics", "rpe_time_1s", "step3", "translation_part", "rmse")),
             "m",
         ),
-        _summary_card("Step3 mode", _lookup(metrics_payload, ("step3_selection", "step3_alignment_mode"))),
+        _summary_card("EPA SE3 mode", _lookup(metrics_payload, ("step3_selection", "step3_alignment_mode"))),
         _summary_card(
-            "Step3 rejected",
+            "EPA SE3 rejected",
             _lookup(metrics_payload, ("step3_selection", "step3_rejection_ratio")),
             percent=True,
         ),
@@ -396,6 +408,9 @@ def write_interactive_run_html(
     pr_sync: Any,
     pr_corrected: Any,
     pr_final: Any,
+    trajectory_views: dict[str, Any] | None = None,
+    trajectory_view_metrics: dict[str, Any] | None = None,
+    default_trajectory_view: str = "step3",
     timestamps_s: Any | None = None,
     time_alignment: dict[str, Any] | None = None,
     x_dimension: str = "seconds",
@@ -416,6 +431,22 @@ def write_interactive_run_html(
         "step3": _xyz_trace(pr_final, max_points=max_points),
         "step3Err": _error_xyz(pos_gt, pr_final, max_points=max_points),
     }
+    views = {
+        "step3": {"label": "EPA SE3", "pos": pr_final},
+    }
+    for key, view in (trajectory_views or {}).items():
+        if not isinstance(view, dict) or "pos" not in view:
+            continue
+        views[str(key)] = {
+            "label": str(view.get("label", key)),
+            "pos": view["pos"],
+            "meta": dict(view.get("meta", {})) if isinstance(view.get("meta", {}), dict) else {},
+        }
+    for key, view in views.items():
+        if key == "step3":
+            continue
+        trajectory[key] = _xyz_trace(view["pos"], max_points=max_points)
+        trajectory[f"{key}Err"] = _error_xyz(pos_gt, view["pos"], max_points=max_points)
     if debug_outputs:
         trajectory.update(
             {
@@ -430,7 +461,18 @@ def write_interactive_run_html(
     data = {
         "title": str(title or "EPA Interactive Report"),
         "debug": debug_outputs,
+        "defaultTrajectoryView": str(default_trajectory_view or "step3"),
         "trajectory": trajectory,
+        "trajectoryViews": {
+            key: {
+                "label": str(view.get("label", key)),
+                "trace": key,
+                "error": f"{key}Err",
+                "meta": dict(view.get("meta", {})) if isinstance(view.get("meta", {}), dict) else {},
+            }
+            for key, view in views.items()
+        },
+        "trajectoryViewMetrics": dict(trajectory_view_metrics or {}),
         "step3": {
             "mode": str(step3_selection.get("step3_alignment_mode", "")),
             "inliers": int(_finite_or_none(step3_selection.get("step3_inlier_count")) or 0),
@@ -450,6 +492,7 @@ def write_interactive_run_html(
             pr_sync=pr_sync,
             pr_corrected=pr_corrected,
             pr_final=pr_final,
+            extra_traces={str(view.get("label", key)): view["pos"] for key, view in views.items() if key != "step3"},
             debug=debug_outputs,
             max_points=max_points,
         ),
@@ -525,21 +568,40 @@ main{{padding:18px 22px}}
 .panel h2{{font-size:16px;margin:0;line-height:1.25;overflow-wrap:anywhere}}
 .panelClose{{width:26px;height:26px;line-height:20px;font-size:14px;flex:0 0 auto}}
 .plot{{height:560px}} .plot.small{{height:390px}}
-.trajectoryControls{{display:flex;align-items:center;gap:12px;margin:0 0 10px;color:#52606d;font-size:13px}}
+.trajectoryControls{{display:flex;align-items:center;gap:12px;margin:0 0 10px;color:#52606d;font-size:13px;flex-wrap:wrap}}
 .trajectoryControls input{{flex:1;min-width:180px}}
+.trajectoryControls select{{border:1px solid #ccd5e1;border-radius:4px;background:#fff;color:#334155;padding:5px 7px;font-size:13px}}
 .trajectoryControls output{{min-width:48px;text-align:right;font-variant-numeric:tabular-nums}}
-.metricCards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}}
-.metricCard{{border:1px solid #dce3ed;border-radius:6px;padding:10px;background:#fbfcfe;min-width:0;overflow:hidden}}
+.trajectoryModeMeta{{font-size:12px;color:#667085;margin:-4px 0 10px;overflow-wrap:anywhere}}
+.metricCards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}}
+.metricCard{{border:1px solid #dce3ed;border-radius:6px;padding:11px;background:#fbfcfe;min-width:0;overflow:hidden}}
+.metricCard.important{{background:#fff;border-color:#cfd8e5}}
 .metricCard.span2{{grid-column:span 2}}
-.metricLabel{{font-size:12px;color:#667085;margin-bottom:4px}}
-.metricValue{{font-size:16px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.22;overflow-wrap:anywhere;word-break:break-word;white-space:normal;max-width:100%}}
-.metricValue.compact{{font-size:13px;font-weight:600;line-height:1.28}}
-details{{margin-top:12px}} summary{{cursor:pointer;color:#334155;font-weight:600}}
-.detailsGrid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;margin-top:10px}}
+.metricLabel{{font-size:12px;color:#667085;margin-bottom:5px;text-transform:none}}
+.metricValue{{font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.22;overflow-wrap:anywhere;word-break:break-word;white-space:normal;max-width:100%}}
+.metricValue.compact{{font-size:13px;font-weight:600;line-height:1.32}}
+.summaryDetails{{margin-top:12px;border:1px solid #dce3ed;border-radius:6px;background:#fbfcfe;overflow:hidden}}
+.summaryDetails summary{{cursor:pointer;color:#334155;font-weight:650;padding:10px 12px;list-style:none;display:flex;align-items:center;justify-content:space-between;gap:10px}}
+.summaryDetails summary::-webkit-details-marker{{display:none}}
+.summaryDetails summary::after{{content:'+';font-size:16px;color:#64748b}}
+.summaryDetails[open] summary{{border-bottom:1px solid #dce3ed;background:#fff}}
+.summaryDetails[open] summary::after{{content:'-'}}
+.detailBody{{padding:12px}}
+.detailSectionTitle{{font-size:12px;color:#475569;font-weight:700;margin:12px 0 8px}}
+.detailSectionTitle:first-child{{margin-top:0}}
+.detailCards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px}}
+.detailCard{{border:1px solid #e2e8f0;border-radius:6px;background:#fff;padding:8px;min-width:0;overflow:hidden}}
+.detailCard.wide{{grid-column:span 2}}
+.detailLabel{{font-size:11px;color:#667085;margin-bottom:4px}}
+.detailValue{{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.3;overflow-wrap:anywhere;word-break:break-word}}
+.detailsGrid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-top:12px}}
+.detailsBlock{{border:1px solid #e2e8f0;border-radius:6px;background:#fff;overflow:hidden}}
+.detailsBlock h3{{font-size:12px;margin:0;padding:9px 10px;background:#f8fafc;border-bottom:1px solid #e2e8f0;color:#475569}}
 .metricTable{{width:100%;border-collapse:collapse;font-size:12px}}
-.metricTable th,.metricTable td{{padding:5px 6px;border-bottom:1px solid #e6ebf2;text-align:left;vertical-align:top}}
-.metricTable th{{color:#52606d;background:#f5f7fb}}
-.metricTable td:last-child{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}}
+.metricTable th,.metricTable td{{padding:6px 8px;border-bottom:1px solid #edf2f7;text-align:left;vertical-align:top}}
+.metricTable tr:last-child td{{border-bottom:0}}
+.metricTable th{{color:#52606d;background:#fff;font-weight:650}}
+.metricTable td:last-child{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#17202a}}
 .figureLinks{{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}}
 .figureLinks a{{display:inline-block;border:1px solid #dce3ed;border-radius:4px;padding:6px 8px;color:#1d4ed8;text-decoration:none;background:#fbfcfe;font-size:13px}}
 .fallback{{padding:12px;background:#fff3cd;border:1px solid #ffec99;border-radius:6px;display:none}}
@@ -549,7 +611,7 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:#334155;font-weight:600
 <body>
 <header>
 <h1>{data["title"]}</h1>
-<div class="meta"><span>Step3 mode: {data["step3"]["mode"]}</span><span>inliers: {data["step3"]["inliers"]}</span><span>rejected: {data["step3"]["rejected"]}</span></div>
+<div class="meta"><span>EPA SE3 mode: {data["step3"]["mode"]}</span><span>inliers: {data["step3"]["inliers"]}</span><span>rejected: {data["step3"]["rejected"]}</span></div>
 </header>
 <main>
 <div id="plotlyFallback" class="fallback">Plotly did not load. Check network access or use a browser with access to cdn.plot.ly.</div>
@@ -557,11 +619,11 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:#334155;font-weight:600
 <div id="dashboard" class="dashboard">
 <section class="panel span2" data-panel="summary">
   <div class="panelHeader" draggable="true"><h2>Metrics Summary</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="summary">x</button></div>
-  <div id="metricCards" class="metricCards"></div><div id="figureLinks" class="figureLinks"></div><details><summary>Metrics details</summary><div id="metricDetails" class="detailsGrid"></div></details>
+  <div id="metricCards" class="metricCards"></div><div id="figureLinks" class="figureLinks"></div><details class="summaryDetails"><summary>Metrics details</summary><div id="metricDetails" class="detailBody"></div></details>
 </section>
 <section class="panel span2" data-panel="trajectory">
   <div class="panelHeader" draggable="true"><h2>3D Trajectory</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="trajectory">x</button></div>
-  <div class="trajectoryControls"><span>progress</span><input id="trajectoryProgress" type="range" min="2" max="100" value="100"><output id="trajectoryProgressLabel">100%</output></div><div id="trajectory3d" class="plot"></div>
+  <div class="trajectoryControls"><label for="trajectoryMode">view</label><select id="trajectoryMode"></select><label for="trajectoryDragMode">mouse</label><select id="trajectoryDragMode"><option value="orbit">orbit</option><option value="pan">pan</option></select><span>progress</span><input id="trajectoryProgress" type="range" min="2" max="100" value="100"><output id="trajectoryProgressLabel">100%</output></div><div id="trajectoryModeMeta" class="trajectoryModeMeta"></div><div id="trajectory3d" class="plot"></div>
 </section>
 <section class="panel span2" data-panel="speed">
   <div class="panelHeader" draggable="true"><h2>Linear Velocity</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="speed">x</button></div>
@@ -596,7 +658,7 @@ details{{margin-top:12px}} summary{{cursor:pointer;color:#334155;font-weight:600
 <script id="epaInteractiveData" type="application/json">{payload_json}</script>
 <script>
 const payload = JSON.parse(document.getElementById('epaInteractiveData').textContent);
-const config = {{responsive:true, scrollZoom:false, displaylogo:false}};
+const config = {{responsive:true, scrollZoom:true, displaylogo:false, modeBarButtonsToAdd:['pan2d','zoom2d','resetScale2d'], modeBarButtonsToRemove:['lasso2d','select2d']}};
 const defaultPanelOrder = ['summary','trajectory','speed','ape','apeDistribution','rpe1s','rpe1sDistribution','rpe','rpeDistribution'].concat(payload.debug ? ['timeSignals','timeCorrelation'] : []);
 function layout(title, xTitle, yTitle) {{
   return {{title, margin:{{l:58,r:20,t:42,b:52}}, hovermode:'closest', dragmode:'pan', xaxis:{{title:xTitle}}, yaxis:{{title:yTitle}}, legend:{{orientation:'h'}}}};
@@ -613,14 +675,21 @@ function sliceArray(values, pct) {{
   const keep = Math.max(2, Math.ceil(values.length * pct / 100));
   return values.slice(0, keep);
 }}
+function activeTrajectoryView() {{
+  const selector = document.getElementById('trajectoryMode');
+  const key = selector && selector.value ? selector.value : 'step3';
+  return payload.trajectoryViews[key] || payload.trajectoryViews.step3;
+}}
 function trajectoryTraces(pct) {{
   const tr = payload.trajectory;
+  const view = activeTrajectoryView();
   const gt = sliceTrace(tr.gt, pct);
-  const step3 = sliceTrace(tr.step3, pct);
+  const selected = sliceTrace(tr[view.trace], pct);
+  const err = tr[view.error] || [];
   const traces = [
     line3d('ground truth', gt, '#20242a', true),
-    {{type:'scatter3d', mode:'lines', name:'step3', x:step3.x, y:step3.y, z:step3.z,
-      line:{{color:sliceArray(tr.step3Err, pct), colorscale:'Jet', width:6, colorbar:{{title:'err m'}}}}}}
+    {{type:'scatter3d', mode:'lines', name:view.label, x:selected.x, y:selected.y, z:selected.z,
+      line:{{color:sliceArray(err, pct), colorscale:'Jet', width:6, colorbar:{{title:'err m'}}}}}}
   ];
   if (tr.raw && tr.step2) {{
     traces.splice(1, 0,
@@ -629,6 +698,162 @@ function trajectoryTraces(pct) {{
     );
   }}
   return traces;
+}}
+function trajectoryModeMetaText() {{
+  const view = activeTrajectoryView();
+  const meta = view.meta || {{}};
+  const parts = [];
+  if (meta.align_scale !== undefined && meta.align_scale !== null) parts.push(`scale=${{Number(meta.align_scale).toPrecision(6)}}`);
+  if (meta.solver) parts.push(`solver=${{meta.solver}}`);
+  if (meta.anchor_samples) parts.push(`anchor=${{meta.anchor_samples}} samples`);
+  return parts.join(' · ');
+}}
+function scalarText(value, unit, percent) {{
+  if (typeof value === 'boolean') return value ? 'true' : 'false';
+  if (value === undefined || value === null || value === '') return 'N/A';
+  if (typeof value === 'string') {{
+    const trimmed = value.trim();
+    if (!trimmed) return 'N/A';
+    const numeric = Number(trimmed);
+    if (Number.isNaN(numeric)) return trimmed;
+  }}
+  const v = Number(value);
+  if (!Number.isFinite(v)) return 'N/A';
+  if (percent) return `${{(v * 100).toFixed(2)}}%`;
+  let text = (Math.abs(v) >= 1000 || (Math.abs(v) > 0 && Math.abs(v) < 0.001)) ? v.toExponential(3) : v.toPrecision(6).replace(/\\.0+$/,'');
+  return unit ? `${{text}} ${{unit}}` : text;
+}}
+function card(label, value, unit, percent) {{
+  return {{label, value: scalarText(value, unit || '', Boolean(percent))}};
+}}
+function displayText(value) {{
+  return String(value ?? '')
+    .replace(new RegExp('3' + '-step', 'g'), 'EPA SE3')
+    .replace(/Step-3/g, 'EPA SE3')
+    .replace(/Step3/g, 'EPA SE3')
+    .replace(/step3/g, 'EPA SE3');
+}}
+function staticMetricValue(label) {{
+  const item = (payload.metricSummary || []).find(card => card.label === label);
+  return item ? item.value : '';
+}}
+function meaningful(item) {{
+  const value = item && item.value !== undefined && item.value !== null ? String(item.value).trim() : '';
+  return value !== '' && value !== 'N/A';
+}}
+function compactCard(label, value, unit, percent) {{
+  return card(label, value, unit, percent);
+}}
+function currentMetricBlocks() {{
+  const view = activeTrajectoryView();
+  const metrics = payload.trajectoryViewMetrics[document.getElementById('trajectoryMode')?.value || 'step3'] || {{}};
+  const isSim3 = (view.label || '').toLowerCase().includes('sim3') || String(metrics.sim3_solver || '').toLowerCase().includes('sim3');
+  const summary = [
+    compactCard('view', view.label),
+    compactCard('diagnosis', staticMetricValue('diagnosis')),
+    compactCard('case status', metrics.case_status),
+    compactCard('SR distance', metrics.sr_distance, '', true),
+    compactCard('APE RMSE', metrics.ape_trans_rmse_m, 'm'),
+    compactCard('1s RPE RMSE', metrics.rpe_time_1s_trans_rmse_m, 'm'),
+    compactCard('global gate', metrics.global_gate_failed ? `fail ${{scalarText(metrics.global_gate_value_m, 'm')}}` : `pass ${{scalarText(metrics.global_gate_value_m, 'm')}}`),
+    compactCard('SR reliability', metrics.sr_reliability_status),
+  ];
+  if (isSim3) {{
+    summary.push(compactCard('Sim3 reliable', metrics.sim3_reliable));
+    summary.push(compactCard('scale', metrics.sim3_scale ?? metrics.align_scale));
+  }} else if (metrics.align_scale !== undefined && metrics.align_scale !== null) {{
+    summary.push(compactCard('scale', metrics.align_scale));
+  }}
+  const detailSections = [
+    {{
+      title: 'Status',
+      cards: [
+        compactCard('view', view.label),
+        compactCard('diagnosis', staticMetricValue('diagnosis')),
+        compactCard('diagnosis summary', staticMetricValue('diagnosis tags')),
+        compactCard('case status', metrics.case_status),
+        compactCard('quality', staticMetricValue('quality')),
+        compactCard('orientation unstable', staticMetricValue('orientation')),
+        compactCard('SR reliability', metrics.sr_reliability_status),
+        compactCard('SR explanation', metrics.sr_warning_explanation),
+      ],
+    }},
+    {{
+      title: 'SR Definition',
+      cards: [
+        compactCard('SR', 'local SR shown in the summary; computed on valid segments after drift/jump filtering'),
+        compactCard('raw SR', 'computed directly over the full trajectory before valid-segment filtering'),
+        compactCard('gated SR', 'local SR after reliability audit; unreliable runs are marked down'),
+      ],
+    }},
+    {{
+      title: 'Successful Rate',
+      cards: [
+        compactCard('SR distance', metrics.sr_distance, '', true),
+        compactCard('raw SR distance', metrics.raw_sr_distance, '', true),
+        compactCard('gated SR distance', metrics.gated_sr_distance, '', true),
+        compactCard('SR time', metrics.sr_time, '', true),
+        compactCard('raw SR time', metrics.raw_sr_time, '', true),
+        compactCard('gated SR time', metrics.gated_sr_time, '', true),
+        compactCard('valid distance', `${{scalarText(metrics.valid_distance_m, 'm')}} / ${{scalarText(metrics.total_distance_m, 'm')}}`),
+        compactCard('APE threshold', metrics.threshold_m, 'm'),
+      ],
+    }},
+    {{
+      title: 'Error Metrics',
+      cards: [
+        compactCard('APE trans RMSE', metrics.ape_trans_rmse_m, 'm'),
+        compactCard('APE rot RMSE', metrics.ape_rot_rmse_deg, 'deg'),
+        compactCard('RPE trans RMSE', metrics.rpe_trans_rmse_m, 'm'),
+        compactCard('RPE rot RMSE', metrics.rpe_rot_rmse_deg, 'deg'),
+        compactCard('1s RPE trans RMSE', metrics.rpe_time_1s_trans_rmse_m, 'm'),
+        compactCard('1s RPE rot RMSE', metrics.rpe_time_1s_rot_rmse_deg, 'deg'),
+      ],
+    }},
+    {{
+      title: 'Alignment Gates',
+      cards: [
+        compactCard('EPA SE3 mode', staticMetricValue('EPA SE3 mode')),
+        compactCard('EPA SE3 rejected', staticMetricValue('EPA SE3 rejected')),
+        compactCard('global gate', metrics.global_gate_failed),
+        compactCard('gate value', metrics.global_gate_value_m, 'm'),
+        compactCard('scale', metrics.sim3_scale ?? metrics.align_scale),
+        compactCard('drift mode', metrics.drift_threshold_mode),
+        compactCard('drift RPE 1s', metrics.drift_rpe_1s_m, 'm'),
+        compactCard('drift jump', metrics.drift_ape_jump_m, 'm'),
+      ],
+    }},
+  ];
+  if (isSim3) {{
+    detailSections.push({{
+      title: 'Sim3 Audit',
+      cards: [
+        compactCard('solver', metrics.sim3_solver || view.meta?.solver || ''),
+        compactCard('anchor status', metrics.sim3_anchor_status || view.meta?.anchor_status || ''),
+        compactCard('anchor samples', metrics.sim3_anchor_samples || view.meta?.anchor_samples || ''),
+        compactCard('confidence', metrics.sim3_confidence || view.meta?.confidence || ''),
+        compactCard('consensus', metrics.sim3_consensus_count || view.meta?.consensus_count || ''),
+        compactCard('reliable anchors', metrics.sim3_candidate_reliable_count || view.meta?.candidate_reliable_count || ''),
+        compactCard('anchor reliable', metrics.sim3_anchor_reliable),
+        compactCard('full traj status', metrics.sim3_full_trajectory_status),
+        compactCard('masking risk', metrics.sim3_may_mask_failure),
+        compactCard('failure reason', metrics.sim3_failure_reason),
+        compactCard('audit tags', metrics.sim3_audit_tags),
+        compactCard('Sim3 reliable', metrics.sim3_reliable),
+      ],
+    }});
+  }}
+  return {{
+    summary: summary.filter(meaningful),
+    detailSections: detailSections.map(section => ({{title: section.title, cards: section.cards.filter(meaningful)}})).filter(section => section.cards.length > 0),
+  }};
+}}
+function currentMetricSummary() {{
+  return currentMetricBlocks().summary;
+}}
+function activeTrajectoryDragMode() {{
+  const selector = document.getElementById('trajectoryDragMode');
+  return selector && selector.value ? selector.value : 'orbit';
 }}
 function currentTrajectoryCamera() {{
   const plot = document.getElementById('trajectory3d');
@@ -644,7 +869,7 @@ function trajectoryLayout(camera) {{
     margin:{{l:0,r:0,t:36,b:0}},
     scene,
     legend:{{orientation:'h'}},
-    dragmode:'orbit',
+    dragmode: activeTrajectoryDragMode(),
     uirevision:'trajectory-camera'
   }};
 }}
@@ -704,21 +929,29 @@ function setupDashboard() {{
   }});
 }}
 function renderMetrics() {{
+  const blocks = currentMetricBlocks();
   const cards = document.getElementById('metricCards');
-  cards.innerHTML = payload.metricSummary.map(item => `
-    <div class="metricCard${{String(item.value).length > 28 ? ' span2' : ''}}"><div class="metricLabel">${{item.label}}</div><div class="metricValue${{String(item.value).length > 28 ? ' compact' : ''}}">${{item.value}}</div></div>
+  cards.innerHTML = blocks.summary.map(item => `
+    <div class="metricCard important${{String(item.value).length > 28 ? ' span2' : ''}}"><div class="metricLabel">${{item.label}}</div><div class="metricValue${{String(item.value).length > 28 ? ' compact' : ''}}">${{item.value}}</div></div>
   `).join('');
   const figureLinks = document.getElementById('figureLinks');
   figureLinks.innerHTML = payload.figureLinks.map(item => `<a href="${{item.href}}">${{item.label}}</a>`).join('');
   const details = document.getElementById('metricDetails');
-  details.innerHTML = payload.metricDetails.map(section => `
-    <div>
-      <h3>${{section.name}}</h3>
+  const grouped = blocks.detailSections.map(section => `
+    <div class="detailSectionTitle">${{section.title}}</div>
+    <div class="detailCards">
+      ${{section.cards.map(item => `<div class="detailCard${{String(item.value).length > 36 ? ' wide' : ''}}"><div class="detailLabel">${{item.label}}</div><div class="detailValue">${{item.value}}</div></div>`).join('')}}
+    </div>
+  `).join('');
+  const rawDetails = payload.metricDetails.map(section => `
+    <div class="detailsBlock">
+      <h3>${{displayText(section.name)}}</h3>
       <table class="metricTable"><thead><tr><th>metric</th><th>value</th></tr></thead><tbody>
-      ${{section.rows.map(row => `<tr><td>${{row.metric}}</td><td>${{row.value}}</td></tr>`).join('')}}
+      ${{section.rows.map(row => `<tr><td>${{displayText(row.metric)}}</td><td>${{displayText(row.value)}}</td></tr>`).join('')}}
       </tbody></table>
     </div>
   `).join('');
+  details.innerHTML = `${{grouped}}<div class="detailSectionTitle">Raw Metric Blocks</div><div class="detailsGrid">${{rawDetails}}</div>`;
 }}
 function renderPlot(id, traces, plotLayout) {{
   const el = document.getElementById(id);
@@ -731,16 +964,29 @@ function render() {{
     return;
   }}
   setupDashboard();
-  renderMetrics();
-  renderPlot('trajectory3d', trajectoryTraces(100), trajectoryLayout(null));
+  const modeSelector = document.getElementById('trajectoryMode');
+  modeSelector.innerHTML = Object.entries(payload.trajectoryViews).map(([key, view]) => `<option value="${{key}}">${{view.label}}</option>`).join('');
+  if (payload.defaultTrajectoryView && payload.trajectoryViews[payload.defaultTrajectoryView]) {{
+    modeSelector.value = payload.defaultTrajectoryView;
+  }}
+  const dragModeSelector = document.getElementById('trajectoryDragMode');
+  const modeMeta = document.getElementById('trajectoryModeMeta');
   const progress = document.getElementById('trajectoryProgress');
   const progressLabel = document.getElementById('trajectoryProgressLabel');
-  progress.addEventListener('input', () => {{
+  function refreshTrajectory() {{
     const pct = Number(progress.value);
     const camera = currentTrajectoryCamera();
     progressLabel.textContent = `${{pct}}%`;
+    modeMeta.textContent = trajectoryModeMetaText();
+    renderMetrics();
     Plotly.react('trajectory3d', trajectoryTraces(pct), trajectoryLayout(camera), config);
-  }});
+  }}
+  renderMetrics();
+  renderPlot('trajectory3d', trajectoryTraces(Number(progress.value)), trajectoryLayout(null));
+  modeMeta.textContent = trajectoryModeMetaText();
+  progress.addEventListener('input', refreshTrajectory);
+  modeSelector.addEventListener('change', refreshTrajectory);
+  dragModeSelector.addEventListener('change', refreshTrajectory);
 
   const speedTraces = payload.speed.traces.map(t => ({{type:'scattergl', mode:'lines', name:t.label, x:t.x, y:t.y}}));
   renderPlot('linearVelocity', speedTraces, layout(payload.speed.title, payload.speed.xLabel, payload.speed.yLabel));
@@ -756,9 +1002,9 @@ function render() {{
   renderPlot('timeCorrelation', corrTraces, layout('Cross-correlation vs lag', 'lag (s)', 'correlation'));
 
   payload.metrics.forEach((metric, idx) => {{
-    const traces = metric.traces.map(t => ({{type:'scattergl', mode:'lines', name:t.stage, x:t.x, y:t.y}}));
+    const traces = metric.traces.map(t => ({{type:'scattergl', mode:'lines', name:displayText(t.stage), x:t.x, y:t.y}}));
     renderPlot(`metric${{idx}}`, traces, layout(metric.title, metric.xLabel, metric.yLabel));
-    const boxes = metric.boxes.map(t => ({{type:'box', name:t.stage, y:t.y, boxpoints:false}}));
+    const boxes = metric.boxes.map(t => ({{type:'box', name:displayText(t.stage), y:t.y, boxpoints:false}}));
     renderPlot(`metricBox${{idx}}`, boxes, layout(`${{metric.title}} distribution`, 'stage', metric.yLabel));
   }});
 }}

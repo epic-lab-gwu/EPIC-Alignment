@@ -236,6 +236,28 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
         pr_sync=pos_gt + 1.0,
         pr_corrected=pos_gt + 0.5,
         pr_final=pos_gt + 0.1,
+        trajectory_views={
+            "ov_sim3": {"label": "OV Sim3", "pos": pos_gt + 0.2, "meta": {"align_scale": 1.0}},
+            "epa_sim3": {
+                "label": "EPA Sim3",
+                "pos": pos_gt + 0.4,
+                "meta": {"align_scale": 1.0, "solver": "epa_sim3_v2", "anchor_samples": 2, "anchor_status": "ok", "confidence": "high"},
+            },
+        },
+        trajectory_view_metrics={
+            "step3": {"sr_distance": 0.5, "ape_trans_rmse_m": 1.2, "case_status": "step3_status"},
+            "ov_sim3": {"sr_distance": 0.75, "ape_trans_rmse_m": 0.8, "case_status": "ov_status"},
+            "epa_sim3": {
+                "sr_distance": 0.35,
+                "ape_trans_rmse_m": 2.4,
+                "case_status": "epa_status",
+                "sim3_anchor_status": "ok",
+                "sim3_confidence": "high",
+                "sim3_consensus_count": 3,
+                "sim3_candidate_reliable_count": 5,
+                "sim3_reliable": True,
+            },
+        },
         time_alignment={
             "t_uniform": np.array([0.0, 1.0]),
             "sig_gt": np.array([1.0, 2.0]),
@@ -249,6 +271,11 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
     text = out.read_text(encoding="utf-8")
     assert "renderPlot('trajectory3d'" in text
     assert "trajectoryProgress" in text
+    assert "trajectoryMode" in text
+    assert "trajectoryDragMode" in text
+    assert "trajectoryViews" in text
+    assert "trajectoryViewMetrics" in text
+    assert "currentMetricSummary" in text
     assert "trajectoryTraces(pct)" in text
     assert "currentTrajectoryCamera" in text
     assert "trajectoryLayout(camera)" in text
@@ -264,18 +291,33 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
     assert "setupDashboard" in text
     assert "resetLayout" in text
     assert "data-close-panel" in text
-    assert "scrollZoom:false" in text
+    assert "scrollZoom:true" in text
     assert "dragmode:'pan'" in text
+    assert "activeTrajectoryDragMode" in text
     assert "scatter3d" in text
     assert "scattergl" in text
     assert "epaInteractiveData" in text
-    assert "NaN" not in text
     embedded = _extract_interactive_payload(text)
+    assert "NaN" not in json.dumps(embedded)
     assert all([trace["stage"] for trace in metric["traces"]] == ["step3"] for metric in embedded["metrics"])
     assert "raw" not in embedded["trajectory"]
     assert "step2" not in embedded["trajectory"]
+    assert "ov_sim3" in embedded["trajectory"]
+    assert "epa_sim3" in embedded["trajectory"]
+    assert [embedded["trajectoryViews"][key]["label"] for key in ["step3", "ov_sim3", "epa_sim3"]] == [
+        "EPA SE3",
+        "OV Sim3",
+        "EPA Sim3",
+    ]
+    assert embedded["trajectoryViewMetrics"]["ov_sim3"]["case_status"] == "ov_status"
+    assert embedded["trajectoryViewMetrics"]["epa_sim3"]["sim3_confidence"] == "high"
     assert embedded["speed"]["title"] == "Linear velocity"
-    assert [trace["label"] for trace in embedded["speed"]["traces"]] == ["ground truth", "step3"]
+    assert [trace["label"] for trace in embedded["speed"]["traces"]] == [
+        "ground truth",
+        "EPA SE3",
+        "OV Sim3",
+        "EPA Sim3",
+    ]
 
 
 def test_write_interactive_run_html_debug_keeps_metric_stages(tmp_path: Path) -> None:
@@ -325,7 +367,7 @@ def test_write_interactive_run_html_debug_keeps_metric_stages(tmp_path: Path) ->
     assert "Step 1 Correlation" in text
     assert "raw" in embedded["trajectory"]
     assert "step2" in embedded["trajectory"]
-    assert [trace["label"] for trace in embedded["speed"]["traces"]] == ["ground truth", "step3", "raw", "step2"]
+    assert [trace["label"] for trace in embedded["speed"]["traces"]] == ["ground truth", "EPA SE3", "raw", "step2"]
     assert all(
         [trace["stage"] for trace in metric["traces"]] == ["raw", "step2", "step3"]
         for metric in embedded["metrics"]

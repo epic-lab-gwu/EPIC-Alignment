@@ -239,6 +239,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--success-drift-threshold-mode",
+        choices=["adaptive", "fixed"],
+        default="adaptive",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--success-drift-rpe-1s-m",
         type=float,
         default=2.0,
@@ -282,7 +288,25 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--eval-align",
-        choices=["none", "se3", "sim3", "scale", "origin"],
+        choices=[
+            "none",
+            "epa_step3",
+            "se3",
+            "epa_se3",
+            "epa_se3_eval",
+            "posyaw",
+            "epa_posyaw",
+            "sim3",
+            "epica_sim3",
+            "epica_sim3_joint",
+            "epica_sim3_trimmed",
+            "epa_sim3",
+            "epa_sim3_v1",
+            "epa_sim3_v2",
+            "epica_anchor_sim3",
+            "scale",
+            "origin",
+        ],
         default="none",
         help=argparse.SUPPRESS,
     )

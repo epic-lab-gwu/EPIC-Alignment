@@ -12,6 +12,7 @@ from epa.core.evaluation import (
     compute_valid_segment_metrics,
     estimate_knee_threshold,
     normalize_pose_relation,
+    resolve_drift_thresholds,
     resolve_success_threshold,
 )
 
@@ -308,6 +309,7 @@ def test_compute_valid_segment_metrics_filters_ape_and_rpe_pairs() -> None:
         rpe_block=rpe,
         rpe_time_1s_block=rpe_time,
         threshold_m=10.0,
+        drift_threshold_mode="fixed",
         drift_rpe_1s_m=2.0,
         drift_ape_slope_mps=1.0,
         drift_ape_jump_m=5.0,
@@ -315,9 +317,59 @@ def test_compute_valid_segment_metrics_filters_ape_and_rpe_pairs() -> None:
     )
 
     np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.2)
+    np.testing.assert_allclose(metrics["success"]["raw_success_rate_distance"], 0.4)
+    np.testing.assert_allclose(metrics["success"]["local_success_rate_distance"], 0.2)
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance_reliability_gated"], 0.2)
+    assert metrics["success"]["sr_reliability_status"] == "ok"
     assert metrics["ape"]["translation_part"]["rmse"] == 0.0
     assert metrics["rpe"]["pair_count"] == 1
     assert metrics["rpe_time_1s"]["pair_count"] == 1
+
+
+def test_resolve_drift_thresholds_adapts_to_case_scale() -> None:
+    slow_t = np.arange(20, dtype=float)
+    slow_pos = np.column_stack([0.05 * slow_t, np.zeros_like(slow_t), np.zeros_like(slow_t)])
+    fast_t = np.arange(20, dtype=float)
+    fast_pos = np.column_stack([5.0 * fast_t, np.zeros_like(fast_t), np.zeros_like(fast_t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (slow_t.size, 1))
+    slow_rpe = compute_rpe(slow_pos, quat, slow_pos, quat, delta=1.0, delta_unit="s", timestamps=slow_t, all_pairs=True)
+    fast_rpe = compute_rpe(fast_pos, quat, fast_pos, quat, delta=1.0, delta_unit="s", timestamps=fast_t, all_pairs=True)
+
+    slow = resolve_drift_thresholds(slow_t, slow_pos, slow_rpe)
+    fast = resolve_drift_thresholds(fast_t, fast_pos, fast_rpe)
+
+    assert slow["mode"] == "adaptive"
+    assert fast["mode"] == "adaptive"
+    assert slow["rpe_1s_m"] < fast["rpe_1s_m"]
+    assert slow["ape_jump_m"] < fast["ape_jump_m"]
+
+
+def test_compute_valid_segment_metrics_uses_adaptive_ape_threshold() -> None:
+    t = np.arange(6, dtype=float)
+    pos_ref = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    pos_est = pos_ref.copy()
+    pos_est[3:, 1] = 3.0
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+
+    ape = compute_ape(pos_ref, quat, pos_est, quat, include_raw=True)
+    rpe = compute_rpe(pos_ref, quat, pos_est, quat, delta=1, delta_unit="f", include_raw=True)
+    rpe_time = compute_rpe(pos_ref, quat, pos_est, quat, delta=1.0, delta_unit="s", timestamps=t, all_pairs=True, include_raw=True)
+
+    metrics = compute_valid_segment_metrics(
+        timestamps=t,
+        pos_ref=pos_ref,
+        ape_block=ape,
+        rpe_block=rpe,
+        rpe_time_1s_block=rpe_time,
+        threshold_m=1.0,
+        global_gate_m=100.0,
+        drift_threshold_mode="adaptive",
+        include_raw=True,
+    )
+
+    assert metrics["success"]["drift_threshold_mode"] == "adaptive"
+    assert metrics["success"]["drift_threshold_info"]["ref_path_length_m"] == 5.0
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.2)
 
 
 def test_compute_valid_segment_metrics_drops_isolated_valid_samples() -> None:
@@ -356,7 +408,7 @@ def test_compute_valid_segment_metrics_drops_isolated_valid_samples() -> None:
     np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.0)
 
 
-def test_compute_valid_segment_metrics_does_not_fail_stable_bias_as_drift() -> None:
+def test_compute_valid_segment_metrics_fails_stable_bias_above_ape_threshold() -> None:
     t = np.arange(6, dtype=float)
     pos_ref = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
     pos_est = pos_ref.copy()
@@ -388,9 +440,10 @@ def test_compute_valid_segment_metrics_does_not_fail_stable_bias_as_drift() -> N
         include_raw=True,
     )
 
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 1.0)
-    np.testing.assert_allclose(metrics["ape"]["translation_part"]["rmse"], 6.0)
-    np.testing.assert_allclose(metrics["rpe_time_1s"]["translation_part"]["rmse"], 0.0)
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.0)
+    assert metrics["success"]["global_gate_failed"] is False
+    np.testing.assert_allclose(metrics["ape"]["translation_part"]["rmse"], np.nan)
+    np.testing.assert_allclose(metrics["rpe_time_1s"]["translation_part"]["rmse"], np.nan)
 
 
 def test_compute_valid_segment_metrics_invalidates_full_bad_time_rpe_interval() -> None:

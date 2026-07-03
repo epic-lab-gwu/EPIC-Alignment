@@ -361,6 +361,24 @@ def test_write_run_reports_includes_sim3_alignment_warning(tmp_path: Path) -> No
                     "sim3_warning": "Sim3 estimated scale is outside the reliable range.",
                 },
             },
+            "pose_metrics": {
+                "valid_segment": {
+                    "step3": {
+                        "success": {
+                            "raw_success_rate_distance": 0.95,
+                            "success_rate_distance": 0.9,
+                            "success_rate_distance_reliability_gated": 0.0,
+                            "raw_success_rate_time": 0.96,
+                            "success_rate_time": 0.91,
+                            "success_rate_time_reliability_gated": 0.0,
+                            "sr_reliability_status": "failed",
+                            "sim3_may_mask_failure": True,
+                            "sr_warning_explanation": "Sim3 may be masking a real trajectory failure.",
+                            "sr_reliability_hard_reasons": ["sim3_may_mask_failure"],
+                        }
+                    }
+                }
+            },
         },
     )
 
@@ -369,6 +387,9 @@ def test_write_run_reports_includes_sim3_alignment_warning(tmp_path: Path) -> No
     assert "Sim3 scale: `0.010000`" in report
     assert "Reliable: `false`" in report
     assert "outside the reliable range" in report
+    assert "## Successful Rate Reliability" in report
+    assert "SR distance raw / local / reliability-gated: `95.000000%` / `90.000000%` / `0.000000%`" in report
+    assert "Sim3 may mask failure: `true`" in report
 
 
 def test_write_run_reports_includes_orientation_warning(tmp_path: Path) -> None:

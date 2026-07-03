@@ -571,6 +571,13 @@ def compute_path_length(pos_ref) -> float:
     return float(np.sum(np.linalg.norm(np.diff(pos, axis=0), axis=1)))
 
 
+def _bbox_diag(pos_ref) -> float:
+    pos = np.asarray(pos_ref, dtype=float)
+    if pos.ndim != 2 or pos.shape[0] == 0:
+        return 0.0
+    return float(np.linalg.norm(np.max(pos, axis=0) - np.min(pos, axis=0)))
+
+
 def resolve_global_gate(
     pos_ref,
     *,
@@ -625,12 +632,110 @@ def _sample_mask_from_pair_mask(n, pair_ids, pair_mask):
     return sample_mask
 
 
+def _finite_percentile(values, percentile: float, default: float = 0.0) -> float:
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return float(default)
+    return float(np.percentile(finite, float(percentile)))
+
+
+def resolve_drift_thresholds(
+    timestamps,
+    pos_ref,
+    rpe_time_1s_block=None,
+    *,
+    mode="adaptive",
+    fixed_rpe_1s_m=2.0,
+    fixed_ape_slope_mps=1.0,
+    fixed_ape_jump_m=5.0,
+):
+    """Resolve local drift thresholds from the reference trajectory scale.
+
+    The fixed values are kept as fallbacks for reproducibility. In adaptive
+    mode, thresholds are derived from the case's reference 1s motion, spatial
+    extent, path length, and speed distribution.
+    """
+
+    mode_norm = str(mode).lower()
+    if mode_norm == "fixed":
+        return {
+            "mode": "fixed",
+            "rpe_1s_m": float(fixed_rpe_1s_m),
+            "ape_slope_mps": float(fixed_ape_slope_mps),
+            "ape_jump_m": float(fixed_ape_jump_m),
+        }
+    if mode_norm not in {"adaptive", "case_adaptive", "case-aware", "case_aware"}:
+        raise ValueError(f"Unsupported drift threshold mode: {mode}")
+
+    t = np.asarray(timestamps, dtype=float).reshape(-1)
+    pos = np.asarray(pos_ref, dtype=float)
+    n = min(t.size, pos.shape[0])
+    if n < 2:
+        return {
+            "mode": "adaptive",
+            "rpe_1s_m": float(fixed_rpe_1s_m),
+            "ape_slope_mps": float(fixed_ape_slope_mps),
+            "ape_jump_m": float(fixed_ape_jump_m),
+            "fallback": True,
+        }
+    t = t[:n]
+    pos = pos[:n]
+    seg_dist = np.linalg.norm(np.diff(pos, axis=0), axis=1)
+    seg_dt = np.diff(t)
+    positive = seg_dt > 0.0
+    speeds = np.divide(seg_dist, seg_dt, out=np.full_like(seg_dist, np.nan), where=positive)
+    path_length = float(np.sum(seg_dist))
+    duration = float(np.sum(np.where(positive, seg_dt, 0.0)))
+    bbox_diag = _bbox_diag(pos)
+    median_speed = _finite_percentile(speeds, 50.0, default=path_length / max(duration, 1e-9))
+    p95_speed = _finite_percentile(speeds, 95.0, default=median_speed)
+
+    ref_1s_motion = []
+    if isinstance(rpe_time_1s_block, dict):
+        pair_ids = np.asarray(rpe_time_1s_block.get("_pair_ids", np.empty((0, 2), dtype=int)), dtype=int)
+        if pair_ids.size > 0:
+            pair_ids = pair_ids.reshape(-1, 2)
+            valid = (pair_ids[:, 0] >= 0) & (pair_ids[:, 1] >= 0) & (pair_ids[:, 0] < n) & (pair_ids[:, 1] < n)
+            if np.any(valid):
+                ids = pair_ids[valid]
+                ref_1s_motion = np.linalg.norm(pos[ids[:, 1]] - pos[ids[:, 0]], axis=1)
+    ref_1s_p90 = _finite_percentile(ref_1s_motion, 90.0, default=median_speed)
+
+    spatial_floor = max(0.03 * bbox_diag, 0.003 * path_length, 0.05)
+    rpe_1s_m = max(2.0 * ref_1s_p90, spatial_floor)
+    rpe_1s_m = float(np.clip(rpe_1s_m, 0.05, max(float(fixed_rpe_1s_m), 2.0 * ref_1s_p90, 0.05 * path_length, 0.10)))
+
+    ape_jump_m = max(2.5 * rpe_1s_m, 0.05 * bbox_diag, 0.005 * path_length, 0.10)
+    ape_jump_m = float(np.clip(ape_jump_m, 0.10, max(float(fixed_ape_jump_m), 0.10 * path_length, 0.25)))
+
+    ape_slope_mps = max(0.50 * rpe_1s_m, 0.25 * median_speed, 0.05)
+    ape_slope_mps = float(np.clip(ape_slope_mps, 0.05, max(float(fixed_ape_slope_mps), 0.50 * p95_speed, 0.10)))
+
+    return {
+        "mode": "adaptive",
+        "rpe_1s_m": rpe_1s_m,
+        "ape_slope_mps": ape_slope_mps,
+        "ape_jump_m": ape_jump_m,
+        "fixed_rpe_1s_m": float(fixed_rpe_1s_m),
+        "fixed_ape_slope_mps": float(fixed_ape_slope_mps),
+        "fixed_ape_jump_m": float(fixed_ape_jump_m),
+        "ref_path_length_m": path_length,
+        "ref_duration_s": duration,
+        "ref_bbox_diag_m": float(bbox_diag),
+        "ref_1s_motion_p90_m": float(ref_1s_p90),
+        "ref_speed_median_mps": float(median_speed),
+        "ref_speed_p95_mps": float(p95_speed),
+    }
+
+
 def compute_drift_regions(
     timestamps,
     pos_ref,
     ape_translation_errors,
     rpe_time_1s_block,
     *,
+    ape_threshold_m=None,
     drift_rpe_1s_m=2.0,
     drift_ape_slope_mps=1.0,
     drift_ape_jump_m=5.0,
@@ -646,6 +751,8 @@ def compute_drift_regions(
     pos = pos[:n]
     ape = ape[:n]
     valid_sample = np.isfinite(ape)
+    if ape_threshold_m is not None and np.isfinite(float(ape_threshold_m)) and float(ape_threshold_m) > 0.0:
+        valid_sample &= ape <= float(ape_threshold_m)
 
     pair_ids = np.asarray(rpe_time_1s_block.get("_pair_ids", np.empty((0, 2), dtype=int)), dtype=int)
     rpe_1s = np.asarray(
@@ -795,6 +902,7 @@ def compute_valid_segment_metrics(
     drift_rpe_1s_m=2.0,
     drift_ape_slope_mps=1.0,
     drift_ape_jump_m=5.0,
+    drift_threshold_mode="adaptive",
     include_raw=True,
     include_masks=False,
 ):
@@ -810,14 +918,30 @@ def compute_valid_segment_metrics(
         max_m=float(global_gate_max_m),
     )
     global_gate_failed = bool(not np.isfinite(gate_value) or gate_value > float(effective_gate_m))
+    drift_thresholds = resolve_drift_thresholds(
+        timestamps,
+        pos_ref,
+        rpe_time_1s_block,
+        mode=drift_threshold_mode,
+        fixed_rpe_1s_m=float(drift_rpe_1s_m),
+        fixed_ape_slope_mps=float(drift_ape_slope_mps),
+        fixed_ape_jump_m=float(drift_ape_jump_m),
+    )
+    raw_regions = compute_success_regions(
+        timestamps=timestamps,
+        pos_ref=pos_ref,
+        ape_translation_errors=ape_errors,
+        threshold_m=float(threshold_m),
+    )
     regions = compute_drift_regions(
         timestamps=timestamps,
         pos_ref=pos_ref,
         ape_translation_errors=ape_errors,
         rpe_time_1s_block=rpe_time_1s_block,
-        drift_rpe_1s_m=float(drift_rpe_1s_m),
-        drift_ape_slope_mps=float(drift_ape_slope_mps),
-        drift_ape_jump_m=float(drift_ape_jump_m),
+        ape_threshold_m=float(threshold_m),
+        drift_rpe_1s_m=float(drift_thresholds["rpe_1s_m"]),
+        drift_ape_slope_mps=float(drift_thresholds["ape_slope_mps"]),
+        drift_ape_jump_m=float(drift_thresholds["ape_jump_m"]),
     )
     valid_sample = np.asarray(regions["valid_sample_mask"], dtype=bool)
     valid_segment = np.asarray(regions["valid_segment_mask"], dtype=bool)
@@ -847,9 +971,21 @@ def compute_valid_segment_metrics(
         success["global_gate_warning"] = (
             "global gate failed; success rate and valid metrics are computed from local valid segments"
         )
-    success["drift_rpe_1s_m"] = float(drift_rpe_1s_m)
-    success["drift_ape_slope_mps"] = float(drift_ape_slope_mps)
-    success["drift_ape_jump_m"] = float(drift_ape_jump_m)
+    success["drift_threshold_mode"] = str(drift_thresholds["mode"])
+    success["drift_rpe_1s_m"] = float(drift_thresholds["rpe_1s_m"])
+    success["drift_ape_slope_mps"] = float(drift_thresholds["ape_slope_mps"])
+    success["drift_ape_jump_m"] = float(drift_thresholds["ape_jump_m"])
+    success["drift_threshold_info"] = drift_thresholds
+    success["raw_success_rate_distance"] = raw_regions.get("success_rate_distance", np.nan)
+    success["raw_success_rate_time"] = raw_regions.get("success_rate_time", np.nan)
+    success["raw_valid_distance_m"] = raw_regions.get("valid_distance_m", 0.0)
+    success["raw_valid_time_s"] = raw_regions.get("valid_time_s", 0.0)
+    success["local_success_rate_distance"] = success.get("success_rate_distance", np.nan)
+    success["local_success_rate_time"] = success.get("success_rate_time", np.nan)
+    success["success_rate_distance_reliability_gated"] = success.get("success_rate_distance", np.nan)
+    success["success_rate_time_reliability_gated"] = success.get("success_rate_time", np.nan)
+    success["sr_reliability_status"] = "ok"
+    success["sr_warning_explanation"] = ""
     if threshold_info is not None:
         success["threshold"] = threshold_info
     if include_masks:

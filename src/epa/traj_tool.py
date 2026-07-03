@@ -21,6 +21,7 @@ from epa.core.io_utils import (
 )
 from epa.core.time_alignment import matching_time_indices
 from epa.metric_cli_common import (
+    align_for_eval_with_info,
     load_ros_map_spec,
     project_to_plane,
     resolve_map_tile_contextily,
@@ -253,7 +254,7 @@ def _umeyama_transform(src_xyz: np.ndarray, dst_xyz: np.ndarray, with_scale: boo
 def _align_to_reference(
     trajs: list[Trajectory],
     ref_index: int,
-    with_scale: bool,
+    align_mode: str,
     n_to_align: int,
 ) -> list[Trajectory]:
     ref = trajs[ref_index]
@@ -262,14 +263,16 @@ def _align_to_reference(
         if i == ref_index:
             continue
         n = min(ref.pos.shape[0], tr.pos.shape[0])
-        if n < 3:
+        if n < 2:
             continue
-        n_use = n if int(n_to_align) <= 0 else min(n, int(n_to_align))
-        src = tr.pos[:n_use]
-        dst = ref.pos[:n_use]
-        scale, r_align, t_align = _umeyama_transform(src, dst, with_scale=with_scale)
-        pos_new = scale * (r_align @ tr.pos.T).T + t_align
-        quat_new = (R.from_matrix(r_align) * R.from_quat(tr.quat)).as_quat()
+        pos_new, quat_new, _ = align_for_eval_with_info(
+            pos_ref=ref.pos[:n],
+            quat_ref=ref.quat[:n],
+            pos_est=tr.pos,
+            quat_est=tr.quat,
+            mode=align_mode,
+            n_to_align=int(n_to_align),
+        )
         out[i] = Trajectory(
             label=tr.label,
             source=tr.source,
@@ -804,6 +807,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Enable scale correction during --align (or scale-only if --align is not set).",
     )
     p.add_argument(
+        "--eval-align",
+        choices=[
+            "",
+            "none",
+            "epa_step3",
+            "se3",
+            "epa_se3",
+            "epa_se3_eval",
+            "posyaw",
+            "epa_posyaw",
+            "sim3",
+            "epa_sim3",
+            "scale",
+        ],
+        default="",
+        help="Explicit EPA alignment mode; overrides --align/--correct-scale.",
+    )
+    p.add_argument(
         "--n-to-align",
         "--n_to_align",
         type=int,
@@ -1040,7 +1061,15 @@ def run(args: argparse.Namespace) -> int:
         trajs = _merge_trajs(trajs)
         print("Merged trajectories into: merged_trajectory")
 
-    needs_sync = bool(args.sync or args.align or args.correct_scale)
+    explicit_align = str(getattr(args, "eval_align", "") or "").strip().lower()
+    if explicit_align == "sim3":
+        explicit_align = "epa_sim3"
+    align_mode = explicit_align
+    if not align_mode and bool(args.align):
+        align_mode = "epa_sim3" if bool(args.correct_scale) else "se3"
+    elif not align_mode and bool(args.correct_scale):
+        align_mode = "scale"
+    needs_sync = bool(args.sync or align_mode)
     if needs_sync:
         ref_index = _resolve_ref_index(str(args.ref), trajs)
         trajs = _sync_trajectories(
@@ -1058,17 +1087,17 @@ def run(args: argparse.Namespace) -> int:
             if tr.synced:
                 print(f"Synced {tr.label} <- {tr.ref_label}: matches={tr.matched_samples}")
 
-    if bool(args.align or args.correct_scale):
+    if align_mode:
         ref_index = _resolve_ref_index(str(args.ref), trajs)
         trajs = _align_to_reference(
             trajs,
             ref_index=ref_index,
-            with_scale=bool(args.correct_scale),
+            align_mode=align_mode,
             n_to_align=int(args.n_to_align),
         )
         print(
             f"Aligned trajectories to reference: {trajs[ref_index].label} "
-            f"(with_scale={str(bool(args.correct_scale)).lower()}, n_to_align={int(args.n_to_align)})"
+            f"(mode={align_mode}, n_to_align={int(args.n_to_align)})"
         )
 
     if bool(args.transform_left or args.transform_right):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import json
 import math
 from pathlib import Path
 
@@ -18,15 +19,35 @@ from epa.core.evaluation import (
 )
 from epa.core.math_utils import compute_error_statistics, normalize_quat_array
 from epa.core.steps import (
+    _prepare_solve_eval_trajectories,
     _run_time_alignment,
     _solve_step2_step3,
 )
-from epa.metric_cli_common import project_to_plane, sim3_scale_guard
+from epa.core.sim3 import solve_anchor_sim3, solve_epica_sim3_variant
+from epa.metric_cli_common import align_for_eval_with_info, project_to_plane, sim3_scale_guard
 from epa.traj_tool import build_parser as build_traj_parser
 from epa.traj_tool import run as run_traj
 
 
-_VALID_ALIGN_MODES = {"posyaw", "posyawsingle", "se3", "se3single", "sim3", "none"}
+_VALID_ALIGN_MODES = {
+    "epa_step3",
+    "posyaw",
+    "posyawsingle",
+    "se3",
+    "epa_se3",
+    "epa_se3_eval",
+    "se3single",
+    "sim3",
+    "epica_sim3",
+    "epica_sim3_joint",
+    "epica_sim3_trimmed",
+    "epa_sim3",
+    "epa_sim3_v1",
+    "epa_sim3_v2",
+    "epica_anchor_sim3",
+    "none",
+}
+_LEGACY_ALIGN_MODES = {"se3", "se3single", "posyawsingle"}
 _DEFAULT_ASSOC_MAX_DIFF = 0.02
 _DEFAULT_EPA_DT_RESAMPLE = 0.001
 _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO = 0.3
@@ -224,9 +245,35 @@ def _solve_alignment(
         return 1.0, np.eye(3, dtype=float), np.zeros(3, dtype=float)
 
     if m == "sim3":
-        return _umeyama(p_est, p_gt, known_scale=False, yaw_only=False)
+        scale, r_fit, t_fit, _ = solve_epica_sim3_variant(
+            pos_ref=p_gt,
+            quat_ref=q_gt,
+            pos_est=p_est,
+            quat_est=q_est,
+            method="epa_sim3",
+        )
+        return scale, r_fit, t_fit
 
-    if m == "se3":
+    if m in {"epica_sim3", "epica_sim3_joint", "epica_sim3_trimmed", "epa_sim3", "epa_sim3_v1", "epa_sim3_v2"}:
+        scale, r_fit, t_fit, _ = solve_epica_sim3_variant(
+            pos_ref=p_gt,
+            quat_ref=q_gt,
+            pos_est=p_est,
+            quat_est=q_est,
+            method=m,
+        )
+        return scale, r_fit, t_fit
+
+    if m == "epica_anchor_sim3":
+        scale, r_fit, t_fit, _ = solve_anchor_sim3(
+            pos_ref=p_gt,
+            quat_ref=q_gt,
+            pos_est=p_est,
+            quat_est=q_est,
+        )
+        return scale, r_fit, t_fit
+
+    if m in {"se3", "epa_se3", "epa_se3_eval"}:
         _, r_fit, t_fit = _umeyama(p_est, p_gt, known_scale=True, yaw_only=False)
         return 1.0, r_fit, t_fit
 
@@ -290,26 +337,18 @@ def _evaluate_pair_ov_style(
         offset=0.0,
     )
 
-    scale, r_fit, t_fit = _solve_alignment(
-        method=align_mode,
-        p_est=p_est_m,
-        q_est=q_est_m,
-        p_gt=p_gt_m,
-        q_gt=q_gt_m,
+    requested_align_mode = str(align_mode).lower()
+    epa_align_mode = "epa_sim3" if requested_align_mode == "sim3" else requested_align_mode
+    p_est_aligned, q_est_aligned, align_info = align_for_eval_with_info(
+        pos_ref=p_gt_m,
+        quat_ref=q_gt_m,
+        pos_est=p_est_m,
+        quat_est=q_est_m,
+        mode=epa_align_mode,
+        n_to_align=-1,
     )
-    align_info = {
-        "align_mode": str(align_mode).lower(),
-        "align_scale": float(scale),
-    }
-    if str(align_mode).lower() == "sim3":
-        align_info.update(sim3_scale_guard(float(scale)))
-    p_est_aligned, q_est_aligned = _apply_similarity(
-        p_est=p_est_m,
-        q_est=q_est_m,
-        scale=scale,
-        r_fit=r_fit,
-        t_fit=t_fit,
-    )
+    align_info["requested_align_mode"] = requested_align_mode
+    align_info["eval_source"] = "epa_eval_align"
 
     ape3 = compute_ape(
         pos_ref=p_gt_m,
@@ -344,6 +383,7 @@ def _evaluate_pair_ov_style(
         "ate2_ori": dict(ape2["rotation_angle_deg"]),
         "ate2_pos": dict(ape2["translation_part"]),
         "eval_alignment": align_info,
+        "eval_source": "epa_eval_align",
     }
 
 
@@ -390,23 +430,29 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
-    t_est_m, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, _ = _associate_est_gt(
-        t_est=t_est,
-        p_est=p_est,
-        q_est=q_est,
+    solve_eval = _prepare_solve_eval_trajectories(
         t_gt=t_gt,
-        p_gt=p_gt,
-        q_gt=q_gt,
-        max_diff=float(max_diff),
-        offset=-float(step1["calculated_offset"]),
+        pos_gt=p_gt,
+        quat_gt=q_gt,
+        t_est=t_est,
+        pos_est=p_est,
+        quat_est=q_est,
+        calculated_offset=float(step1["calculated_offset"]),
+        downsample_hz=float(downsample_hz),
+        quat_interp=str(quat_interp),
     )
+    t_gt_m = np.asarray(solve_eval["t_gt"], dtype=float)
+    p_gt_m = np.asarray(solve_eval["pos_gt"], dtype=float)
+    q_gt_m = np.asarray(solve_eval["quat_gt"], dtype=float)
+    p_est_m = np.asarray(solve_eval["pr_sync"], dtype=float)
+    q_est_m = np.asarray(solve_eval["qr_sync"], dtype=float)
     solved = _solve_step2_step3(
         pr_sync=p_est_m,
         qr_sync=q_est_m,
-        pos_gt_solve=p_gt_m,
-        quat_gt_solve=q_gt_m,
-        pr_solve=p_est_m,
-        qr_solve=q_est_m,
+        pos_gt_solve=np.asarray(solve_eval["pos_gt_solve"], dtype=float),
+        quat_gt_solve=np.asarray(solve_eval["quat_gt_solve"], dtype=float),
+        pr_solve=np.asarray(solve_eval["pr_solve"], dtype=float),
+        qr_solve=np.asarray(solve_eval["qr_solve"], dtype=float),
     )
 
     gt_t = np.asarray(t_gt_m, dtype=float)
@@ -461,12 +507,15 @@ def _evaluate_pair(
     epa_offset_min_match_ratio: float = _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
     epa_downsample_hz: float = _DEFAULT_EPA_DOWNSAMPLE_HZ,
     epa_quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
-    epa_no_fallback: bool = False,
+    epa_no_fallback: bool = True,
     epa_verbose_fallback: bool = False,
 ) -> dict:
-    if str(align_mode).lower() == "se3":
+    requested_align_mode = str(align_mode).lower()
+    if requested_align_mode == "epa_se3_eval":
+        requested_align_mode = "epa_se3"
+    if requested_align_mode in {"se3", "epa_step3"}:
         try:
-            return _evaluate_pair_epa_step3(
+            result = _evaluate_pair_epa_step3(
                 file_gt=file_gt,
                 file_est=file_est,
                 max_diff=float(max_diff),
@@ -476,28 +525,31 @@ def _evaluate_pair(
                 quat_interp=str(epa_quat_interp),
                 verbose=bool(epa_verbose_fallback),
             )
+            result["requested_align_mode"] = requested_align_mode
+            if requested_align_mode == "se3":
+                result["legacy_align_mode_warning"] = (
+                    "se3 is a legacy OV/OpenVINS alias for EPA Step3; "
+                    "use epa_se3 for EPA SE3 mode."
+                )
+            return result
         except Exception as exc:
             param_msg = (
                 f"epa_dt_resample={float(epa_dt_resample):.6g}, "
                 f"epa_offset_min_match_ratio={float(epa_offset_min_match_ratio):.6g}"
             )
-            if bool(epa_no_fallback):
-                raise RuntimeError(
-                    f"EPA Step3 evaluation failed for {file_est.name}; {param_msg}: {exc}"
-                ) from exc
-            if bool(epa_verbose_fallback):
-                print(
-                    f"[warn] EPA Step3 evaluation failed for {file_est.name}; "
-                    f"{param_msg}; falling back to ov_eval-style SE3: {exc}"
-                )
+            raise RuntimeError(
+                f"EPA Step3 evaluation failed for {file_est.name}; {param_msg}: {exc}"
+            ) from exc
 
     result = _evaluate_pair_ov_style(
         file_gt=file_gt,
         file_est=file_est,
-        align_mode=align_mode,
+        align_mode="se3" if requested_align_mode == "epa_se3" else align_mode,
         max_diff=float(max_diff),
     )
-    result["eval_source"] = "ov_eval_style"
+    result["requested_align_mode"] = requested_align_mode
+    if result.get("eval_source") != "epa_eval_align":
+        result["eval_source"] = "epa_eval_align"
     return result
 
 
@@ -516,9 +568,11 @@ def _epa_eval_kwargs(args: argparse.Namespace) -> dict[str, object]:
 
 def _format_source_counts(counts: dict[str, int]) -> str:
     epa_count = int(counts.get("epa_step3", 0))
-    ov_eval_count = int(counts.get("ov_eval_style", 0))
-    unknown_count = sum(int(v) for k, v in counts.items() if k not in {"epa_step3", "ov_eval_style"})
-    parts = [f"epa={epa_count}", f"ov_eval={ov_eval_count}"]
+    epa_eval_count = int(counts.get("epa_eval_align", 0))
+    failed_count = int(counts.get("failed", 0))
+    known = {"epa_step3", "epa_eval_align", "failed"}
+    unknown_count = sum(int(v) for k, v in counts.items() if k not in known)
+    parts = [f"epa_step3={epa_count}", f"epa_eval={epa_eval_count}", f"failed={failed_count}"]
     if unknown_count:
         parts.append(f"unknown={unknown_count}")
     return ", ".join(parts)
@@ -593,12 +647,17 @@ def _compute_ov_eval_comparison_indices(accum_distances: np.ndarray, distance: f
     comparisons = np.full(distances.size, -1, dtype=int)
     target_delta = float(distance)
     max_diff = float(max_dist_diff)
-    for idx in range(distances.size):
-        target = float(distances[idx]) + target_delta
+    if distances.size == 0:
+        return comparisons
+    targets = distances + target_delta
+    insert_ids = np.searchsorted(distances, targets, side="left")
+    for idx, insert_idx in enumerate(insert_ids):
         best_error = max_diff
         best_idx = -1
-        for end_idx in range(idx, distances.size):
-            err = abs(float(distances[end_idx]) - target)
+        for end_idx in (int(insert_idx) - 1, int(insert_idx), int(insert_idx) + 1):
+            if end_idx < idx or end_idx < 0 or end_idx >= distances.size:
+                continue
+            err = abs(float(distances[end_idx]) - float(targets[idx]))
             if err < best_error:
                 best_idx = int(end_idx)
                 best_error = err
@@ -759,6 +818,7 @@ def _compute_valid_segment_summary(
     global_gate_min_m: float = 2.0,
     global_gate_max_m: float = 100.0,
     global_gate_percentile: float = 5.0,
+    drift_threshold_mode: str = "adaptive",
     drift_rpe_1s_m: float = 2.0,
     drift_ape_slope_mps: float = 1.0,
     drift_ape_jump_m: float = 5.0,
@@ -814,6 +874,7 @@ def _compute_valid_segment_summary(
         global_gate_min_m=float(global_gate_min_m),
         global_gate_max_m=float(global_gate_max_m),
         global_gate_percentile=float(global_gate_percentile),
+        drift_threshold_mode=str(drift_threshold_mode),
         drift_rpe_1s_m=float(drift_rpe_1s_m),
         drift_ape_slope_mps=float(drift_ape_slope_mps),
         drift_ape_jump_m=float(drift_ape_jump_m),
@@ -907,6 +968,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
     gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
     gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
     gate_pct = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
+    drift_threshold_mode = str(getattr(args, "epa_success_drift_threshold_mode", "adaptive"))
     drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
     drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
     drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
@@ -975,6 +1037,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         global_gate_min_m=gate_min_m,
         global_gate_max_m=gate_max_m,
         global_gate_percentile=gate_pct,
+        drift_threshold_mode=drift_threshold_mode,
         drift_rpe_1s_m=drift_rpe_1s_m,
         drift_ape_slope_mps=drift_ape_slope_mps,
         drift_ape_jump_m=drift_ape_jump_m,
@@ -1026,6 +1089,22 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         print(f"[UNRELIABLE] {quality['eval_warning']}")
     print("======================================")
     print(f"Aligned pairs: {int(eval_res['matched'])}")
+    print(f"Eval source = {str(eval_res.get('eval_source', 'unknown'))}")
+    print(
+        "EPA_COMPAT_RESULT_JSON "
+        + json.dumps(
+            {
+                "eval_source": str(eval_res.get("eval_source", "unknown")),
+                "matched": int(eval_res["matched"]),
+                "ape_rmse_m": float(ate3_pos["rmse"]),
+                "rpe_time_1s_rmse_m": float(time_pos_stats["rmse"]),
+                "sr_distance_pct": float(success["success_rate_distance"]) * 100.0,
+                "sr_time_pct": float(success["success_rate_time"]) * 100.0,
+                "eval_reliable": bool(quality["eval_reliable"]),
+            },
+            sort_keys=True,
+        )
+    )
     if args.plot:
         print("[info] --plot is reserved in EPA compatibility mode. Use `epa_ape`/`epa_rpe` for full plotting.")
     return 0
@@ -1046,6 +1125,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
     gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
     gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
     gate_pct = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
+    drift_threshold_mode = str(getattr(args, "epa_success_drift_threshold_mode", "adaptive"))
     drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
     drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
     drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
@@ -1139,6 +1219,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 global_gate_min_m=gate_min_m,
                 global_gate_max_m=gate_max_m,
                 global_gate_percentile=gate_pct,
+                drift_threshold_mode=drift_threshold_mode,
                 drift_rpe_1s_m=drift_rpe_1s_m,
                 drift_ape_slope_mps=drift_ape_slope_mps,
                 drift_ape_jump_m=drift_ape_jump_m,
@@ -1222,6 +1303,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     gate_min_m = float(getattr(args, "epa_success_global_gate_min_m", 2.0))
     gate_max_m = float(getattr(args, "epa_success_global_gate_max_m", 100.0))
     gate_pct = float(getattr(args, "epa_success_global_gate_percentile", 5.0))
+    drift_threshold_mode = str(getattr(args, "epa_success_drift_threshold_mode", "adaptive"))
     drift_rpe_1s_m = float(getattr(args, "epa_success_drift_rpe_1s_m", 2.0))
     drift_ape_slope_mps = float(getattr(args, "epa_success_drift_ape_slope_mps", 1.0))
     drift_ape_jump_m = float(getattr(args, "epa_success_drift_ape_jump_m", 5.0))
@@ -1302,6 +1384,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     )
                 except Exception as exc:
                     print(f"\t[warn] skipping {run_file.name}: {exc}")
+                    source_ds["failed"] = source_ds.get("failed", 0) + 1
+                    source_total["failed"] = source_total.get("failed", 0) + 1
                     failed_ds.append(f"{run_file.name}:failed")
                     failed_total.append(f"{algo_dir.name}/{ds}/{run_file.name}:failed")
                     continue
@@ -1310,7 +1394,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 source = str(ev.get("eval_source", "unknown"))
                 source_ds[source] = source_ds.get(source, 0) + 1
                 source_total[source] = source_total.get(source, 0) + 1
-                if source != "epa_step3":
+                if source not in {"epa_step3", "epa_eval_align"}:
                     source_ds_details.append(f"{run_file.name}:{source}")
                     source_details.append(f"{algo_dir.name}/{ds}/{run_file.name}:{source}")
 
@@ -1356,6 +1440,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     global_gate_min_m=gate_min_m,
                     global_gate_max_m=gate_max_m,
                     global_gate_percentile=gate_pct,
+                    drift_threshold_mode=drift_threshold_mode,
                     drift_rpe_1s_m=drift_rpe_1s_m,
                     drift_ape_slope_mps=drift_ape_slope_mps,
                     drift_ape_jump_m=drift_ape_jump_m,
@@ -1463,7 +1548,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     print("============================================")
     print(f"TOOL SOURCE: {_format_source_counts(source_total)}")
     if source_details:
-        print(f"EVAL SOURCE NON-EPA RUNS: {_format_source_details(source_details)}")
+        print(f"EVAL SOURCE UNKNOWN RUNS: {_format_source_details(source_details)}")
     if failed_total:
         print(f"FAILED RUNS: {_format_source_details(failed_total)}")
     if unreliable_total:
@@ -1706,12 +1791,10 @@ def run_plot_trajectories(args: argparse.Namespace) -> int:
         "--plot",
     ]
 
-    if align_mode in {"se3", "se3single", "posyaw", "posyawsingle", "sim3"}:
+    if align_mode in {"se3", "epa_se3", "epa_se3_eval", "se3single", "posyaw", "posyawsingle", "sim3"}:
         traj_argv.append("--align")
     if align_mode == "sim3":
         traj_argv.append("--correct-scale")
-    if align_mode in {"posyaw", "posyawsingle"}:
-        print("[info] align_mode posyaw* is approximated with SE3 alignment in EPA compatibility mode.")
 
     traj_argv.append(str(args.file_gt))
     traj_argv.extend([str(x) for x in args.est_files])
@@ -1755,12 +1838,12 @@ def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--epa-no-fallback",
         action="store_true",
-        help="Fail instead of falling back to ov_eval-style SE3 when EPA Step3 evaluation fails.",
+        help="Compatibility flag; EPA-backed evaluation already fails instead of falling back.",
     )
     p.add_argument(
         "--epa-verbose-fallback",
         action="store_true",
-        help="Print EPA Step3 fallback details when compatibility mode falls back to ov_eval-style SE3.",
+        help="Compatibility flag retained for older scripts.",
     )
     p.add_argument(
         "--epa-success-threshold-m",
@@ -1829,6 +1912,12 @@ def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
         help="APE percentile used by the global accept gate.",
     )
     p.add_argument(
+        "--epa-success-drift-threshold-mode",
+        choices=["adaptive", "fixed"],
+        default="adaptive",
+        help="How to resolve local drift thresholds for EPA success-rate metrics.",
+    )
+    p.add_argument(
         "--epa-success-drift-rpe-1s-m",
         type=float,
         default=2.0,
@@ -1850,7 +1939,13 @@ def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
 
 def _build_error_singlerun_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OV-Eval compatible error_singlerun in EPA.")
-    p.add_argument("align_mode", help="posyaw|posyawsingle|se3|se3single|sim3|none")
+    p.add_argument(
+        "align_mode",
+        help=(
+            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+        ),
+    )
     p.add_argument("file_gt", help="groundtruth trajectory")
     p.add_argument("file_est", help="estimated trajectory")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")
@@ -1861,7 +1956,13 @@ def _build_error_singlerun_parser() -> argparse.ArgumentParser:
 
 def _build_error_dataset_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OV-Eval compatible error_dataset in EPA.")
-    p.add_argument("align_mode", help="posyaw|posyawsingle|se3|se3single|sim3|none")
+    p.add_argument(
+        "align_mode",
+        help=(
+            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+        ),
+    )
     p.add_argument("file_gt", help="groundtruth trajectory")
     p.add_argument("folder_algorithms", help="algorithm root folder")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")
@@ -1872,7 +1973,13 @@ def _build_error_dataset_parser() -> argparse.ArgumentParser:
 
 def _build_error_comparison_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OV-Eval compatible error_comparison in EPA.")
-    p.add_argument("align_mode", help="posyaw|posyawsingle|se3|se3single|sim3|none")
+    p.add_argument(
+        "align_mode",
+        help=(
+            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+        ),
+    )
     p.add_argument("folder_groundtruth", help="groundtruth root folder")
     p.add_argument("folder_algorithms", help="algorithm root folder")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")
@@ -1882,7 +1989,13 @@ def _build_error_comparison_parser() -> argparse.ArgumentParser:
 
 def _build_plot_trajectories_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="OV-Eval compatible plot_trajectories in EPA.")
-    p.add_argument("align_mode", help="posyaw|posyawsingle|se3|se3single|sim3|none")
+    p.add_argument(
+        "align_mode",
+        help=(
+            "epa_step3|epa_se3|posyaw|sim3|none. "
+            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+        ),
+    )
     p.add_argument("file_gt", help="groundtruth trajectory")
     p.add_argument("est_files", nargs="+", help="estimated trajectories")
     p.add_argument("--max-diff", type=float, default=_DEFAULT_ASSOC_MAX_DIFF, help="timestamp association threshold")

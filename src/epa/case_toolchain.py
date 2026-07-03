@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -19,9 +21,26 @@ def _default_out_root(cwd: Path) -> Path:
     return out
 
 
-def _run(cmd: list[str], cwd: Path) -> None:
+def _run(cmd: list[str], cwd: Path) -> float:
     print("+ " + " ".join(str(x) for x in cmd))
+    t0 = time.perf_counter()
     subprocess.run(cmd, cwd=str(cwd), check=True)
+    elapsed = float(time.perf_counter() - t0)
+    print(f"[timing] {elapsed:.3f}s")
+    return elapsed
+
+
+def _metric_eval_align(align_mode: str) -> str:
+    mode = str(align_mode).lower()
+    if mode == "epa_step3":
+        return "none"
+    if mode in {"epa_se3", "epa_se3_eval"}:
+        return "se3"
+    if mode == "sim3":
+        return "epa_sim3"
+    if mode in {"none", "se3", "posyaw"}:
+        return mode
+    raise ValueError(f"Unsupported align mode: {align_mode}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,9 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--align-mode",
-        choices=["none", "se3", "sim3"],
-        default="se3",
-        help="Alignment mode used for the optional OpenVINS compatibility run.",
+        choices=["none", "epa_step3", "epa_se3", "epa_se3_eval", "se3", "posyaw", "sim3"],
+        default="epa_step3",
+        help=(
+            "EPA alignment mode used by the direct metric/trajectory tools. "
+            "Use epa_step3 for the native 3-step output and epa_se3 for EPA SE3 mode."
+        ),
+    )
+    p.add_argument(
+        "--run-openvins-compat",
+        action="store_true",
+        help="Also run the legacy OpenVINS-style compatibility wrapper as an extra baseline.",
     )
     p.add_argument(
         "--t-max-diff",
@@ -115,11 +142,16 @@ def run(args: argparse.Namespace) -> int:
     print(f"FORMAT:     {fmt}")
     print(f"OUT_ROOT:   {out_root}")
     print(f"CASE_DIR:   {case_dir if case_dir is not None else '(none)'}")
+    print(
+        "OPENVINS_COMPAT: "
+        + ("enabled" if bool(args.run_openvins_compat) else "skipped")
+    )
     print()
+    timings: dict[str, float] = {}
 
     main_workspace = out_root / "main_workspace"
     main_workspace.mkdir(parents=True, exist_ok=True)
-    _run(
+    timings["main_epa_cli_s"] = _run(
         [
             sys.executable,
             "-m",
@@ -137,9 +169,10 @@ def run(args: argparse.Namespace) -> int:
         cwd=main_workspace,
     )
 
+    metric_align = _metric_eval_align(str(args.align_mode))
     ape_out = out_root / "ape"
     ape_out.mkdir(parents=True, exist_ok=True)
-    _run(
+    timings["ape_tool_s"] = _run(
         [
             sys.executable,
             "-m",
@@ -147,7 +180,8 @@ def run(args: argparse.Namespace) -> int:
             fmt,
             str(gt_path),
             str(est_path),
-            "--align",
+            "--eval-align",
+            metric_align,
             "--t_max_diff",
             str(float(args.t_max_diff)),
             *metric_plot_flag,
@@ -159,7 +193,7 @@ def run(args: argparse.Namespace) -> int:
 
     rpe_out = out_root / "rpe"
     rpe_out.mkdir(parents=True, exist_ok=True)
-    _run(
+    timings["rpe_tool_s"] = _run(
         [
             sys.executable,
             "-m",
@@ -167,7 +201,8 @@ def run(args: argparse.Namespace) -> int:
             fmt,
             str(gt_path),
             str(est_path),
-            "--align",
+            "--eval-align",
+            metric_align,
             "--delta",
             "1",
             "--delta_unit",
@@ -189,7 +224,8 @@ def run(args: argparse.Namespace) -> int:
         "epa.traj_tool",
         "--format",
         fmt,
-        "--align",
+        "--eval-align",
+        metric_align,
         "--ref",
         "1",
         *traj_plot_flag,
@@ -204,12 +240,12 @@ def run(args: argparse.Namespace) -> int:
             "--sync-max-diff",
             str(float(args.t_max_diff)),
         ]
-    _run(traj_cmd, cwd=cwd)
+    timings["traj_tool_s"] = _run(traj_cmd, cwd=cwd)
 
-    if case_dir is not None:
+    if case_dir is not None and bool(args.run_openvins_compat):
         openvins_out = out_root / "openvins"
         openvins_out.mkdir(parents=True, exist_ok=True)
-        _run(
+        timings["openvins_runner_s"] = _run(
             [
                 sys.executable,
                 "-m",
@@ -224,8 +260,16 @@ def run(args: argparse.Namespace) -> int:
             ],
             cwd=cwd,
         )
+    elif case_dir is not None:
+        print(
+            "[info] OpenVINS compatibility runner skipped for EPA-only run. "
+            "Use --run-openvins-compat to include it."
+        )
 
     print()
+    timings["total_recorded_s"] = float(sum(timings.values()))
+    (out_root / "timing_summary.json").write_text(json.dumps(timings, indent=2), encoding="utf-8")
+    print(f"Timing summary: {out_root / 'timing_summary.json'}")
     print(f"Done. Outputs saved under: {out_root}")
     return 0
 

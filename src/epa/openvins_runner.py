@@ -6,10 +6,22 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
-_KNOWN_ALIGN_MODES = {"none", "se3", "sim3", "se3single", "posyaw", "posyawsingle"}
+_KNOWN_ALIGN_MODES = {
+    "none",
+    "epa_step3",
+    "se3",
+    "epa_se3",
+    "epa_se3_eval",
+    "sim3",
+    "se3single",
+    "posyaw",
+    "posyawsingle",
+}
+_LEGACY_ALIGN_MODES = {"se3", "se3single", "posyawsingle"}
 
 
 def _is_case_dir(path_str: str) -> bool:
@@ -26,14 +38,18 @@ def _map_align_mode_to_eval_align(mode: str) -> str:
     m = str(mode).lower()
     if m == "none":
         return "none"
+    if m == "epa_step3":
+        return "epa_step3"
+    if m in {"epa_se3", "epa_se3_eval"}:
+        return "epa_se3"
     if m == "se3":
-        return "se3"
+        return "epa_step3"
     if m == "sim3":
-        return "sim3"
+        return "epa_sim3"
     if m in {"se3single", "posyawsingle"}:
         return "origin"
     if m == "posyaw":
-        return "se3"
+        return "posyaw"
     raise ValueError(f"Unsupported align_mode: {mode}")
 
 
@@ -127,6 +143,18 @@ def _show_plots_popup(plots_dir: Path, max_plots: int = 15) -> None:
         print(f"[warn] popup show failed: {exc}")
 
 
+def _run_timed(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> tuple[subprocess.CompletedProcess[str], float]:
+    t0 = time.perf_counter()
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    return proc, float(time.perf_counter() - t0)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Run EPA full pipeline on one or multiple OpenVINS case folders."
@@ -183,11 +211,16 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     mapped_eval_align = _map_align_mode_to_eval_align(align_mode)
-    if align_mode in {"posyaw", "posyawsingle"}:
-        print(
-            f"[info] align_mode '{align_mode}' mapped to EPA eval-align '{mapped_eval_align}' "
-            "(EPA has no yaw-only eval mode)."
-        )
+    if align_mode in _LEGACY_ALIGN_MODES:
+        messages = {
+            "se3": (
+                "align_mode 'se3' is a legacy OpenVINS alias for EPA Step3 "
+                "(eval-align epa_step3). Use 'epa_se3' for EPA SE3 mode."
+            ),
+            "se3single": "align_mode 'se3single' is legacy/optional and maps to origin alignment.",
+            "posyawsingle": "align_mode 'posyawsingle' is legacy/optional and maps to origin alignment.",
+        }
+        print(f"[info] {messages[align_mode]}")
 
     case_count = len(case_dirs)
     plot_enabled = not bool(args.no_plot)
@@ -241,13 +274,7 @@ def main(argv: list[str] | None = None) -> int:
         cmd.append("--plot" if plot_enabled else "--no-plot")
 
         print(f"[case] {case_label}")
-        proc = subprocess.run(
-            cmd,
-            cwd=str(launch_cwd),
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        proc, elapsed_s = _run_timed(cmd, cwd=launch_cwd, env=env)
         if proc.returncode != 0:
             print(proc.stdout)
             print(proc.stderr, file=sys.stderr)
@@ -266,6 +293,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"[case] output dir: {final_dir}")
 
+        print(f"[case] elapsed_s: {elapsed_s:.3f}")
         if plot_enabled:
             print(f"[case] plots:   {final_dir / 'plots'}")
         print(f"[case] metrics: {final_dir / 'metrics.json'}")

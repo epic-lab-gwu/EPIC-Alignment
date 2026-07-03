@@ -63,6 +63,17 @@ Advanced utilities such as `epa_config`, `epa_fig`, `epa_plot_summary`, and `epa
 4. Use `epa_res` to compare multiple runs
 5. Move to `epa_bench` or `epa_benchall` when you need batch evaluation
 
+## Alignment Modes
+
+The main EPA modes are `epa_se3`, `epa_sim3`, and `epa_posyaw`.
+
+- `epa_se3`: metric-scale SE3 evaluation for VIO/odometry.
+- `epa_sim3`: scale-aware Sim3 evaluation for scale-ambiguous visual SLAM/VO.
+- `epa_posyaw`: yaw-only + translation evaluation for gravity-aligned VIO.
+
+See [EPA Alignment Modes](cli.md#epa-alignment-modes) for the exact behavior,
+reliability notes, and one-command examples for each mode.
+
 ## Next Pages
 
 - [Quick Start](quickstart.md): run your first example end to end
