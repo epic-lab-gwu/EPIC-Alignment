@@ -992,8 +992,6 @@ def _annotate_sr_reliability(
         ),
     )
 
-    local_sr_dist = _finite_float(success.get("local_success_rate_distance", success.get("success_rate_distance")))
-    local_sr_time = _finite_float(success.get("local_success_rate_time", success.get("success_rate_time")))
     hard_reasons: list[str] = []
     soft_reasons: list[str] = []
 

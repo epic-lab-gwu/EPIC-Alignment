@@ -23,7 +23,7 @@ from epa.core.steps import (
     _solve_step2_step3,
 )
 from epa.core.sim3 import solve_anchor_sim3, solve_epica_sim3_variant
-from epa.metric_cli_common import align_for_eval_with_info, project_to_plane, sim3_scale_guard
+from epa.metric_cli_common import align_for_eval_with_info, project_to_plane
 from epa.traj_tool import build_parser as build_traj_parser
 from epa.traj_tool import run as run_traj
 
