@@ -102,6 +102,44 @@ def test_epa_posyaw_aligns_xy_yaw_without_roll_pitch_or_scale() -> None:
     assert ape["rotation_angle_deg"]["rmse"] < 1e-9
 
 
+def test_epa_posyaw_alignment_indices_ignore_divergent_tail() -> None:
+    n = 100
+    t = np.linspace(0.0, 10.0, n)
+    pos_ref = np.column_stack([t, 0.4 * np.sin(t), 0.1 * np.cos(t)])
+    quat_ref = R.from_euler("z", 0.05 * t).as_quat()
+
+    yaw_fit = R.from_euler("z", 20.0, degrees=True)
+    t_fit = np.array([2.0, -0.7, 0.3], dtype=float)
+    pos_est = (yaw_fit.inv().as_matrix() @ (pos_ref - t_fit).T).T
+    quat_est = (yaw_fit.inv() * R.from_quat(quat_ref)).as_quat()
+    pos_est[60:] += np.array([500.0, -300.0, 0.0], dtype=float)
+
+    pos_full, quat_full, full_info = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est,
+        mode="posyaw",
+    )
+    pos_indexed, quat_indexed, indexed_info = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est,
+        mode="posyaw",
+        align_indices=np.arange(60),
+    )
+
+    full_prefix_ape = compute_ape(pos_ref[:60], quat_ref[:60], pos_full[:60], quat_full[:60])
+    indexed_prefix_ape = compute_ape(pos_ref[:60], quat_ref[:60], pos_indexed[:60], quat_indexed[:60])
+
+    assert full_prefix_ape["translation_part"]["rmse"] > 100.0
+    assert indexed_prefix_ape["translation_part"]["rmse"] < 1e-9
+    assert full_info["align_pair_count"] == n
+    assert indexed_info["align_pair_count"] == 60
+    assert indexed_info["align_index_last"] == 59
+
+
 def test_epa_posyaw_does_not_absorb_roll_pitch_mismatch() -> None:
     n = 60
     t = np.linspace(0.0, 6.0, n)
@@ -146,7 +184,7 @@ def test_epica_sim3_variants_recover_clean_similarity() -> None:
     pos_est = (r_fit_true.inv().as_matrix() @ ((pos_ref - t_fit_true) / scale_true).T).T
     quat_est = (r_fit_true.inv() * R.from_quat(quat_ref)).as_quat()
 
-    for method in ["epica_sim3", "epica_sim3_joint", "epica_sim3_trimmed"]:
+    for method in ["epica_sim3", "epica_sim3_stable", "epica_sim3_joint", "epica_sim3_trimmed"]:
         scale, r_fit, t_fit, info = solve_epica_sim3_variant(
             pos_ref=pos_ref,
             quat_ref=quat_ref,
@@ -158,6 +196,47 @@ def test_epica_sim3_variants_recover_clean_similarity() -> None:
         np.testing.assert_allclose(r_fit, r_fit_true.as_matrix(), rtol=1e-8, atol=1e-8)
         np.testing.assert_allclose(t_fit, t_fit_true, rtol=1e-8, atol=1e-8)
         assert float(info["sim3_position_rmse_m"]) < 1e-8
+
+
+def test_epica_sim3_stable_uses_prefix_when_tail_scale_drifts() -> None:
+    n = 120
+    t = np.linspace(0.0, 8.0, n)
+    pos_ref = np.column_stack([t, np.sin(t), 0.2 * np.cos(0.5 * t)])
+    quat_ref = R.from_euler("z", 0.05 * t).as_quat()
+    pos_est = pos_ref.copy()
+    quat_est = quat_ref.copy()
+    drift_start = 55
+    pos_est[drift_start:] = -18.0 * pos_ref[drift_start:] + np.array([8.0, -3.0, 0.0])
+
+    try:
+        solve_epica_sim3_variant(
+            pos_ref=pos_ref,
+            quat_ref=quat_ref,
+            pos_est=pos_est,
+            quat_est=quat_est,
+            method="epica_sim3",
+        )
+    except ValueError as exc:
+        assert "non-positive scale" in str(exc)
+    else:
+        raise AssertionError("full-trajectory EPICA should reject the negative global scale")
+
+    scale, r_fit, t_fit, info = solve_epica_sim3_variant(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est,
+        method="epica_sim3_stable",
+    )
+
+    assert info["sim3_solver"] == "epica_sim3_stable"
+    assert info["sim3_anchor_status"] == "ok"
+    assert info["sim3_reliable"] is True
+    assert int(info["sim3_anchor_start_index"]) == 0
+    assert int(info["sim3_anchor_end_index"]) <= drift_start
+    np.testing.assert_allclose(scale, 1.0, rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(r_fit, np.eye(3), rtol=1e-6, atol=1e-6)
+    np.testing.assert_allclose(t_fit, np.zeros(3), rtol=1e-6, atol=1e-6)
 
 
 def test_epica_joint_grid_trades_position_for_orientation() -> None:
@@ -184,6 +263,194 @@ def test_epica_joint_grid_trades_position_for_orientation() -> None:
     assert info["sim3_solver"] == "epica_joint_grid"
     assert joint_ape["translation_part"]["rmse"] < 0.5
     assert joint_ape["rotation_angle_deg"]["rmse"] <= 90.0 + 1e-9
+
+
+def test_main_sim3_uses_pose_consistent_solve_when_available(monkeypatch) -> None:
+    pos_ref = np.zeros((4, 3), dtype=float)
+    quat_ref = R.identity(4).as_quat()
+    pos_est = np.column_stack([np.arange(4.0), np.zeros((4, 2))])
+    quat_est = quat_ref.copy()
+
+    def fake_pose_consistent(*_args, **_kwargs):
+        return 2.0, np.eye(3), np.array([1.0, 0.0, 0.0]), {"sim3_solver": "pose_consistent"}
+
+    monkeypatch.setattr("epa.core.sim3.solve_orientation_consistent_sim3", fake_pose_consistent)
+    scale, r_fit, t_fit, info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+
+    np.testing.assert_allclose(scale, 2.0)
+    np.testing.assert_allclose(r_fit, np.eye(3))
+    np.testing.assert_allclose(t_fit, np.array([1.0, 0.0, 0.0]))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_pose_consistent_solve_used"] is True
+    assert info["sim3_robust_fallback_used"] is False
+
+    pos_new, _, info = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est,
+        mode="sim3",
+    )
+
+    np.testing.assert_allclose(pos_new, 2.0 * pos_est + np.array([1.0, 0.0, 0.0]))
+    assert info["align_mode"] == "sim3"
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_robust_fallback_used"] is False
+
+
+def test_main_sim3_uses_stable_anchor_when_pose_consistent_fails(monkeypatch) -> None:
+    pos_ref = np.zeros((4, 3), dtype=float)
+    quat_ref = R.identity(4).as_quat()
+    pos_est = np.column_stack([np.arange(4.0), np.zeros((4, 2))])
+    quat_est = quat_ref.copy()
+
+    def fake_pose_consistent(*_args, **_kwargs):
+        raise ValueError("primary failed")
+
+    def fake_stable(*_args, **_kwargs):
+        return 3.0, np.eye(3), np.array([0.0, 1.0, 0.0]), {"sim3_solver": "epica_sim3_stable", "sim3_reliable": True}
+
+    monkeypatch.setattr("epa.core.sim3.solve_orientation_consistent_sim3", fake_pose_consistent)
+    monkeypatch.setattr("epa.core.sim3.solve_stable_epica_sim3", fake_stable)
+    scale, r_fit, t_fit, info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+
+    np.testing.assert_allclose(scale, 3.0)
+    np.testing.assert_allclose(r_fit, np.eye(3))
+    np.testing.assert_allclose(t_fit, np.array([0.0, 1.0, 0.0]))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_pose_consistent_solve_used"] is False
+    assert info["sim3_pose_consistent_failure"] == "primary failed"
+    assert info["sim3_stable_anchor_used"] is True
+    assert info["sim3_robust_fallback_used"] is False
+
+    monkeypatch.setattr("epa.metric_cli_common.solve_epa_sim3", lambda **_kwargs: (scale, r_fit, t_fit, info))
+    pos_new, _, info = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est,
+        mode="sim3",
+    )
+
+    np.testing.assert_allclose(pos_new, 3.0 * pos_est + np.array([0.0, 1.0, 0.0]))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_stable_anchor_used"] is True
+    assert info["sim3_robust_fallback_used"] is False
+
+
+def test_main_sim3_uses_stable_anchor_when_pose_consistent_scale_is_severe(monkeypatch) -> None:
+    pos_ref = np.zeros((4, 3), dtype=float)
+    quat_ref = R.identity(4).as_quat()
+    pos_est = np.column_stack([np.arange(4.0), np.zeros((4, 2))])
+    quat_est = quat_ref.copy()
+
+    def fake_pose_consistent(*_args, **_kwargs):
+        return 0.01, np.eye(3), np.zeros(3), {"sim3_solver": "pose_consistent", "sim3_reliable": True}
+
+    def fake_stable(*_args, **_kwargs):
+        return 0.3, np.eye(3), np.array([0.0, 1.0, 0.0]), {"sim3_solver": "epica_sim3_stable", "sim3_reliable": True}
+
+    monkeypatch.setattr("epa.core.sim3.solve_orientation_consistent_sim3", fake_pose_consistent)
+    monkeypatch.setattr("epa.core.sim3.solve_stable_epica_sim3", fake_stable)
+    scale, r_fit, t_fit, info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+
+    np.testing.assert_allclose(scale, 0.3)
+    np.testing.assert_allclose(r_fit, np.eye(3))
+    np.testing.assert_allclose(t_fit, np.array([0.0, 1.0, 0.0]))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_pose_consistent_solve_used"] is False
+    assert "severe-scale" in info["sim3_pose_consistent_failure"]
+    assert info["sim3_stable_anchor_used"] is True
+    assert info["sim3_robust_fallback_used"] is False
+
+
+def test_main_sim3_uses_robust_fallback_when_stable_anchor_fails(monkeypatch) -> None:
+    pos_ref = np.zeros((4, 3), dtype=float)
+    quat_ref = R.identity(4).as_quat()
+    pos_est = np.column_stack([np.arange(4.0), np.zeros((4, 2))])
+    quat_est = quat_ref.copy()
+
+    def fake_pose_consistent(*_args, **_kwargs):
+        raise ValueError("primary failed")
+
+    def fake_stable(*_args, **_kwargs):
+        raise ValueError("stable failed")
+
+    def fake_epa_v2(*_args, **_kwargs):
+        return 1.0, np.eye(3), np.zeros(3), {"sim3_solver": "epa_sim3_v2", "sim3_reliable": True}
+
+    monkeypatch.setattr("epa.core.sim3.solve_orientation_consistent_sim3", fake_pose_consistent)
+    monkeypatch.setattr("epa.core.sim3.solve_stable_epica_sim3", fake_stable)
+    monkeypatch.setattr("epa.core.sim3.solve_epa_sim3_v2", fake_epa_v2)
+    scale, r_fit, t_fit, info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+
+    np.testing.assert_allclose(scale, 1.0)
+    np.testing.assert_allclose(r_fit, np.eye(3))
+    np.testing.assert_allclose(t_fit, np.zeros(3))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_pose_consistent_solve_used"] is False
+    assert info["sim3_stable_anchor_used"] is False
+    assert info["sim3_robust_fallback_used"] is True
+    assert info["sim3_robust_fallback_reason"] == "primary failed; stable failed"
+
+
+def test_main_sim3_uses_robust_fallback_when_stable_anchor_scale_is_severe(monkeypatch) -> None:
+    pos_ref = np.zeros((4, 3), dtype=float)
+    quat_ref = R.identity(4).as_quat()
+    pos_est = np.column_stack([np.arange(4.0), np.zeros((4, 2))])
+    quat_est = quat_ref.copy()
+
+    def fake_pose_consistent(*_args, **_kwargs):
+        raise ValueError("primary failed")
+
+    def fake_stable(*_args, **_kwargs):
+        return 0.01, np.eye(3), np.zeros(3), {"sim3_solver": "epica_sim3_stable", "sim3_reliable": True}
+
+    def fake_epa_v2(*_args, **_kwargs):
+        return 1.0, np.eye(3), np.zeros(3), {"sim3_solver": "epa_sim3_v2", "sim3_reliable": True}
+
+    monkeypatch.setattr("epa.core.sim3.solve_orientation_consistent_sim3", fake_pose_consistent)
+    monkeypatch.setattr("epa.core.sim3.solve_stable_epica_sim3", fake_stable)
+    monkeypatch.setattr("epa.core.sim3.solve_epa_sim3_v2", fake_epa_v2)
+    scale, r_fit, t_fit, info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+
+    np.testing.assert_allclose(scale, 1.0)
+    np.testing.assert_allclose(r_fit, np.eye(3))
+    np.testing.assert_allclose(t_fit, np.zeros(3))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_stable_anchor_used"] is False
+    assert info["sim3_robust_fallback_used"] is True
+    assert "severe-scale" in info["sim3_robust_fallback_reason"]
+
+
+def test_main_sim3_keeps_pose_consistent_when_only_scale_guard_fails_and_stable_is_bad(monkeypatch) -> None:
+    pos_ref = np.zeros((4, 3), dtype=float)
+    quat_ref = R.identity(4).as_quat()
+    pos_est = np.column_stack([np.arange(4.0), np.zeros((4, 2))])
+    quat_est = quat_ref.copy()
+
+    def fake_pose_consistent(*_args, **_kwargs):
+        return 0.01, np.eye(3), np.array([1.0, 0.0, 0.0]), {"sim3_solver": "pose_consistent", "sim3_reliable": True}
+
+    def fake_stable(*_args, **_kwargs):
+        return 0.02, np.eye(3), np.array([0.0, 1.0, 0.0]), {"sim3_solver": "epica_sim3_stable", "sim3_reliable": False}
+
+    def fake_epa_v2(*_args, **_kwargs):
+        return 1.0, np.eye(3), np.zeros(3), {"sim3_solver": "epa_sim3_v2", "sim3_reliable": True}
+
+    monkeypatch.setattr("epa.core.sim3.solve_orientation_consistent_sim3", fake_pose_consistent)
+    monkeypatch.setattr("epa.core.sim3.solve_stable_epica_sim3", fake_stable)
+    monkeypatch.setattr("epa.core.sim3.solve_epa_sim3_v2", fake_epa_v2)
+    scale, r_fit, t_fit, info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+
+    np.testing.assert_allclose(scale, 0.01)
+    np.testing.assert_allclose(r_fit, np.eye(3))
+    np.testing.assert_allclose(t_fit, np.array([1.0, 0.0, 0.0]))
+    assert info["sim3_solver"] == "sim3"
+    assert info["sim3_pose_consistent_solve_used"] is True
+    assert "severe-scale" in info["sim3_pose_consistent_scale_guard_warning"]
+    assert info["sim3_stable_anchor_used"] is False
+    assert info["sim3_robust_fallback_used"] is False
 
 
 def test_anchor_sim3_exposes_terminal_drift() -> None:
@@ -283,14 +550,11 @@ def test_epa_sim3_v2_requires_anchor_consensus() -> None:
         quat_est=quat_est,
         min_window_samples=30,
     )
-    _, _, _, default_info = solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est, min_window_samples=30)
 
     assert info["sim3_solver"] == "epa_sim3_v2"
     assert info["sim3_confidence"] in {"high", "medium"}
     assert info["sim3_global_support_window_count"] >= 2
     assert info["sim3_global_support_distance_ratio"] > 0.5
-    assert default_info["sim3_solver"] == "epa_sim3_v2"
-    assert default_info["sim3_version"] == "v2"
     assert 1.0 < scale < 2.0
     pos_aligned = scale * (r_fit @ pos_est.T).T + t_fit
     healthy_prefix_rmse = np.sqrt(np.mean(np.sum((pos_aligned[:150] - pos_ref[:150]) ** 2, axis=1)))

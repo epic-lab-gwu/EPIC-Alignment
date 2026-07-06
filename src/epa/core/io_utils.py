@@ -577,10 +577,8 @@ def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, la
         return
     raw_dist = _fmt_report_value(float(success.get("raw_success_rate_distance", np.nan)) * 100.0)
     local_dist = _fmt_report_value(float(success.get("local_success_rate_distance", success.get("success_rate_distance", np.nan))) * 100.0)
-    gated_dist = _fmt_report_value(float(success.get("success_rate_distance_reliability_gated", np.nan)) * 100.0)
     raw_time = _fmt_report_value(float(success.get("raw_success_rate_time", np.nan)) * 100.0)
     local_time = _fmt_report_value(float(success.get("local_success_rate_time", success.get("success_rate_time", np.nan))) * 100.0)
-    gated_time = _fmt_report_value(float(success.get("success_rate_time_reliability_gated", np.nan)) * 100.0)
     status = str(success.get("sr_reliability_status", "ok") or "ok")
     explanation = str(success.get("sr_warning_explanation", "") or "No SR reliability issue was detected.")
     hard = success.get("sr_reliability_hard_reasons", [])
@@ -595,8 +593,8 @@ def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, la
                 "## Successful Rate 可靠性",
                 "",
                 f"- 状态：`{status}`",
-                f"- SR distance raw / local / reliability-gated：`{raw_dist}%` / `{local_dist}%` / `{gated_dist}%`",
-                f"- SR time raw / local / reliability-gated：`{raw_time}%` / `{local_time}%` / `{gated_time}%`",
+                f"- SR distance raw / local：`{raw_dist}%` / `{local_dist}%`",
+                f"- SR time raw / local：`{raw_time}%` / `{local_time}%`",
                 f"- Sim3 是否可能掩盖失败：`{str(may_mask).lower()}`",
                 f"- 说明：{explanation}",
             ]
@@ -611,8 +609,8 @@ def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, la
                 "## Successful Rate Reliability",
                 "",
                 f"- Status: `{status}`",
-                f"- SR distance raw / local / reliability-gated: `{raw_dist}%` / `{local_dist}%` / `{gated_dist}%`",
-                f"- SR time raw / local / reliability-gated: `{raw_time}%` / `{local_time}%` / `{gated_time}%`",
+                f"- SR distance raw / local: `{raw_dist}%` / `{local_dist}%`",
+                f"- SR time raw / local: `{raw_time}%` / `{local_time}%`",
                 f"- Sim3 may mask failure: `{str(may_mask).lower()}`",
                 f"- Explanation: {explanation}",
             ]

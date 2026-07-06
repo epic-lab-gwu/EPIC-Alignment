@@ -18,11 +18,15 @@ _KNOWN_ALIGN_MODES = {
     "epa_se3_eval",
     "sim3",
     "ov_sim3",
+    "epica_sim3",
+    "epica_sim3_stable",
+    "epica_sim3_joint",
+    "epica_sim3_trimmed",
     "se3single",
     "posyaw",
     "posyawsingle",
 }
-_LEGACY_ALIGN_MODES = {"se3", "se3single", "posyawsingle"}
+_LEGACY_ALIGN_MODES = {"se3single", "posyawsingle"}
 
 
 def _is_case_dir(path_str: str) -> bool:
@@ -39,16 +43,17 @@ def _map_align_mode_to_eval_align(mode: str) -> str:
     m = str(mode).lower()
     if m == "none":
         return "none"
-    if m == "epa_step3":
-        return "epa_step3"
-    if m in {"epa_se3", "epa_se3_eval"}:
-        return "epa_se3"
-    if m == "se3":
-        return "epa_step3"
-    if m == "sim3":
+    if m in {"se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
+        return "se3"
+    if m in {
+        "sim3",
+        "ov_sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+    }:
         return "sim3"
-    if m == "ov_sim3":
-        return "ov_sim3"
     if m in {"se3single", "posyawsingle"}:
         return "origin"
     if m == "posyaw":
@@ -170,8 +175,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--align-mode",
         default="",
-        choices=sorted(_KNOWN_ALIGN_MODES),
-        help="Alignment mode for compatibility with prior workflow.",
+        metavar="{se3,posyaw,sim3}",
+        help="Public alignment mode: se3, posyaw, or sim3. Compatibility aliases are accepted.",
     )
     p.add_argument("--no-plot", action="store_true", help="Disable plots.")
     p.add_argument("--keep-output", action="store_true", help="Keep outputs on disk.")
@@ -216,10 +221,6 @@ def main(argv: list[str] | None = None) -> int:
     mapped_eval_align = _map_align_mode_to_eval_align(align_mode)
     if align_mode in _LEGACY_ALIGN_MODES:
         messages = {
-            "se3": (
-                "align_mode 'se3' is a legacy OpenVINS alias for EPA Step3 "
-                "(eval-align epa_step3). Use 'epa_se3' for EPA SE3 mode."
-            ),
             "se3single": "align_mode 'se3single' is legacy/optional and maps to origin alignment.",
             "posyawsingle": "align_mode 'posyawsingle' is legacy/optional and maps to origin alignment.",
         }

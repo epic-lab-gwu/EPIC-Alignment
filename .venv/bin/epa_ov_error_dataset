@@ -1,0 +1,6 @@
+#!/home/yifu/EPIC-Alignment/.venv/bin/python
+import sys
+from epa.ov_eval_compat import main_error_dataset
+if __name__ == '__main__':
+    sys.argv[0] = sys.argv[0].removesuffix('.exe')
+    sys.exit(main_error_dataset())

@@ -11,6 +11,7 @@ from epa.ov_eval_compat import (
     _build_error_comparison_parser,
     _compute_rpe_segments,
     _compute_time_rpe_1s,
+    _compute_valid_rpe_segments,
     _drift_rate_percent,
     _evaluate_pair,
     _evaluate_pair_epa_step3,
@@ -22,7 +23,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.12"
+    assert epa.__version__ == "0.1.13"
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -84,6 +85,37 @@ def test_ov_eval_rpe_segments_use_fixed_half_meter_distance_window() -> None:
     assert float(out[40.0]["pos_stats"]["median"]) == 0.0
 
 
+def test_valid_rpe_segments_filter_by_valid_edge_mask() -> None:
+    t = np.arange(11, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    est_pos = gt_pos.copy()
+    est_pos[6:, 1] = 100.0
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    valid_segment_mask = np.array([True, True, True, True, True, False, False, False, False, False])
+
+    full = _compute_rpe_segments(
+        gt_pos=gt_pos,
+        gt_quat=quat,
+        est_pos=est_pos,
+        est_quat=quat,
+        segments_m=[4.0, 8.0],
+    )
+    valid = _compute_valid_rpe_segments(
+        gt_pos=gt_pos,
+        gt_quat=quat,
+        est_pos=est_pos,
+        est_quat=quat,
+        valid_segment_mask=valid_segment_mask,
+        segments_m=[4.0, 8.0],
+    )
+
+    assert int(full[4.0]["pair_count"]) == 7
+    assert int(valid[4.0]["pair_count"]) == 2
+    np.testing.assert_array_equal(np.asarray(valid[4.0]["pair_ids"], dtype=int), np.array([[0, 4], [1, 5]]))
+    assert int(valid[8.0]["pair_count"]) == 0
+    np.testing.assert_allclose(float(valid[4.0]["pos_stats"]["rmse"]), 0.0)
+
+
 def _write_tum(path: Path, t: np.ndarray, pos: np.ndarray, quat: np.ndarray) -> None:
     rows = [
         f"{float(ts):.9f} {float(p[0]):.9f} {float(p[1]):.9f} {float(p[2]):.9f} "
@@ -127,6 +159,33 @@ def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(
     assert np.isfinite(float(epa["ate3_ori"]["rmse"]))
     assert np.isfinite(float(epa["ate3_pos"]["rmse"]))
     assert epa["eval_source"] == "epa_step3"
+
+
+def test_evaluate_pair_epa_step3_keeps_sparse_estimate_association(tmp_path: Path) -> None:
+    t_gt = np.arange(0.0, 10.001, 0.01)
+    pos_gt = np.column_stack(
+        [
+            0.4 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.15 * t_gt),
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.05 * t_gt, 0.01 * t_gt, 0.02 * t_gt])).as_quat()
+
+    sparse_ids = np.arange(0, t_gt.size, 100, dtype=int)
+    t_est = t_gt[sparse_ids]
+    pos_est = pos_gt[sparse_ids]
+    quat_est = quat_gt[sparse_ids]
+
+    gt_path = tmp_path / "gt_dense.tum"
+    est_path = tmp_path / "est_sparse.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
+
+    assert int(result["matched"]) == int(t_est.size)
+    assert result["eval_source"] == "epa_step3"
 
 
 def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) -> None:
@@ -371,6 +430,12 @@ def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(
     assert "TOOL SOURCE: epa_step3=1, epa_eval=1, failed=0" in out
     assert "EVAL SOURCE NON-EPA RUNS" not in out
     assert "DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)" in out
+    assert "FULL TRAJECTORY DISTANCE RPE LATEX TABLE" not in out
+    assert "DRIFT-VALID ONLY DISTANCE RPE LATEX TABLE" not in out
+    assert "DRIFT-VALID ONLY 10m SEGMENT RPE LATEX TABLE (ROT DEG / TRANS M)" in out
+    assert "DRIFT-VALID ONLY 20m SEGMENT RPE LATEX TABLE (ROT DEG / TRANS M)" in out
+    assert "DRIFT-VALID ONLY 50m SEGMENT RPE LATEX TABLE (ROT DEG / TRANS M)" in out
+    assert "DRIFT-VALID ONLY 100m SEGMENT RPE LATEX TABLE (ROT DEG / TRANS M)" in out
     assert "& \\textbf{Average} \\\\hline" in out
     assert "(2/2 valid runs)" in out
 
@@ -484,3 +549,63 @@ def test_error_dataset_reports_unreliable_rotation_with_high_translation_sr(
     out = capsys.readouterr().out
     assert "unreliable_runs: bad_rotation.txt:" in out
     assert "Translation SR is high but rotation error is unstable" in out
+
+
+def test_error_comparison_gates_unreliable_sim3_valid_only_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat_gt = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    quat_bad = np.tile(R.from_euler("z", 179.0, degrees=True).as_quat(), (t.size, 1))
+    gt_root = tmp_path / "gt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    gt_root.mkdir()
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_root / "seq.txt", t, gt_pos, quat_gt)
+    (run_dir / "unreliable_sim3.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**_kwargs):
+        return {
+            "matched": int(t.size),
+            "length_ratio": 1.0,
+            "ate3_ori": {"rmse": 179.0},
+            "ate3_pos": {"rmse": 0.0},
+            "ate2_ori": {"rmse": 179.0},
+            "ate2_pos": {"rmse": 0.0},
+            "eval_source": "epa_eval_align",
+            "eval_alignment": {
+                "align_mode": "sim3",
+                "sim3_reliable": False,
+                "sim3_failure_reason": "no_dominant_global_support",
+            },
+            "gt_t": t,
+            "gt_pos": gt_pos,
+            "gt_quat": quat_gt,
+            "est_pos": gt_pos,
+            "est_quat": quat_bad,
+        }
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_comparison_parser().parse_args(
+        [
+            "sim3",
+            str(gt_root),
+            str(alg_root),
+            "--epa-success-threshold-mode",
+            "fixed",
+            "--epa-success-threshold-m",
+            "10",
+            "--epa-success-global-gate-m",
+            "30",
+        ]
+    )
+
+    assert run_error_comparison(args) == 0
+    out = capsys.readouterr().out
+    assert "unreliable_runs: unreliable_sim3.txt:no_dominant_global_support" in out
+    assert "algo & 0.00 & 0.00" in out
+    assert "algo & nan / nan & nan / nan" in out

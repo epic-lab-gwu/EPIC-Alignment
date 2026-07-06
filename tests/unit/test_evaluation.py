@@ -319,7 +319,6 @@ def test_compute_valid_segment_metrics_filters_ape_and_rpe_pairs() -> None:
     np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.2)
     np.testing.assert_allclose(metrics["success"]["raw_success_rate_distance"], 0.4)
     np.testing.assert_allclose(metrics["success"]["local_success_rate_distance"], 0.2)
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance_reliability_gated"], 0.2)
     assert metrics["success"]["sr_reliability_status"] == "ok"
     assert metrics["ape"]["translation_part"]["rmse"] == 0.0
     assert metrics["rpe"]["pair_count"] == 1

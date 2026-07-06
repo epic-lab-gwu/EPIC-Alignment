@@ -4,19 +4,57 @@ from scipy.spatial.transform import Rotation as R
 from epa.core.pipeline_modular import (
     _associate_gt_est,
     _compute_piecewise_alignment,
+    _default_interactive_view,
     _downsample_by_max_hz,
+    _interactive_eval_view_specs,
     _match_nearest_timestamps,
     _offset_match_diagnostics,
     _select_gt_overlap_window,
     _search_direct_offset_from_matched_pairs,
 )
 from epa.core.calibration import solve_world_alignment
-from epa.core.steps import _select_step3_solve_variant, _solve_step2_step3_candidate
+from epa.core.steps import (
+    _select_step3_solve_variant,
+    _solve_step2_step3_candidate,
+    _solve_world_alignment_posyaw_robust_trimmed,
+)
+
+
+def test_interactive_eval_views_only_include_requested_alignment() -> None:
+    assert _default_interactive_view("none") == "step3"
+    assert _interactive_eval_view_specs("none") == ()
+    assert _interactive_eval_view_specs("epa_step3") == ()
+
+    assert _default_interactive_view("sim3") == "sim3"
+    assert _interactive_eval_view_specs("sim3") == (("sim3", "sim3", "Sim3"),)
+    assert _interactive_eval_view_specs("epa_sim3_v2") == (("sim3", "sim3", "Sim3"),)
+
+    assert _default_interactive_view("epica_sim3_stable") == "sim3"
+    assert _interactive_eval_view_specs("epica_sim3_stable") == (("sim3", "sim3", "Sim3"),)
+
+    assert _default_interactive_view("posyaw") == "epa_posyaw"
+    assert _interactive_eval_view_specs("posyaw") == (("epa_posyaw", "posyaw", "EPA PosYaw"),)
 
 
 def _make_ref(n: int = 200) -> np.ndarray:
     t = np.linspace(0.0, 1.0, n)
     return np.column_stack([5.0 * t, np.sin(6.0 * t), 0.2 * np.cos(3.0 * t)])
+
+
+def test_posyaw_world_alignment_does_not_absorb_roll_pitch() -> None:
+    pos_est = _make_ref(160)
+    r_tilted = R.from_euler("zyx", [35.0, -12.0, 8.0], degrees=True).as_matrix()
+    trans = np.array([0.8, -1.1, 0.4], dtype=float)
+    pos_gt = (r_tilted @ pos_est.T).T + trans
+
+    fit = _solve_world_alignment_posyaw_robust_trimmed(pos_est, pos_gt)
+    r_fit = np.asarray(fit["R"], dtype=float)
+    pred = (r_fit @ pos_est.T).T + np.asarray(fit["t"], dtype=float)
+
+    np.testing.assert_allclose(r_fit[2], np.array([0.0, 0.0, 1.0]), atol=1e-12)
+    np.testing.assert_allclose(r_fit[:, 2], np.array([0.0, 0.0, 1.0]), atol=1e-12)
+    assert float(fit["rmse_all_m"]) > 0.05
+    assert float(np.sqrt(np.mean(np.sum((pred - pos_gt) ** 2, axis=1)))) > 0.05
 
 
 def test_search_direct_offset_from_matched_pairs_recovers_small_offset() -> None:

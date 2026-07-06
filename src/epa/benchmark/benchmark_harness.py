@@ -424,6 +424,7 @@ def _run_epa_case(
     output_root: Path,
     stdout_log_path: Path,
     stderr_log_path: Path,
+    eval_align: str = "",
 ) -> dict[str, object]:
     env = os.environ.copy()
     py_paths = [str(epa_src)]
@@ -459,6 +460,9 @@ def _run_epa_case(
         "--run-label",
         case.case_id,
     ]
+    eval_align = str(eval_align or "").strip()
+    if eval_align:
+        cmd.extend(["--eval-align", eval_align])
     if bool(no_downsample):
         cmd.append("--no-downsample")
     proc = subprocess.run(
@@ -495,8 +499,6 @@ def _run_epa_case(
         "sr_time": float("nan"),
         "sr_distance_raw": float("nan"),
         "sr_time_raw": float("nan"),
-        "sr_distance_gated": float("nan"),
-        "sr_time_gated": float("nan"),
         "sr_reliability_status": "",
         "sr_warning_explanation": "",
         "sim3_may_mask_failure": "",
@@ -525,6 +527,10 @@ def _run_epa_case(
         "diagnosis_primary": "",
         "diagnosis_summary": "",
         "diagnosis_tags": "",
+        "eval_align": eval_align,
+        "sim3_stable_anchor_used": "",
+        "sim3_fallback_used": "",
+        "sim3_fallback_reason": "",
     }
 
     run_dir = _parse_epa_run_dir(proc.stdout, proc.stderr)
@@ -562,6 +568,7 @@ def _run_epa_case(
     orientation = payload.get("orientation_diagnostics", {})
     case_diagnostics = payload.get("case_diagnostics", {})
     metadata = payload.get("metadata", {})
+    metadata_eval_alignment = metadata.get("eval_alignment", {})
     result["offset_est_s"] = _as_float(time_block.get("offset_est_s"))
     result["ate_rmse_raw_m"] = _as_float(traj.get("ate_rmse_raw_m"))
     result["ate_rmse_step3_m"] = _as_float(traj.get("ate_rmse_step3_m"))
@@ -575,8 +582,6 @@ def _run_epa_case(
     result["sr_time"] = _as_float(valid_step3.get("success_rate_time"))
     result["sr_distance_raw"] = _as_float(valid_step3.get("raw_success_rate_distance"))
     result["sr_time_raw"] = _as_float(valid_step3.get("raw_success_rate_time"))
-    result["sr_distance_gated"] = _as_float(valid_step3.get("success_rate_distance_reliability_gated"))
-    result["sr_time_gated"] = _as_float(valid_step3.get("success_rate_time_reliability_gated"))
     result["sr_reliability_status"] = str(valid_step3.get("sr_reliability_status", ""))
     result["sr_warning_explanation"] = str(valid_step3.get("sr_warning_explanation", ""))
     result["sim3_may_mask_failure"] = str(bool(valid_step3.get("sim3_may_mask_failure", False)))
@@ -596,6 +601,29 @@ def _run_epa_case(
     if "sim3" in str(eval_step3.get("align_mode", "")).lower():
         result["sim3_reliable"] = str(bool(eval_step3.get("sim3_reliable", True)))
         result["sim3_warning"] = str(eval_step3.get("sim3_warning", ""))
+    result["eval_align"] = str(metadata.get("eval_align", eval_align))
+    stable_used = eval_step3.get(
+        "sim3_stable_anchor_used",
+        metadata_eval_alignment.get("sim3_stable_anchor_used", "")
+        if isinstance(metadata_eval_alignment, dict)
+        else "",
+    )
+    result["sim3_stable_anchor_used"] = "" if stable_used == "" else str(bool(stable_used))
+    fallback_used = eval_step3.get(
+        "sim3_robust_fallback_used",
+        metadata_eval_alignment.get("sim3_robust_fallback_used", "")
+        if isinstance(metadata_eval_alignment, dict)
+        else "",
+    )
+    result["sim3_fallback_used"] = "" if fallback_used == "" else str(bool(fallback_used))
+    result["sim3_fallback_reason"] = str(
+        eval_step3.get(
+            "sim3_robust_fallback_reason",
+            metadata_eval_alignment.get("sim3_robust_fallback_reason", "")
+            if isinstance(metadata_eval_alignment, dict)
+            else "",
+        )
+    )
     result["orientation_unstable"] = str(
         bool(orientation.get("orientation_unstable", metadata.get("orientation_unstable", False)))
     )
@@ -1022,6 +1050,11 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
         or "sim3" in str(row.get("epa_eval_align", "")).lower()
         for row in rows
     )
+    has_sim3_path = any(
+        str(row.get("epa_sim3_stable_anchor_used", "") or "").strip()
+        or str(row.get("epa_sim3_fallback_used", "") or "").strip()
+        for row in rows
+    )
     matrix_layout = len(method_labels) > 3
 
     grouped: dict[str, list[dict[str, object]]] = {}
@@ -1322,11 +1355,31 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
             method = str(row.get("method", "") or "sim3")
             reliable = str(row.get("epa_sim3_reliable", "") or "unknown")
             scale = _fmt(row.get("epa_sim3_scale"), 6) or "-"
+            stable_used = str(row.get("epa_sim3_stable_anchor_used", "") or "").strip()
+            fallback_used = str(row.get("epa_sim3_fallback_used", "") or "").strip()
+            stable_line = f'<div class="muted">stable anchor {html.escape(stable_used)}</div>' if stable_used else ""
+            fallback_line = f'<div class="muted">fallback {html.escape(fallback_used)}</div>' if fallback_used else ""
             lines.append(
                 f'<div class="auditLine">{_run_link(row, method)} '
-                f'{html.escape(reliable)} <span class="muted">scale {html.escape(scale)}</span></div>'
+                f'{html.escape(reliable)} <span class="muted">scale {html.escape(scale)}</span>'
+                f'{stable_line}{fallback_line}</div>'
             )
         return "".join(lines)
+
+    def _sim3_path_text(row: dict[str, object]) -> str:
+        stable = str(row.get("epa_sim3_stable_anchor_used", "") or "").strip().lower()
+        fallback = str(row.get("epa_sim3_fallback_used", "") or "").strip().lower()
+        parts: list[str] = []
+        if stable:
+            parts.append(f"stable={stable}")
+        if not fallback:
+            return ", ".join(parts) if parts else "-"
+        if fallback == "true":
+            reason = str(row.get("epa_sim3_fallback_reason", "") or "").strip()
+            parts.append(f"v2=true: {reason}" if reason else "v2=true")
+        else:
+            parts.append(f"v2={fallback}")
+        return ", ".join(parts)
 
     total = len(grouped)
     table_rows: list[str] = []
@@ -1339,7 +1392,8 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
             "case", "dataset", "method", "epa_case_status", "epa_case_diagnosis_summary",
             "epa_case_diagnosis_primary", "epa_sim3_reliable", "epa_sim3_warning",
             "epa_step3_alignment_mode", "epa_orientation_warning", "epa_sr_reliability_status",
-            "epa_sr_warning_explanation",
+            "epa_sr_warning_explanation", "epa_sim3_stable_anchor_used", "epa_sim3_fallback_used",
+            "epa_sim3_fallback_reason",
         ))
         pill = {
             "ok": "okPill",
@@ -1368,12 +1422,24 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
                 sim3_text = (
                     f'<b>{html.escape(str(row.get("epa_sim3_reliable", "") or "unknown"))}</b>'
                     f'<div class="muted">scale {html.escape(_fmt(row.get("epa_sim3_scale"), 6) or "-")}</div>'
+                    f'<div class="muted">stable anchor {html.escape(str(row.get("epa_sim3_stable_anchor_used", "") or ""))}</div>'
+                    f'<div class="muted">fallback {html.escape(str(row.get("epa_sim3_fallback_used", "") or ""))}</div>'
+                    if str(row.get("epa_sim3_stable_anchor_used", "") or "") or str(row.get("epa_sim3_fallback_used", "") or "")
+                    else (
+                        f'<b>{html.escape(str(row.get("epa_sim3_reliable", "") or "unknown"))}</b>'
+                        f'<div class="muted">scale {html.escape(_fmt(row.get("epa_sim3_scale"), 6) or "-")}</div>'
+                    )
                     if is_sim3_row and has_sim3
                     else '<span class="muted">-</span>'
                 )
                 diag_title = _diagnosis_title(row)
                 diag = _diagnosis_brief(row)
                 row_sim3_cell = f'<td>{sim3_text}</td>' if has_sim3 else ""
+                row_path_cell = (
+                    f'<td><span class="metricVals">{html.escape(_sim3_path_text(row))}</span></td>'
+                    if has_sim3_path
+                    else ""
+                )
                 table_rows.append(
                     f'<tr class="{html.escape(row_class)} {"caseStart" if idx == 0 else ""}" '
                     f'data-case="{html.escape(case_name, quote=True)}" '
@@ -1389,12 +1455,18 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
                     f'<div class="muted">rot {html.escape((_fmt(row.get("epa_rpe_time_1s_rot_rmse_deg"), 3) or _fmt(row.get("epa_orientation_rpe_time_1s_rmse_deg"), 3) or "-"))} deg</div></span></td>'
                     f'<td><span class="metricVals">{html.escape(_valid_distance_text(row))}</span></td>'
                     f'<td><span class="metricVals">{html.escape(_global_gate_text(row))}</span></td>'
+                    f'{row_path_cell}'
                     f'{row_sim3_cell}'
                     f'<td title="{html.escape(diag_title, quote=True)}">{html.escape(diag)}</td>'
                     '</tr>'
                 )
         else:
             sim3_cell = f'<td>{_sim3_audit(case_rows)}</td>' if has_sim3 else ""
+            path_cell = (
+                f'<td><span class="metricVals">{html.escape(_text_values(case_rows, "epa_sim3_stable_anchor_used"))}</span></td>'
+                if has_sim3_path
+                else ""
+            )
             table_rows.append(
                 f'<tr class="{html.escape(row_class)}" data-case="{html.escape(case_name, quote=True)}" '
                 f'data-search="{html.escape(search_text.lower(), quote=True)}" data-status="{html.escape(status_label, quote=True)}">'
@@ -1413,6 +1485,7 @@ def _write_summary_html(rows: list[dict[str, object]], path: Path) -> None:
                 f'<td><span class="metricVals">{html.escape(_valid_distance_values(case_rows))}</span></td>'
                 f'<td><span class="metricVals">{html.escape(_global_gate_values(case_rows))}</span></td>'
                 f'<td><span class="metricVals">{html.escape(_metric_values(case_rows, "epa_sim3_scale", ndigits=6))}</span></td>'
+                f'{path_cell}'
                 f'{sim3_cell}'
                 f'<td>{html.escape(_diagnosis_text(case_rows))}<div class="muted">{html.escape(_text_values(case_rows, "epa_sr_warning_explanation"))}</div></td>'
                 '</tr>'
@@ -1477,6 +1550,7 @@ tr.caseStart td { border-top:2px solid #cbd5e1; }
             "<th>1s RPE<br><span class='muted'>trans + rot</span></th>",
             "<th>valid distance</th>",
             "<th>global gate</th>",
+            "<th>Sim3 path</th>" if has_sim3_path else "",
             "<th>Sim3</th>" if has_sim3 else "",
             "<th style='width:190px'>diagnosis</th>",
         ]
@@ -1497,6 +1571,7 @@ tr.caseStart td { border-top:2px solid #cbd5e1; }
             f"<th>valid distance<br><span class='muted'>({html.escape(method_hint)})</span></th>",
             f"<th>global gate<br><span class='muted'>({html.escape(method_hint)})</span></th>",
             f"<th>scale<br><span class='muted'>({html.escape(method_hint)})</span></th>",
+            f"<th>Sim3 path<br><span class='muted'>({html.escape(method_hint)})</span></th>" if has_sim3_path else "",
             "<th style='width:170px'>Sim3 audit</th>" if has_sim3 else "",
             "<th style='width:320px'>diagnosis</th>",
         ]
@@ -1621,6 +1696,13 @@ def _resolve_cli_path(path_str: str, repo_root: Path) -> Path:
     return (repo_root / p).resolve()
 
 
+def _resolve_cli_executable(path_str: str, repo_root: Path) -> Path:
+    p = Path(path_str).expanduser()
+    if p.is_absolute():
+        return p.absolute()
+    return (repo_root / p).absolute()
+
+
 def _safe_root_label(path: Path) -> str:
     name = path.expanduser().resolve().name.strip()
     if not name:
@@ -1709,6 +1791,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-prepared",
         action="store_true",
         help="Keep prepared_tum/ files for later case reruns. Default removes them after summary generation.",
+    )
+    parser.add_argument(
+        "--eval-align",
+        default="",
+        help=argparse.SUPPRESS,
     )
 
     parser.add_argument("--dt-resample", type=float, default=0.001, help=argparse.SUPPRESS)
@@ -1811,8 +1898,6 @@ def _failed_summary_row(
         "epa_sr_time": float("nan"),
         "epa_sr_distance_raw": float("nan"),
         "epa_sr_time_raw": float("nan"),
-        "epa_sr_distance_gated": float("nan"),
-        "epa_sr_time_gated": float("nan"),
         "epa_sr_reliability_status": "",
         "epa_sr_warning_explanation": "",
         "epa_sim3_may_mask_failure": "",
@@ -1831,6 +1916,10 @@ def _failed_summary_row(
         "epa_sim3_scale": float("nan"),
         "epa_sim3_reliable": "",
         "epa_sim3_warning": "",
+        "epa_eval_align": "",
+        "epa_sim3_stable_anchor_used": "",
+        "epa_sim3_fallback_used": "",
+        "epa_sim3_fallback_reason": "",
         "epa_orientation_unstable": "",
         "epa_orientation_ape_rmse_deg": float("nan"),
         "epa_orientation_rpe_rmse_deg": float("nan"),
@@ -1875,6 +1964,7 @@ def _run_benchmark_case(
     offset_refine_window: float,
     offset_refine_step: float,
     min_match_ratio: float,
+    eval_align: str = "",
 ) -> dict[str, object]:
     case_payload: dict[str, object] = {
         "case": case.case_id,
@@ -1923,6 +2013,7 @@ def _run_benchmark_case(
         output_root=output_root,
         stdout_log_path=epa_stdout_log,
         stderr_log_path=epa_stderr_log,
+        eval_align=eval_align,
     )
 
     if with_evo:
@@ -1988,8 +2079,6 @@ def _run_benchmark_case(
         "epa_sr_time": _as_float(epa_result.get("sr_time")),
         "epa_sr_distance_raw": _as_float(epa_result.get("sr_distance_raw")),
         "epa_sr_time_raw": _as_float(epa_result.get("sr_time_raw")),
-        "epa_sr_distance_gated": _as_float(epa_result.get("sr_distance_gated")),
-        "epa_sr_time_gated": _as_float(epa_result.get("sr_time_gated")),
         "epa_sr_reliability_status": str(epa_result.get("sr_reliability_status", "")),
         "epa_sr_warning_explanation": str(epa_result.get("sr_warning_explanation", "")),
         "epa_sim3_may_mask_failure": str(epa_result.get("sim3_may_mask_failure", "")),
@@ -2008,6 +2097,10 @@ def _run_benchmark_case(
         "epa_sim3_scale": _as_float(epa_result.get("sim3_scale")),
         "epa_sim3_reliable": str(epa_result.get("sim3_reliable", "")),
         "epa_sim3_warning": str(epa_result.get("sim3_warning", "")),
+        "epa_eval_align": str(epa_result.get("eval_align", "")),
+        "epa_sim3_stable_anchor_used": str(epa_result.get("sim3_stable_anchor_used", "")),
+        "epa_sim3_fallback_used": str(epa_result.get("sim3_fallback_used", "")),
+        "epa_sim3_fallback_reason": str(epa_result.get("sim3_fallback_reason", "")),
         "epa_orientation_unstable": str(epa_result.get("orientation_unstable", "")),
         "epa_orientation_ape_rmse_deg": _as_float(epa_result.get("orientation_ape_rmse_deg")),
         "epa_orientation_rpe_rmse_deg": _as_float(epa_result.get("orientation_rpe_rmse_deg")),
@@ -2097,8 +2190,6 @@ def _summary_row_from_case_payload(
         "epa_sr_time": _as_float(epa_result.get("sr_time")),
         "epa_sr_distance_raw": _as_float(epa_result.get("sr_distance_raw")),
         "epa_sr_time_raw": _as_float(epa_result.get("sr_time_raw")),
-        "epa_sr_distance_gated": _as_float(epa_result.get("sr_distance_gated")),
-        "epa_sr_time_gated": _as_float(epa_result.get("sr_time_gated")),
         "epa_sr_reliability_status": str(epa_result.get("sr_reliability_status", "")),
         "epa_sr_warning_explanation": str(epa_result.get("sr_warning_explanation", "")),
         "epa_sim3_may_mask_failure": str(epa_result.get("sim3_may_mask_failure", "")),
@@ -2117,6 +2208,10 @@ def _summary_row_from_case_payload(
         "epa_sim3_scale": _as_float(epa_result.get("sim3_scale")),
         "epa_sim3_reliable": str(epa_result.get("sim3_reliable", "")),
         "epa_sim3_warning": str(epa_result.get("sim3_warning", "")),
+        "epa_eval_align": str(epa_result.get("eval_align", "")),
+        "epa_sim3_stable_anchor_used": str(epa_result.get("sim3_stable_anchor_used", "")),
+        "epa_sim3_fallback_used": str(epa_result.get("sim3_fallback_used", "")),
+        "epa_sim3_fallback_reason": str(epa_result.get("sim3_fallback_reason", "")),
         "epa_orientation_unstable": str(epa_result.get("orientation_unstable", "")),
         "epa_orientation_ape_rmse_deg": _as_float(epa_result.get("orientation_ape_rmse_deg")),
         "epa_orientation_rpe_rmse_deg": _as_float(epa_result.get("orientation_rpe_rmse_deg")),
@@ -2170,7 +2265,7 @@ def run(args: argparse.Namespace) -> int:
         if str(args.output_root).strip()
         else _default_output_root(repo_root, align_root)
     )
-    python_bin = _resolve_cli_path(args.python_bin, repo_root)
+    python_bin = _resolve_cli_executable(args.python_bin, repo_root)
     epa_src = _resolve_cli_path(args.epa_src, repo_root)
     evo_repo = _resolve_cli_path(args.evo_repo, repo_root) if str(args.evo_repo).strip() else Path("")
 
@@ -2222,6 +2317,7 @@ def run(args: argparse.Namespace) -> int:
         "offset_refine_window": args.offset_refine_window,
         "offset_refine_step": args.offset_refine_step,
         "min_match_ratio": args.min_match_ratio,
+        "eval_align": str(getattr(args, "eval_align", "")),
     }
     summary_rows_by_index: dict[int, dict[str, object]] = {}
     pending_cases: list[tuple[int, BenchmarkCase]] = []

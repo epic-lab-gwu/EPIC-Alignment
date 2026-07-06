@@ -229,11 +229,6 @@ def _metric_summary_cards(metrics_payload: dict, *, ape_relation: str, rpe_relat
             percent=True,
         ),
         _summary_card(
-            "SR gated",
-            _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "success_rate_distance_reliability_gated")),
-            percent=True,
-        ),
-        _summary_card(
             "SR reliability",
             _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "sr_reliability_status")),
         ),
@@ -760,6 +755,8 @@ function currentMetricBlocks() {{
   ];
   if (isSim3) {{
     summary.push(compactCard('Sim3 reliable', metrics.sim3_reliable));
+    summary.push(compactCard('stable anchor', metrics.sim3_stable_anchor_used ?? view.meta?.stable_anchor_used));
+    summary.push(compactCard('fallback used', metrics.sim3_fallback_used ?? view.meta?.fallback_used));
     summary.push(compactCard('scale', metrics.sim3_scale ?? metrics.align_scale));
   }} else if (metrics.align_scale !== undefined && metrics.align_scale !== null) {{
     summary.push(compactCard('scale', metrics.align_scale));
@@ -783,7 +780,7 @@ function currentMetricBlocks() {{
       cards: [
         compactCard('SR', 'local SR shown in the summary; computed on valid segments after drift/jump filtering'),
         compactCard('raw SR', 'computed directly over the full trajectory before valid-segment filtering'),
-        compactCard('gated SR', 'local SR after reliability audit; unreliable runs are marked down'),
+        compactCard('SR reliability', 'audit status is reported separately; SR values are not overwritten by reliability gating'),
       ],
     }},
     {{
@@ -791,10 +788,8 @@ function currentMetricBlocks() {{
       cards: [
         compactCard('SR distance', metrics.sr_distance, '', true),
         compactCard('raw SR distance', metrics.raw_sr_distance, '', true),
-        compactCard('gated SR distance', metrics.gated_sr_distance, '', true),
         compactCard('SR time', metrics.sr_time, '', true),
         compactCard('raw SR time', metrics.raw_sr_time, '', true),
-        compactCard('gated SR time', metrics.gated_sr_time, '', true),
         compactCard('valid distance', `${{scalarText(metrics.valid_distance_m, 'm')}} / ${{scalarText(metrics.total_distance_m, 'm')}}`),
         compactCard('APE threshold', metrics.threshold_m, 'm'),
       ],
@@ -829,6 +824,9 @@ function currentMetricBlocks() {{
       title: 'Sim3 Audit',
       cards: [
         compactCard('solver', metrics.sim3_solver || view.meta?.solver || ''),
+        compactCard('stable anchor', metrics.sim3_stable_anchor_used ?? view.meta?.stable_anchor_used),
+        compactCard('fallback used', metrics.sim3_fallback_used ?? view.meta?.fallback_used),
+        compactCard('fallback reason', metrics.sim3_fallback_reason || view.meta?.fallback_reason || ''),
         compactCard('anchor status', metrics.sim3_anchor_status || view.meta?.anchor_status || ''),
         compactCard('anchor samples', metrics.sim3_anchor_samples || view.meta?.anchor_samples || ''),
         compactCard('confidence', metrics.sim3_confidence || view.meta?.confidence || ''),

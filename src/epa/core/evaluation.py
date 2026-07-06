@@ -982,8 +982,6 @@ def compute_valid_segment_metrics(
     success["raw_valid_time_s"] = raw_regions.get("valid_time_s", 0.0)
     success["local_success_rate_distance"] = success.get("success_rate_distance", np.nan)
     success["local_success_rate_time"] = success.get("success_rate_time", np.nan)
-    success["success_rate_distance_reliability_gated"] = success.get("success_rate_distance", np.nan)
-    success["success_rate_time_reliability_gated"] = success.get("success_rate_time", np.nan)
     success["sr_reliability_status"] = "ok"
     success["sr_warning_explanation"] = ""
     if threshold_info is not None:

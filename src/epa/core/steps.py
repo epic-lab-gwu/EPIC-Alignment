@@ -32,6 +32,40 @@ def _alignment_rmse(pos_est: np.ndarray, pos_ref: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.sum(diff * diff, axis=1))))
 
 
+def _rot_z(theta: float) -> np.ndarray:
+    c = float(np.cos(theta))
+    s = float(np.sin(theta))
+    return np.asarray([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=float)
+
+
+def _solve_world_alignment_posyaw_standard(P: np.ndarray, Q: np.ndarray) -> dict[str, object]:
+    src = np.asarray(P, dtype=float)
+    dst = np.asarray(Q, dtype=float)
+    if src.shape != dst.shape or src.shape[0] < 2:
+        raise ValueError("PosYaw world alignment requires at least 2 paired 3D points.")
+
+    src_xy = src[:, :2]
+    dst_xy = dst[:, :2]
+    mu_src_xy = np.mean(src_xy, axis=0)
+    mu_dst_xy = np.mean(dst_xy, axis=0)
+    src0 = src_xy - mu_src_xy
+    dst0 = dst_xy - mu_dst_xy
+    cov = dst0.T @ src0
+    yaw = float(np.arctan2(cov[1, 0] - cov[0, 1], cov[0, 0] + cov[1, 1]))
+    Rw = _rot_z(yaw)
+    tw = np.mean(dst, axis=0) - Rw @ np.mean(src, axis=0)
+    pred = (Rw @ src.T).T + tw
+    residuals = np.linalg.norm(pred - dst, axis=1)
+    return {
+        "R": Rw,
+        "t": tw,
+        "pred": pred,
+        "residuals": residuals,
+        "rmse_all_m": _alignment_rmse(pred, dst),
+        "yaw_deg": float(np.degrees(yaw)),
+    }
+
+
 def _solve_world_alignment_standard(P: np.ndarray, Q: np.ndarray) -> dict[str, object]:
     Rw, tw = solve_world_alignment(P, Q)
     pred = (Rw @ np.asarray(P, dtype=float).T).T + tw
@@ -42,6 +76,95 @@ def _solve_world_alignment_standard(P: np.ndarray, Q: np.ndarray) -> dict[str, o
         "pred": pred,
         "residuals": residuals,
         "rmse_all_m": _alignment_rmse(pred, Q),
+    }
+
+
+def _solve_world_alignment_posyaw_robust_trimmed(
+    P: np.ndarray,
+    Q: np.ndarray,
+    *,
+    max_iterations: int = 3,
+    min_inlier_ratio: float = 0.35,
+    max_rejection_ratio: float = 0.65,
+) -> dict[str, object]:
+    P = np.asarray(P, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    standard = _solve_world_alignment_posyaw_standard(P, Q)
+    n = int(P.shape[0])
+    min_inliers = max(6, int(np.ceil(float(min_inlier_ratio) * float(n))))
+    if n < min_inliers:
+        return {
+            **standard,
+            "mode": "posyaw_standard",
+            "selected_mask": np.ones(n, dtype=bool),
+            "inlier_count": n,
+            "rejected_count": 0,
+            "rejection_ratio": 0.0,
+            "outlier_threshold_m": float("inf"),
+            "robust_available": False,
+            "standard_rmse_all_m": float(standard["rmse_all_m"]),
+            "standard_rmse_on_inliers_m": float(standard["rmse_all_m"]),
+            "robust_rmse_inliers_m": float(standard["rmse_all_m"]),
+            "robust_rmse_all_m": float(standard["rmse_all_m"]),
+        }
+
+    mask = np.ones(n, dtype=bool)
+    threshold = float("inf")
+    for _ in range(int(max_iterations)):
+        fit = _solve_world_alignment_posyaw_standard(P[mask], Q[mask])
+        pred_all = (fit["R"] @ P.T).T + fit["t"]
+        residuals = np.linalg.norm(pred_all - Q, axis=1)
+        threshold = _robust_threshold(
+            residuals,
+            min_inliers=min_inliers,
+            max_rejection_ratio=float(max_rejection_ratio),
+        )
+        new_mask = residuals <= threshold
+        if int(np.count_nonzero(new_mask)) < min_inliers:
+            keep = np.argsort(residuals)[:min_inliers]
+            new_mask = np.zeros(n, dtype=bool)
+            new_mask[keep] = True
+            threshold = float(np.max(residuals[keep]))
+        if np.array_equal(new_mask, mask):
+            break
+        mask = new_mask
+
+    robust = _solve_world_alignment_posyaw_standard(P[mask], Q[mask])
+    pred_all = (robust["R"] @ P.T).T + robust["t"]
+    residuals_all = np.linalg.norm(pred_all - Q, axis=1)
+    standard_res = np.asarray(standard["residuals"], dtype=float)
+    standard_inlier_rmse = _alignment_rmse(np.asarray(standard["pred"])[mask], Q[mask])
+    robust_inlier_rmse = _alignment_rmse(pred_all[mask], Q[mask])
+    robust_all_rmse = _alignment_rmse(pred_all, Q)
+    rejected = int(n - np.count_nonzero(mask))
+    improvement = standard_inlier_rmse - robust_inlier_rmse
+    enough_outliers = rejected >= max(3, int(np.ceil(0.05 * n)))
+    better_on_inliers = (
+        robust_inlier_rmse <= standard_inlier_rmse * 0.90
+        or improvement >= 0.05
+    )
+    use_robust = bool(enough_outliers and better_on_inliers)
+    selected = robust if use_robust else standard
+    selected_mask = mask if use_robust else np.ones(n, dtype=bool)
+
+    return {
+        "R": selected["R"],
+        "t": selected["t"],
+        "pred": pred_all if use_robust else standard["pred"],
+        "residuals": residuals_all if use_robust else standard_res,
+        "rmse_all_m": robust_all_rmse if use_robust else float(standard["rmse_all_m"]),
+        "mode": "posyaw_robust_trimmed" if use_robust else "posyaw_standard",
+        "selected_mask": selected_mask,
+        "inlier_count": int(np.count_nonzero(selected_mask)),
+        "rejected_count": int(n - np.count_nonzero(selected_mask)),
+        "rejection_ratio": float((n - np.count_nonzero(selected_mask)) / max(1, n)),
+        "outlier_threshold_m": float(threshold if use_robust else float("inf")),
+        "robust_available": True,
+        "standard_rmse_all_m": float(standard["rmse_all_m"]),
+        "standard_rmse_on_inliers_m": float(standard_inlier_rmse),
+        "robust_rmse_inliers_m": float(robust_inlier_rmse),
+        "robust_rmse_all_m": float(robust_all_rmse),
+        "yaw_deg": float(selected["yaw_deg"]),
     }
 
 
@@ -455,6 +578,7 @@ def _solve_step2_step3_candidate(
     quat_gt_solve,
     pr_solve,
     qr_solve,
+    global_align_mode: str = "se3",
 ):
     Rr_mats = R.from_quat(qr_sync).as_matrix()
     Rr_mats_solve = R.from_quat(qr_solve).as_matrix()
@@ -494,7 +618,13 @@ def _solve_step2_step3_candidate(
             extrinsic_offset,
         )
 
-        world_fit = _solve_world_alignment_robust_trimmed(pr_corr_solve[solve_mask], pos_gt_solve[solve_mask])
+        if str(global_align_mode).lower() in {"posyaw", "epa_posyaw"}:
+            world_fit = _solve_world_alignment_posyaw_robust_trimmed(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+            )
+        else:
+            world_fit = _solve_world_alignment_robust_trimmed(pr_corr_solve[solve_mask], pos_gt_solve[solve_mask])
         Rw_variant = np.asarray(world_fit["R"], dtype=float)
         tw_variant = np.asarray(world_fit["t"], dtype=float)
         selected_mask_local = np.asarray(world_fit["selected_mask"], dtype=bool)
@@ -516,6 +646,7 @@ def _solve_step2_step3_candidate(
             "pr_corrected": pr_corr,
             "pr_corrected_solve": pr_corr_solve,
             "pr_final": pr_final_variant,
+            "step3_selected_mask": selected_mask,
             "step3_rmse_selected_m": selected_rmse_m,
             "step3_sr_proxy": _step3_success_rate_proxy(pos_gt_solve, eval_errors),
             "step3_gate_proxy_m": _step3_gate_proxy(eval_errors),
@@ -554,6 +685,7 @@ def _solve_step2_step3_candidate(
     pr_corrected = selected_variant["pr_corrected"]
     pr_corrected_solve = selected_variant["pr_corrected_solve"]
     pr_final = selected_variant["pr_final"]
+    step3_selected_mask = np.asarray(selected_variant["step3_selected_mask"], dtype=bool)
 
     R_step2_mats = np.einsum("nij,jk->nik", Rr_mats, R_calc.T)
     q_step2 = normalize_quat_array(R.from_matrix(R_step2_mats).as_quat())
@@ -561,7 +693,11 @@ def _solve_step2_step3_candidate(
     q_step3_from_raw = normalize_quat_array((R.from_matrix(Rw_calc) * R.from_quat(qr_sync)).as_quat())
     rot_rmse_from_step2 = _rotation_error_rmse_deg(quat_gt_solve, q_step3_from_step2[:n_solve])
     rot_rmse_from_raw = _rotation_error_rmse_deg(quat_gt_solve, q_step3_from_raw[:n_solve])
-    if rot_rmse_from_raw < rot_rmse_from_step2:
+    if str(global_align_mode).lower() in {"posyaw", "epa_posyaw"}:
+        q_step3 = q_step3_from_step2
+        orientation_mode = "step2_posyaw"
+        rot_rmse_deg = rot_rmse_from_step2
+    elif rot_rmse_from_raw < rot_rmse_from_step2:
         q_step3 = q_step3_from_raw
         orientation_mode = "world_raw"
         rot_rmse_deg = rot_rmse_from_raw
@@ -590,6 +726,7 @@ def _solve_step2_step3_candidate(
         "pr_final_global": np.asarray(pr_final, dtype=float).copy(),
         "q_step2": q_step2,
         "q_step3": q_step3,
+        "step3_selected_mask": step3_selected_mask,
         "step3_rmse_selected_m": float(selected_variant["step3_rmse_selected_m"]),
         "rotation_ape_rmse_deg": rot_rmse_deg,
         "orientation_mode": orientation_mode,
@@ -1336,6 +1473,7 @@ def _solve_step2_step3(
     quat_gt_solve,
     pr_solve,
     qr_solve,
+    global_align_mode: str = "se3",
 ):
     R_base = solve_extrinsic_rotation(quat_gt_solve, qr_solve)
     candidates = []
@@ -1350,6 +1488,7 @@ def _solve_step2_step3(
                 quat_gt_solve=quat_gt_solve,
                 pr_solve=pr_solve,
                 qr_solve=qr_solve,
+                global_align_mode=global_align_mode,
             )
         )
     selected = _select_step2_step3_candidate(candidates)
@@ -1369,6 +1508,7 @@ def _solve_step2_step3(
         "pr_final_global": selected["pr_final_global"],
         "q_step2": selected["q_step2"],
         "q_step3": selected["q_step3"],
+        "step3_selected_mask": selected["step3_selected_mask"],
         "step3_choice": {
             "step3_rmse_selected_m": float(selected["step3_rmse_selected_m"]),
             "orientation_candidate_count": float(len(candidates)),
@@ -1390,7 +1530,7 @@ def _solve_step2_step3(
             "step3_candidate_stable_anchor_rmse_m": float(selected["step3_candidate_stable_anchor_rmse_m"]),
             "step3_alignment_mode": str(selected["step3_alignment_mode"]),
             "step3_alignment_mode_code": float(
-                1.0 if str(selected["step3_alignment_mode"]) == "robust_trimmed" else 0.0
+                1.0 if str(selected["step3_alignment_mode"]) in {"robust_trimmed", "posyaw_robust_trimmed"} else 0.0
             ),
             "step3_standard_rmse_m": float(selected["step3_standard_rmse_m"]),
             "step3_standard_rmse_on_inliers_m": float(selected["step3_standard_rmse_on_inliers_m"]),

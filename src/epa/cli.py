@@ -299,6 +299,7 @@ def build_parser() -> argparse.ArgumentParser:
             "sim3",
             "ov_sim3",
             "epica_sim3",
+            "epica_sim3_stable",
             "epica_sim3_joint",
             "epica_sim3_trimmed",
             "epa_sim3",

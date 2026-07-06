@@ -19,7 +19,6 @@ from epa.core.evaluation import (
 )
 from epa.core.math_utils import compute_error_statistics, normalize_quat_array
 from epa.core.steps import (
-    _prepare_solve_eval_trajectories,
     _run_time_alignment,
     _solve_step2_step3,
 )
@@ -40,6 +39,7 @@ _VALID_ALIGN_MODES = {
     "sim3",
     "ov_sim3",
     "epica_sim3",
+    "epica_sim3_stable",
     "epica_sim3_joint",
     "epica_sim3_trimmed",
     "epa_sim3",
@@ -57,6 +57,28 @@ _DEFAULT_EPA_QUAT_INTERP = "linear"
 _ORIENTATION_WARNING_MIN_SR = 0.99
 _ORIENTATION_WARNING_APE_RMSE_DEG = 45.0
 _ORIENTATION_WARNING_RPE_RMSE_DEG = 30.0
+
+
+def _public_align_mode(raw_mode: str) -> str:
+    mode = str(raw_mode or "").strip().lower()
+    if mode in {"se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
+        return "se3"
+    if mode in {"posyaw", "epa_posyaw"}:
+        return "posyaw"
+    if mode in {
+        "sim3",
+        "epa_sim3",
+        "ov_sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+        "epa_sim3_v1",
+        "epa_sim3_v2",
+        "epica_anchor_sim3",
+    }:
+        return "sim3"
+    return mode
 
 
 def _fmt(v: float, nd: int = 3) -> str:
@@ -258,7 +280,15 @@ def _solve_alignment(
         )
         return scale, r_fit, t_fit
 
-    if m in {"epica_sim3", "epica_sim3_joint", "epica_sim3_trimmed", "epa_sim3", "epa_sim3_v1", "epa_sim3_v2"}:
+    if m in {
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+        "epa_sim3",
+        "epa_sim3_v1",
+        "epa_sim3_v2",
+    }:
         scale, r_fit, t_fit, _ = solve_epica_sim3_variant(
             pos_ref=p_gt,
             quat_ref=q_gt,
@@ -396,6 +426,7 @@ def _evaluate_pair_epa_step3(
     file_est: Path,
     max_diff: float,
     *,
+    eval_align_mode: str = "none",
     dt_resample: float = _DEFAULT_EPA_DT_RESAMPLE,
     offset_min_match_ratio: float = _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
     downsample_hz: float = _DEFAULT_EPA_DOWNSAMPLE_HZ,
@@ -434,29 +465,31 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
-    solve_eval = _prepare_solve_eval_trajectories(
-        t_gt=t_gt,
-        pos_gt=p_gt,
-        quat_gt=q_gt,
+    t_est_m, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, _ = _associate_est_gt(
         t_est=t_est,
-        pos_est=p_est,
-        quat_est=q_est,
-        calculated_offset=float(step1["calculated_offset"]),
-        downsample_hz=float(downsample_hz),
-        quat_interp=str(quat_interp),
+        p_est=p_est,
+        q_est=q_est,
+        t_gt=t_gt,
+        p_gt=p_gt,
+        q_gt=q_gt,
+        max_diff=float(max_diff),
+        offset=-float(step1["calculated_offset"]),
     )
-    t_gt_m = np.asarray(solve_eval["t_gt"], dtype=float)
-    p_gt_m = np.asarray(solve_eval["pos_gt"], dtype=float)
-    q_gt_m = np.asarray(solve_eval["quat_gt"], dtype=float)
-    p_est_m = np.asarray(solve_eval["pr_sync"], dtype=float)
-    q_est_m = np.asarray(solve_eval["qr_sync"], dtype=float)
+    eval_mode = str(eval_align_mode or "none").strip().lower()
+    if eval_mode in {"epa_se3_eval", "epa_se3"}:
+        eval_mode = "se3"
+    elif eval_mode == "epa_step3":
+        eval_mode = "none"
+    global_align_mode = "posyaw" if eval_mode in {"posyaw", "epa_posyaw"} else "se3"
+
     solved = _solve_step2_step3(
         pr_sync=p_est_m,
         qr_sync=q_est_m,
-        pos_gt_solve=np.asarray(solve_eval["pos_gt_solve"], dtype=float),
-        quat_gt_solve=np.asarray(solve_eval["quat_gt_solve"], dtype=float),
-        pr_solve=np.asarray(solve_eval["pr_solve"], dtype=float),
-        qr_solve=np.asarray(solve_eval["qr_solve"], dtype=float),
+        pos_gt_solve=p_gt_m,
+        quat_gt_solve=q_gt_m,
+        pr_solve=p_est_m,
+        qr_solve=q_est_m,
+        global_align_mode=global_align_mode,
     )
 
     gt_t = np.asarray(t_gt_m, dtype=float)
@@ -464,6 +497,20 @@ def _evaluate_pair_epa_step3(
     gt_quat = np.asarray(q_gt_m, dtype=float)
     est_pos = np.asarray(solved["pr_final"], dtype=float)
     est_quat = np.asarray(solved["q_step3"], dtype=float)
+    eval_alignment: dict[str, object] = {
+        "align_mode": "posyaw_step3" if global_align_mode == "posyaw" else "none",
+        "step3_global_align_mode": global_align_mode,
+        "step3_alignment_mode": str(solved.get("step3_choice", {}).get("step3_alignment_mode", "")),
+    }
+    if eval_mode not in {"", "none", "posyaw", "epa_posyaw"}:
+        est_pos, est_quat, eval_alignment = align_for_eval_with_info(
+            pos_ref=gt_pos,
+            quat_ref=gt_quat,
+            pos_est=est_pos,
+            quat_est=est_quat,
+            mode=eval_mode,
+            n_to_align=-1,
+        )
 
     ape3 = compute_ape(
         pos_ref=gt_pos,
@@ -493,7 +540,12 @@ def _evaluate_pair_epa_step3(
         "gt_quat": gt_quat,
         "est_pos": est_pos,
         "est_quat": est_quat,
-        "eval_source": "epa_step3",
+        "eval_source": (
+            "epa_posyaw"
+            if eval_mode in {"posyaw", "epa_posyaw"}
+            else ("epa_step3" if eval_mode in {"", "none"} else "epa_eval_align")
+        ),
+        "eval_alignment": eval_alignment,
         "ate3_ori": dict(ape3["rotation_angle_deg"]),
         "ate3_pos": dict(ape3["translation_part"]),
         "ate2_ori": dict(ape2["rotation_angle_deg"]),
@@ -514,15 +566,15 @@ def _evaluate_pair(
     epa_no_fallback: bool = True,
     epa_verbose_fallback: bool = False,
 ) -> dict:
-    requested_align_mode = str(align_mode).lower()
-    if requested_align_mode == "epa_se3_eval":
-        requested_align_mode = "epa_se3"
-    if requested_align_mode in {"se3", "epa_step3"}:
+    requested_align_alias = str(align_mode).lower()
+    requested_align_mode = _public_align_mode(requested_align_alias)
+    if requested_align_mode in {"se3", "posyaw"}:
         try:
             result = _evaluate_pair_epa_step3(
                 file_gt=file_gt,
                 file_est=file_est,
                 max_diff=float(max_diff),
+                eval_align_mode="posyaw" if requested_align_mode == "posyaw" else "none",
                 dt_resample=float(epa_dt_resample),
                 offset_min_match_ratio=float(epa_offset_min_match_ratio),
                 downsample_hz=float(epa_downsample_hz),
@@ -530,11 +582,8 @@ def _evaluate_pair(
                 verbose=bool(epa_verbose_fallback),
             )
             result["requested_align_mode"] = requested_align_mode
-            if requested_align_mode == "se3":
-                result["legacy_align_mode_warning"] = (
-                    "se3 is a legacy OV/OpenVINS alias for EPA Step3; "
-                    "use epa_se3 for EPA SE3 mode."
-                )
+            if requested_align_alias != requested_align_mode:
+                result["requested_align_alias"] = requested_align_alias
             return result
         except Exception as exc:
             param_msg = (
@@ -548,10 +597,12 @@ def _evaluate_pair(
     result = _evaluate_pair_ov_style(
         file_gt=file_gt,
         file_est=file_est,
-        align_mode="se3" if requested_align_mode == "epa_se3" else align_mode,
+        align_mode=requested_align_mode,
         max_diff=float(max_diff),
     )
     result["requested_align_mode"] = requested_align_mode
+    if requested_align_alias != requested_align_mode:
+        result["requested_align_alias"] = requested_align_alias
     if result.get("eval_source") != "epa_eval_align":
         result["eval_source"] = "epa_eval_align"
     return result
@@ -573,10 +624,13 @@ def _epa_eval_kwargs(args: argparse.Namespace) -> dict[str, object]:
 def _format_source_counts(counts: dict[str, int]) -> str:
     epa_count = int(counts.get("epa_step3", 0))
     epa_eval_count = int(counts.get("epa_eval_align", 0))
+    epa_posyaw_count = int(counts.get("epa_posyaw", 0))
     failed_count = int(counts.get("failed", 0))
-    known = {"epa_step3", "epa_eval_align", "failed"}
+    known = {"epa_step3", "epa_eval_align", "epa_posyaw", "failed"}
     unknown_count = sum(int(v) for k, v in counts.items() if k not in known)
     parts = [f"epa_step3={epa_count}", f"epa_eval={epa_eval_count}", f"failed={failed_count}"]
+    if epa_posyaw_count:
+        parts.insert(2, f"epa_posyaw={epa_posyaw_count}")
     if unknown_count:
         parts.append(f"unknown={unknown_count}")
     return ", ".join(parts)
@@ -625,8 +679,15 @@ def _eval_quality_flags(eval_res: dict, success: dict, time_rpe: dict) -> dict[s
     orientation = _orientation_quality_warning(eval_res, success, time_rpe)
     orientation_unstable = bool(orientation["orientation_unstable"])
     warnings: list[str] = []
-    if not sim3_reliable and sim3_warning:
-        warnings.append(sim3_warning)
+    if not sim3_reliable:
+        fallback = str(
+            eval_alignment.get("sim3_failure_reason", "")
+            or eval_alignment.get("sim3_confidence", "")
+            or eval_alignment.get("sim3_consensus_status", "")
+            or eval_alignment.get("sim3_anchor_status", "")
+            or "Sim3 transform is unreliable; interpret SR together with the reliability status."
+        )
+        warnings.append(sim3_warning or fallback)
     if orientation_unstable and orientation["orientation_warning"]:
         warnings.append(str(orientation["orientation_warning"]))
 
@@ -708,11 +769,14 @@ def _compute_rpe_segments_ov_eval_style(
     if gt_pos.shape[0] > 1:
         accum_distances[1:] = np.cumsum(np.linalg.norm(np.diff(gt_pos, axis=0), axis=1))
 
-    valid_mask = None
+    valid_sample_mask = None
+    valid_edge_mask = None
     if valid_segment_mask is not None:
         valid_mask = np.asarray(valid_segment_mask, dtype=bool).reshape(-1)
-        if valid_mask.size != gt_pos.shape[0]:
-            valid_mask = None
+        if valid_mask.size == gt_pos.shape[0]:
+            valid_sample_mask = valid_mask
+        elif valid_mask.size == max(0, gt_pos.shape[0] - 1):
+            valid_edge_mask = valid_mask
 
     out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
     for seg in segments_m:
@@ -724,7 +788,9 @@ def _compute_rpe_segments_ov_eval_style(
             id_end = int(id_end_raw)
             if id_end == -1:
                 continue
-            if valid_mask is not None and not bool(np.all(valid_mask[id_start : id_end + 1])):
+            if valid_sample_mask is not None and not bool(np.all(valid_sample_mask[id_start : id_end + 1])):
+                continue
+            if valid_edge_mask is not None and not bool(np.all(valid_edge_mask[id_start:id_end])):
                 continue
 
             T_c1 = _pose_matrix_ov_eval(est_pos[id_start], est_quat[id_start])
@@ -1088,6 +1154,10 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
             f"Sim3 scale = {_fmt(float(eval_alignment.get('sim3_scale', np.nan)), 6)} "
             f"| reliable = {str(reliable).lower()}"
         )
+        fallback_used = bool(eval_alignment.get("sim3_robust_fallback_used", False))
+        if fallback_used:
+            reason = str(eval_alignment.get("sim3_robust_fallback_reason", "") or "")
+            print(f"Sim3 fallback used = true | reason = {reason}")
     print(f"Eval reliable = {str(bool(quality['eval_reliable'])).lower()}")
     if quality["eval_warning"]:
         print(f"[UNRELIABLE] {quality['eval_warning']}")
@@ -1105,6 +1175,9 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
                 "sr_distance_pct": float(success["success_rate_distance"]) * 100.0,
                 "sr_time_pct": float(success["success_rate_time"]) * 100.0,
                 "eval_reliable": bool(quality["eval_reliable"]),
+                "sim3_fallback_used": bool(eval_alignment.get("sim3_robust_fallback_used", False))
+                if isinstance(eval_alignment, dict)
+                else False,
             },
             sort_keys=True,
         )
@@ -1168,6 +1241,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
         sr_time_vals: list[float] = []
         unreliable_details: list[str] = []
         failed_details: list[str] = []
+        fallback_details: list[str] = []
 
         for run_file in run_files:
             try:
@@ -1186,6 +1260,10 @@ def run_error_dataset(args: argparse.Namespace) -> int:
             ate_pos_rmse.append(float(ev["ate3_pos"]["rmse"]))
             ate2_ori_rmse.append(float(ev["ate2_ori"]["rmse"]))
             ate2_pos_rmse.append(float(ev["ate2_pos"]["rmse"]))
+            eval_alignment = ev.get("eval_alignment", {})
+            if isinstance(eval_alignment, dict):
+                if bool(eval_alignment.get("sim3_robust_fallback_used", False)):
+                    fallback_details.append(f"{run_file.name}:fallback")
 
             rpe = _compute_rpe_segments(
                 gt_pos=np.asarray(ev["gt_pos"], dtype=float),
@@ -1231,8 +1309,11 @@ def run_error_dataset(args: argparse.Namespace) -> int:
             quality = _eval_quality_flags(ev, valid["success"], time_rpe)
             if not bool(quality["eval_reliable"]):
                 unreliable_details.append(f"{run_file.name}:{quality['eval_warning']}")
-            sr_dist_vals.append(float(valid["success"]["success_rate_distance"]))
-            sr_time_vals.append(float(valid["success"]["success_rate_time"]))
+                sr_dist_vals.append(0.0)
+                sr_time_vals.append(0.0)
+            else:
+                sr_dist_vals.append(float(valid["success"]["success_rate_distance"]))
+                sr_time_vals.append(float(valid["success"]["success_rate_time"]))
 
         valid_runs = len(ate_ori_rmse)
         if valid_runs == 0:
@@ -1261,6 +1342,8 @@ def run_error_dataset(args: argparse.Namespace) -> int:
         print(f"\tATE 2D: std_ori  = {_fmt(ate2_ori['std'], 5)} | std_pos  = {_fmt(ate2_pos['std'], 5)}")
         if failed_details:
             print(f"\tfailed_runs: {_format_source_details(failed_details)}")
+        if fallback_details:
+            print(f"\tsim3_fallback: {_format_source_details(fallback_details)}")
         if unreliable_details:
             print(f"\tunreliable_runs: {_format_source_details(unreliable_details)}")
 
@@ -1324,17 +1407,14 @@ def run_error_comparison(args: argparse.Namespace) -> int:
         length = float(np.sum(np.linalg.norm(np.diff(p, axis=0), axis=1))) if p.shape[0] > 1 else 0.0
         print(f"[COMP]: {int(t.size)} poses in {gt.name} => length of {length:.2f} meters")
 
-    segments = [8.0, 16.0, 24.0, 32.0, 40.0, 48.0]
+    segments = [10.0, 20.0, 50.0, 100.0]
     ate_table: dict[str, dict[str, tuple[float, float]]] = {a.name: {} for a in algo_dirs}
     time_rpe_table: dict[str, dict[str, tuple[float, float]]] = {a.name: {} for a in algo_dirs}
     valid_ate_table: dict[str, dict[str, tuple[float, float]]] = {a.name: {} for a in algo_dirs}
     valid_time_rpe_table: dict[str, dict[str, tuple[float, float]]] = {a.name: {} for a in algo_dirs}
     success_table: dict[str, dict[str, tuple[float, float]]] = {a.name: {} for a in algo_dirs}
-    rpe_all: dict[str, dict[float, tuple[list[float], list[float]]]] = {
-        a.name: {s: ([], []) for s in segments} for a in algo_dirs
-    }
-    valid_rpe_all: dict[str, dict[float, tuple[list[float], list[float]]]] = {
-        a.name: {s: ([], []) for s in segments} for a in algo_dirs
+    valid_rpe_table: dict[str, dict[float, dict[str, tuple[float, float]]]] = {
+        a.name: {s: {} for s in segments} for a in algo_dirs
     }
     source_total: dict[str, int] = {}
     source_details: list[str] = []
@@ -1375,7 +1455,10 @@ def run_error_comparison(args: argparse.Namespace) -> int:
             ds_valid_ate_pos: list[float] = []
             ds_valid_time_ori: list[float] = []
             ds_valid_time_pos: list[float] = []
+            ds_valid_rpe_ori: dict[float, list[float]] = {s: [] for s in segments}
+            ds_valid_rpe_pos: dict[float, list[float]] = {s: [] for s in segments}
             ds_unreliable: list[str] = []
+            ds_fallback_details: list[str] = []
 
             for run_file in run_files:
                 try:
@@ -1398,9 +1481,13 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 source = str(ev.get("eval_source", "unknown"))
                 source_ds[source] = source_ds.get(source, 0) + 1
                 source_total[source] = source_total.get(source, 0) + 1
-                if source not in {"epa_step3", "epa_eval_align"}:
+                if source not in {"epa_step3", "epa_eval_align", "epa_posyaw"}:
                     source_ds_details.append(f"{run_file.name}:{source}")
                     source_details.append(f"{algo_dir.name}/{ds}/{run_file.name}:{source}")
+                eval_alignment = ev.get("eval_alignment", {})
+                if isinstance(eval_alignment, dict):
+                    if bool(eval_alignment.get("sim3_robust_fallback_used", False)):
+                        ds_fallback_details.append(f"{run_file.name}:fallback")
 
                 rpe = _compute_rpe_segments(
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
@@ -1414,8 +1501,6 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     pos_vals = np.asarray(rpe[seg]["pos_values"], dtype=float).tolist()
                     ds_rpe_ori[seg].extend(ori_vals)
                     ds_rpe_pos[seg].extend(pos_vals)
-                    rpe_all[algo_dir.name][seg][0].extend(ori_vals)
-                    rpe_all[algo_dir.name][seg][1].extend(pos_vals)
                 time_rpe = _compute_time_rpe_1s(
                     gt_t=np.asarray(ev["gt_t"], dtype=float),
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
@@ -1454,6 +1539,9 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     detail = f"{run_file.name}:{quality['eval_warning']}"
                     ds_unreliable.append(detail)
                     unreliable_total.append(f"{algo_dir.name}/{ds}/{detail}")
+                    ds_sr_dist.append(0.0)
+                    ds_sr_time.append(0.0)
+                    continue
                 ds_sr_dist.append(float(valid["success"]["success_rate_distance"]))
                 ds_sr_time.append(float(valid["success"]["success_rate_time"]))
                 ds_valid_ate_ori.extend(
@@ -1479,8 +1567,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 for seg in segments:
                     valid_ori_vals = np.asarray(valid_rpe[seg]["ori_values"], dtype=float).tolist()
                     valid_pos_vals = np.asarray(valid_rpe[seg]["pos_values"], dtype=float).tolist()
-                    valid_rpe_all[algo_dir.name][seg][0].extend(valid_ori_vals)
-                    valid_rpe_all[algo_dir.name][seg][1].extend(valid_pos_vals)
+                    ds_valid_rpe_ori[seg].extend(valid_ori_vals)
+                    ds_valid_rpe_pos[seg].extend(valid_pos_vals)
 
             if len(ate_ori_rmse) == 0:
                 print(f"\t[warn] no valid runs for {algo_dir.name}/{ds}; skipping dataset metrics")
@@ -1506,6 +1594,13 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 float(valid_time_ori_stats["mean"]),
                 float(valid_time_pos_stats["mean"]),
             )
+            for seg in segments:
+                valid_rpe_ori_stats = compute_error_statistics(np.asarray(ds_valid_rpe_ori[seg], dtype=float))
+                valid_rpe_pos_stats = compute_error_statistics(np.asarray(ds_valid_rpe_pos[seg], dtype=float))
+                valid_rpe_table[algo_dir.name][seg][ds] = (
+                    float(valid_rpe_ori_stats["rmse"]),
+                    float(valid_rpe_pos_stats["rmse"]),
+                )
             sr_dist_stats = compute_error_statistics(np.asarray(ds_sr_dist, dtype=float))
             sr_time_stats = compute_error_statistics(np.asarray(ds_sr_time, dtype=float))
             success_table[algo_dir.name][ds] = (
@@ -1523,6 +1618,8 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 print(f"\tnon_epa_runs: {_format_source_details(source_ds_details)}")
             if failed_ds:
                 print(f"\tfailed_runs: {_format_source_details(failed_ds)}")
+            if ds_fallback_details:
+                print(f"\tsim3_fallback: {_format_source_details(ds_fallback_details)}")
             if ds_unreliable:
                 print(f"\tunreliable_runs: {_format_source_details(ds_unreliable)}")
             for seg in segments:
@@ -1586,42 +1683,6 @@ def run_error_comparison(args: argparse.Namespace) -> int:
         avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
         avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
         print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
-    print("============================================")
-
-    print("============================================")
-    print("FULL TRAJECTORY DISTANCE RPE LATEX TABLE (ROT DEG / TRANS M)")
-    print("============================================")
-    for seg in segments:
-        print(f" & \\textbf{{{int(seg)}m}}", end="")
-    print(" \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        for seg in segments:
-            ori_vals = np.asarray(rpe_all[algo.name][seg][0], dtype=float)
-            pos_vals = np.asarray(rpe_all[algo.name][seg][1], dtype=float)
-            o_stats = compute_error_statistics(ori_vals)
-            p_stats = compute_error_statistics(pos_vals)
-            print(f" & {_fmt(o_stats['mean'])} / {_fmt(p_stats['mean'])}", end="")
-        print(" \\\\")
-    print("============================================")
-
-    print("============================================")
-    print("FULL TRAJECTORY DISTANCE DRIFT RATE LATEX TABLE (% TRANS / DIST)")
-    print("============================================")
-    for seg in segments:
-        print(f" & \\textbf{{{int(seg)}m}}", end="")
-    print(" \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        for seg in segments:
-            pos_vals = np.asarray(rpe_all[algo.name][seg][1], dtype=float)
-            rate_pct = _drift_rate_percent(pos_vals, seg)
-            print(f" & {_fmt(rate_pct)}", end="")
-        print(" \\\\")
     print("============================================")
 
     print("============================================")
@@ -1711,41 +1772,36 @@ def run_error_comparison(args: argparse.Namespace) -> int:
         print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
     print("============================================")
 
-    print("============================================")
-    print("DRIFT-VALID ONLY DISTANCE RPE LATEX TABLE (ROT DEG / TRANS M)")
-    print("============================================")
     for seg in segments:
-        print(f" & \\textbf{{{int(seg)}m}}", end="")
-    print(" \\\\hline")
+        print("============================================")
+        print(f"DRIFT-VALID ONLY {int(seg)}m SEGMENT RPE LATEX TABLE (ROT DEG / TRANS M)")
+        print("============================================")
+        for gt in gt_files:
+            name = gt.stem.replace("_", "\\_")
+            print(f" & \\textbf{{{name}}}", end="")
+        print(" & \\textbf{Average} \\\\hline")
 
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        for seg in segments:
-            ori_vals = np.asarray(valid_rpe_all[algo.name][seg][0], dtype=float)
-            pos_vals = np.asarray(valid_rpe_all[algo.name][seg][1], dtype=float)
-            o_stats = compute_error_statistics(ori_vals)
-            p_stats = compute_error_statistics(pos_vals)
-            print(f" & {_fmt(o_stats['mean'])} / {_fmt(p_stats['mean'])}", end="")
-        print(" \\\\")
-    print("============================================")
-
-    print("============================================")
-    print("DRIFT-VALID ONLY DISTANCE DRIFT RATE LATEX TABLE (% TRANS / DIST)")
-    print("============================================")
-    for seg in segments:
-        print(f" & \\textbf{{{int(seg)}m}}", end="")
-    print(" \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        for seg in segments:
-            pos_vals = np.asarray(valid_rpe_all[algo.name][seg][1], dtype=float)
-            rate_pct = _drift_rate_percent(pos_vals, seg)
-            print(f" & {_fmt(rate_pct)}", end="")
-        print(" \\\\")
-    print("============================================")
+        for algo in algo_dirs:
+            name = algo.name.replace("_", "\\_")
+            print(name, end="")
+            sum_ori = 0.0
+            sum_pos = 0.0
+            cnt = 0
+            for gt in gt_files:
+                ds = gt.stem
+                if ds not in valid_rpe_table[algo.name][seg]:
+                    print(" & - / -", end="")
+                    continue
+                o, p = valid_rpe_table[algo.name][seg][ds]
+                print(f" & {_fmt(o)} / {_fmt(p)}", end="")
+                if np.isfinite(o) and np.isfinite(p):
+                    sum_ori += o
+                    sum_pos += p
+                    cnt += 1
+            avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
+            avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
+            print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
+        print("============================================")
 
     print("============================================")
     print("DRIFT-VALID ONLY 1S TIME RPE LATEX TABLE (ROT DEG / TRANS M)")
@@ -1946,8 +2002,8 @@ def _build_error_singlerun_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
-            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+            "Public modes: se3|posyaw|sim3. "
+            "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
     p.add_argument("file_gt", help="groundtruth trajectory")
@@ -1963,8 +2019,8 @@ def _build_error_dataset_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
-            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+            "Public modes: se3|posyaw|sim3. "
+            "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
     p.add_argument("file_gt", help="groundtruth trajectory")
@@ -1980,8 +2036,8 @@ def _build_error_comparison_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
-            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+            "Public modes: se3|posyaw|sim3. "
+            "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
     p.add_argument("folder_groundtruth", help="groundtruth root folder")
@@ -1996,8 +2052,8 @@ def _build_plot_trajectories_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "epa_step3|epa_se3|posyaw|sim3|ov_sim3|none. "
-            "Legacy aliases: se3=epa_step3, epa_se3_eval=epa_se3, se3single/posyawsingle=single-frame optional modes."
+            "Public modes: se3|posyaw|sim3. "
+            "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
     p.add_argument("file_gt", help="groundtruth trajectory")

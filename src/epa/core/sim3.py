@@ -995,6 +995,20 @@ def solve_epa_sim3_v2(
     return applied_scale, applied_r, applied_t, info
 
 
+def _sim3_solve_is_acceptable(info: dict[str, object], scale: float) -> bool:
+    scale_f = float(scale)
+    if not np.isfinite(scale_f) or scale_f <= 0.0:
+        return False
+    if not bool(info.get("sim3_reliable", True)):
+        return False
+    return bool(0.1 <= scale_f <= 10.0)
+
+
+def _sim3_solve_has_usable_transform(info: dict[str, object], scale: float) -> bool:
+    scale_f = float(scale)
+    return bool(np.isfinite(scale_f) and scale_f > 0.0 and info.get("sim3_reliable", True))
+
+
 def solve_epa_sim3(
     pos_ref: np.ndarray,
     quat_ref: np.ndarray,
@@ -1002,7 +1016,92 @@ def solve_epa_sim3(
     quat_est: np.ndarray,
     **kwargs,
 ) -> tuple[float, np.ndarray, np.ndarray, dict[str, object]]:
-    return solve_epa_sim3_v2(pos_ref, quat_ref, pos_est, quat_est, **kwargs)
+    """Main EPA Sim3 method.
+
+    Prefer the full-trajectory pose-aware EPICA solve. If that cannot produce
+    a positive-scale transform, try the stable-window EPICA solve. A final
+    robust window-consensus fallback is kept only as an emergency guard.
+    """
+
+    primary_failure = ""
+    primary_candidate: tuple[float, np.ndarray, np.ndarray, dict[str, object]] | None = None
+    try:
+        scale, r_fit, t_fit, info = solve_orientation_consistent_sim3(pos_ref, quat_ref, pos_est, quat_est)
+        if _sim3_solve_has_usable_transform(info, float(scale)):
+            primary_candidate = (float(scale), r_fit, t_fit, dict(info))
+        if _sim3_solve_is_acceptable(info, float(scale)):
+            out = dict(info)
+            out.update(
+                {
+                    "sim3_solver": "sim3",
+                    "sim3_pose_consistent_solve_used": True,
+                    "sim3_stable_anchor_used": False,
+                    "sim3_robust_fallback_used": False,
+                }
+            )
+            return float(scale), r_fit, t_fit, out
+        primary_failure = str(
+            info.get("sim3_failure_reason", "")
+            or info.get("sim3_warning", "")
+            or f"pose-consistent solve was unreliable or severe-scale: {float(scale):.6g}"
+        )
+    except Exception as exc:
+        primary_failure = str(exc)
+
+    stable_failure = ""
+    try:
+        scale, r_fit, t_fit, stable_info = solve_stable_epica_sim3(pos_ref, quat_ref, pos_est, quat_est)
+        if _sim3_solve_is_acceptable(stable_info, float(scale)):
+            out = dict(stable_info)
+            out.update(
+                {
+                    "sim3_solver": "sim3",
+                    "sim3_pose_consistent_solve_used": False,
+                    "sim3_pose_consistent_failure": primary_failure,
+                    "sim3_stable_anchor_used": True,
+                    "sim3_robust_fallback_used": False,
+                }
+            )
+            return float(scale), r_fit, t_fit, out
+        stable_failure = str(
+            stable_info.get("sim3_failure_reason", "")
+            or stable_info.get("sim3_warning", "")
+            or f"stable-window solve was unreliable or severe-scale: {float(scale):.6g}"
+        )
+    except Exception as exc:
+        stable_failure = str(exc)
+
+    if primary_candidate is not None:
+        scale, r_fit, t_fit, primary_info = primary_candidate
+        out = dict(primary_info)
+        out.update(
+            {
+                "sim3_solver": "sim3",
+                "sim3_pose_consistent_solve_used": True,
+                "sim3_pose_consistent_scale_guard_warning": primary_failure,
+                "sim3_stable_anchor_used": False,
+                "sim3_stable_anchor_failure": stable_failure,
+                "sim3_robust_fallback_used": False,
+            }
+        )
+        return float(scale), r_fit, t_fit, out
+
+    scale, r_fit, t_fit, fallback_info = solve_epa_sim3_v2(pos_ref, quat_ref, pos_est, quat_est, **kwargs)
+    out = dict(fallback_info)
+    out.update(
+        {
+            "sim3_solver": "sim3",
+            "sim3_pose_consistent_solve_used": False,
+            "sim3_pose_consistent_failure": primary_failure,
+            "sim3_stable_anchor_used": False,
+            "sim3_stable_anchor_failure": stable_failure,
+            "sim3_robust_fallback_used": True,
+            "sim3_robust_fallback_reason": "; ".join(
+                item for item in (primary_failure, stable_failure) if item
+            ),
+        }
+    )
+    return float(scale), r_fit, t_fit, out
 
 
 def _orientation_mean_rotation(quat_ref: np.ndarray, quat_est: np.ndarray) -> R:
@@ -1040,6 +1139,228 @@ def solve_orientation_consistent_sim3(
         t_fit=t_fit,
     )
     return float(scale), r_fit, t_fit, info
+
+
+def solve_stable_epica_sim3(
+    pos_ref: np.ndarray,
+    quat_ref: np.ndarray,
+    pos_est: np.ndarray,
+    quat_est: np.ndarray,
+    *,
+    min_window_samples: int = 30,
+    window_fractions: tuple[float, ...] = (0.05, 0.08, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30, 0.40),
+    window_stride_fraction: float = 0.25,
+    min_path_length_m: float = 1.0,
+    min_bbox_diag_m: float = 0.25,
+    max_anchor_rmse_ratio: float = 0.10,
+    max_anchor_rmse_m: float = 2.5,
+    max_orientation_rmse_deg: float = 90.0,
+    min_scale: float = 1e-6,
+    max_scale: float = 1e6,
+    max_step_scale_deviation: float = 8.0,
+    max_step_motion_deviation: float = 20.0,
+    min_window_health_sample_ratio: float = 0.0,
+    max_window_bad_step_ratio: float = 1.0,
+    max_abs_est_speed_mps: float = 100.0,
+) -> tuple[float, np.ndarray, np.ndarray, dict[str, object]]:
+    """Estimate EPICA Sim3 on a locally stable window.
+
+    The selected transform is intentionally estimated from a stable anchor
+    window, then applied to the full trajectory by the caller. This prevents
+    late scale drift from dominating the global EPICA scale solve while still
+    allowing downstream SR/valid-segment metrics to expose that drift.
+    """
+
+    p_ref, q_ref, p_est, q_est = _validate_pose_pairs(pos_ref, quat_ref, pos_est, quat_est)
+    n = int(p_ref.shape[0])
+    health = _motion_health_profile(
+        p_ref,
+        p_est,
+        timestamps_s=None,
+        max_step_scale_deviation=float(max_step_scale_deviation),
+        max_step_motion_deviation=float(max_step_motion_deviation),
+        max_abs_est_speed_mps=float(max_abs_est_speed_mps),
+    )
+    windows = _candidate_windows(
+        n,
+        min_window_samples=int(min_window_samples),
+        fractions=tuple(window_fractions),
+        stride_fraction=float(window_stride_fraction),
+    )
+    prefix_windows: list[tuple[int, int]] = []
+    for frac in window_fractions:
+        size = max(int(min_window_samples), int(np.ceil(float(frac) * n)))
+        size = min(n, max(3, size))
+        prefix_windows.append((0, int(size)))
+    windows = list(dict.fromkeys(prefix_windows + windows))
+
+    best: dict[str, object] | None = None
+    rejected: list[str] = []
+    for start, end in windows:
+        pr = p_ref[start:end]
+        pe = p_est[start:end]
+        qr = q_ref[start:end]
+        qe = q_est[start:end]
+        count = int(end - start)
+        ref_path = _path_length(pr)
+        est_path = _path_length(pe)
+        ref_bbox = _bbox_diag(pr)
+        est_bbox = _bbox_diag(pe)
+        ref_rank, ref_rank_ratio = _rank_info(pr)
+        est_rank, est_rank_ratio = _rank_info(pe)
+        ori_span = max(_orientation_span_deg(qr), _orientation_span_deg(qe))
+        health_sample_ratio, bad_step_ratio = _window_health(start, end, health)
+
+        reject_reason = ""
+        if count < max(3, int(min_window_samples)):
+            reject_reason = "too_few_samples"
+        elif health_sample_ratio < float(min_window_health_sample_ratio) or bad_step_ratio > float(max_window_bad_step_ratio):
+            reject_reason = "unhealthy_motion"
+        elif ref_path < float(min_path_length_m) or est_path <= 1e-9:
+            reject_reason = "insufficient_path_length"
+        elif ref_bbox < float(min_bbox_diag_m) or est_bbox <= 1e-9:
+            reject_reason = "insufficient_spatial_extent"
+        elif min(ref_rank, est_rank) < 2 and ori_span < 5.0:
+            reject_reason = "degenerate_motion"
+        if reject_reason:
+            rejected.append(f"{start}:{end}:{reject_reason}")
+            continue
+
+        try:
+            scale, r_fit, t_fit, anchor_info = solve_orientation_consistent_sim3(pr, qr, pe, qe)
+        except Exception as exc:
+            rejected.append(f"{start}:{end}:solve_failed:{exc}")
+            continue
+        if not np.isfinite(scale) or scale <= 0.0 or scale < float(min_scale) or scale > float(max_scale):
+            rejected.append(f"{start}:{end}:scale_out_of_range:{scale}")
+            continue
+
+        pos_win, quat_win = _apply_similarity(pe, qe, scale, r_fit, t_fit)
+        pos_res = np.linalg.norm(pos_win - pr, axis=1)
+        rot_res = np.degrees((R.from_quat(quat_win).inv() * R.from_quat(qr)).magnitude())
+        pos_rmse = float(np.sqrt(np.mean(pos_res * pos_res)))
+        rot_rmse = float(np.sqrt(np.mean(rot_res * rot_res)))
+        rmse_ratio = float(pos_rmse / max(ref_path, 1e-9))
+        reliable = bool(
+            pos_rmse <= max(float(max_anchor_rmse_m), float(max_anchor_rmse_ratio) * ref_path)
+            and rot_rmse <= float(max_orientation_rmse_deg)
+        )
+
+        start_ratio = float(start / max(1, n - 1))
+        scale_penalty = 0.02 * float(abs(np.log10(float(scale)))) if scale > 0.0 else 1e6
+        rank_penalty = 0.1 if min(ref_rank, est_rank) < 2 else 0.0
+        observability_penalty = 0.05 / max(min(ref_rank_ratio, est_rank_ratio, 1.0), 0.05)
+        health_penalty = 0.03 * max(0.0, 1.0 - float(health_sample_ratio)) + 0.03 * float(bad_step_ratio)
+        prefix_bonus = -0.05 if int(start) == 0 else 0.0
+        length_bonus = 0.01 * float(np.log1p(count))
+        score = (
+            rmse_ratio
+            + 0.003 * rot_rmse
+            + scale_penalty
+            + rank_penalty
+            + observability_penalty
+            + health_penalty
+            + 0.20 * start_ratio
+            + prefix_bonus
+            - length_bonus
+        )
+        candidate = {
+            "score": float(score),
+            "reliable": reliable,
+            "scale": float(scale),
+            "r_fit": r_fit,
+            "t_fit": t_fit,
+            "start": int(start),
+            "end": int(end),
+            "count": int(count),
+            "pos_rmse": float(pos_rmse),
+            "rot_rmse": float(rot_rmse),
+            "rmse_ratio": float(rmse_ratio),
+            "ref_path": float(ref_path),
+            "est_path": float(est_path),
+            "ref_bbox": float(ref_bbox),
+            "est_bbox": float(est_bbox),
+            "ref_rank": int(ref_rank),
+            "est_rank": int(est_rank),
+            "ref_rank_ratio": float(ref_rank_ratio),
+            "est_rank_ratio": float(est_rank_ratio),
+            "orientation_span_deg": float(ori_span),
+            "health_sample_ratio": float(health_sample_ratio),
+            "bad_step_ratio": float(bad_step_ratio),
+            "anchor_solver": str(anchor_info.get("sim3_solver", "epica_orientation_consistent")),
+        }
+        if best is None or (bool(candidate["reliable"]) and not bool(best["reliable"])) or (
+            bool(candidate["reliable"]) == bool(best["reliable"]) and float(candidate["score"]) < float(best["score"])
+        ):
+            best = candidate
+
+    if best is None or not bool(best["reliable"]):
+        info = _diagnostics(
+            solver="epica_sim3_stable",
+            pos_ref=p_ref,
+            quat_ref=q_ref,
+            pos_est=p_est,
+            quat_est=q_est,
+            scale=1.0,
+            r_fit=np.eye(3),
+            t_fit=np.zeros(3),
+            extra={
+                "sim3_version": "epica_stable",
+                "sim3_anchor_status": "no_reliable_anchor",
+                "sim3_reliable": False,
+                "sim3_candidate_count": int(len(windows)),
+                "sim3_candidate_rejected_count": int(len(rejected)),
+                "sim3_health_sample_ratio": float(health["healthy_sample_ratio"]),
+                "sim3_health_bad_step_ratio": float(health["bad_step_ratio"]),
+                "sim3_health_step_scale_ratio_median": float(health["step_scale_ratio_median"]),
+                "sim3_failure_reason": "no_reliable_stable_epica_anchor",
+                "sim3_anchor_failures": "; ".join(rejected[:20]),
+            },
+        )
+        return 1.0, np.eye(3), np.zeros(3), info
+
+    info = _diagnostics(
+        solver="epica_sim3_stable",
+        pos_ref=p_ref,
+        quat_ref=q_ref,
+        pos_est=p_est,
+        quat_est=q_est,
+        scale=float(best["scale"]),
+        r_fit=np.asarray(best["r_fit"], dtype=float),
+        t_fit=np.asarray(best["t_fit"], dtype=float),
+        extra={
+            "sim3_version": "epica_stable",
+            "sim3_anchor_status": "ok",
+            "sim3_reliable": True,
+            "sim3_anchor_solver": str(best["anchor_solver"]),
+            "sim3_candidate_count": int(len(windows)),
+            "sim3_candidate_rejected_count": int(len(rejected)),
+            "sim3_anchor_start_index": int(best["start"]),
+            "sim3_anchor_end_index": int(best["end"]),
+            "sim3_anchor_samples": int(best["count"]),
+            "sim3_anchor_sample_ratio": float(best["count"] / max(1, n)),
+            "sim3_anchor_score": float(best["score"]),
+            "sim3_anchor_position_rmse_m": float(best["pos_rmse"]),
+            "sim3_anchor_orientation_rmse_deg": float(best["rot_rmse"]),
+            "sim3_anchor_rmse_path_ratio": float(best["rmse_ratio"]),
+            "sim3_anchor_ref_path_m": float(best["ref_path"]),
+            "sim3_anchor_est_path_m": float(best["est_path"]),
+            "sim3_anchor_ref_bbox_m": float(best["ref_bbox"]),
+            "sim3_anchor_est_bbox_m": float(best["est_bbox"]),
+            "sim3_anchor_ref_rank": int(best["ref_rank"]),
+            "sim3_anchor_est_rank": int(best["est_rank"]),
+            "sim3_anchor_ref_rank_ratio": float(best["ref_rank_ratio"]),
+            "sim3_anchor_est_rank_ratio": float(best["est_rank_ratio"]),
+            "sim3_anchor_orientation_span_deg": float(best["orientation_span_deg"]),
+            "sim3_anchor_health_sample_ratio": float(best["health_sample_ratio"]),
+            "sim3_anchor_bad_step_ratio": float(best["bad_step_ratio"]),
+            "sim3_health_sample_ratio": float(health["healthy_sample_ratio"]),
+            "sim3_health_bad_step_ratio": float(health["bad_step_ratio"]),
+            "sim3_health_step_scale_ratio_median": float(health["step_scale_ratio_median"]),
+            "sim3_anchor_failures": "; ".join(rejected[:20]),
+        },
+    )
+    return float(best["scale"]), np.asarray(best["r_fit"], dtype=float), np.asarray(best["t_fit"], dtype=float), info
 
 
 def solve_joint_grid_sim3(
@@ -1161,14 +1482,18 @@ def solve_epica_sim3_variant(
     method_l = str(method).lower()
     if method_l in {"epica_sim3", "epica_sim3_orientation", "orientation"}:
         return solve_orientation_consistent_sim3(pos_ref, quat_ref, pos_est, quat_est)
+    if method_l in {"epica_sim3_stable", "stable_epica_sim3", "stable"}:
+        return solve_stable_epica_sim3(pos_ref, quat_ref, pos_est, quat_est)
     if method_l in {"epica_sim3_joint", "joint"}:
         return solve_joint_grid_sim3(pos_ref, quat_ref, pos_est, quat_est)
     if method_l in {"epica_sim3_trimmed", "trimmed"}:
         return solve_trimmed_umeyama_sim3(pos_ref, quat_ref, pos_est, quat_est)
     if method_l in {"epa_sim3_v1", "epa_sim3_legacy"}:
         return solve_epa_sim3_v1(pos_ref, quat_ref, pos_est, quat_est)
-    if method_l in {"epa_sim3", "epa_sim3_v2", "robust_anchor", "robust_anchor_sim3"}:
+    if method_l in {"epa_sim3"}:
         return solve_epa_sim3(pos_ref, quat_ref, pos_est, quat_est)
+    if method_l in {"epa_sim3_v2", "robust_anchor", "robust_anchor_sim3"}:
+        return solve_epa_sim3_v2(pos_ref, quat_ref, pos_est, quat_est)
     raise ValueError(f"Unsupported EPICA Sim3 variant: {method}")
 
 

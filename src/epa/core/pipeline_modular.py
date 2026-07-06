@@ -305,6 +305,7 @@ def _compute_pose_metrics_by_stage(
     eval_align_mode: str,
     eval_n_to_align: int,
     eval_project_to_plane: str,
+    eval_align_indices_by_stage: dict[str, np.ndarray] | None = None,
     eval_align_step3_only: bool = False,
     rpe_delta,
     rpe_delta_unit,
@@ -342,6 +343,9 @@ def _compute_pose_metrics_by_stage(
         stage_eval_align_mode = eval_align_mode
         if bool(eval_align_step3_only) and stage_name != "step3":
             stage_eval_align_mode = "none"
+        stage_align_indices = None
+        if eval_align_indices_by_stage is not None:
+            stage_align_indices = eval_align_indices_by_stage.get(stage_name)
         eval_pos, eval_quat, eval_align_info = align_for_eval_with_info(
             pos_ref=pos_gt,
             quat_ref=quat_gt,
@@ -350,6 +354,7 @@ def _compute_pose_metrics_by_stage(
             mode=stage_eval_align_mode,
             n_to_align=eval_n_to_align,
             t_ref=t_gt,
+            align_indices=stage_align_indices,
         )
         eval_alignment_by_stage[stage_name] = eval_align_info
         est_eval_pos, est_eval_quat = project_to_plane(
@@ -773,8 +778,6 @@ def _interactive_view_metric_summary(
         "sr_time": finite_or_none(success.get("success_rate_time")),
         "raw_sr_distance": finite_or_none(success.get("raw_success_rate_distance")),
         "raw_sr_time": finite_or_none(success.get("raw_success_rate_time")),
-        "gated_sr_distance": finite_or_none(success.get("success_rate_distance_reliability_gated")),
-        "gated_sr_time": finite_or_none(success.get("success_rate_time_reliability_gated")),
         "sr_reliability_status": str(success.get("sr_reliability_status", "")),
         "sr_warning_explanation": str(success.get("sr_warning_explanation", "")),
         "global_gate_failed": bool(success.get("global_gate_failed", False)),
@@ -811,10 +814,75 @@ def _interactive_view_metric_summary(
         "sim3_confidence": str(eval_info.get("sim3_confidence", "")),
         "sim3_consensus_count": int(eval_info.get("sim3_consensus_count", 0) or 0),
         "sim3_candidate_reliable_count": int(eval_info.get("sim3_candidate_reliable_count", 0) or 0),
+        "sim3_stable_anchor_used": bool(eval_info.get("sim3_stable_anchor_used", False)),
+        "sim3_fallback_used": bool(eval_info.get("sim3_robust_fallback_used", False)),
+        "sim3_fallback_reason": str(eval_info.get("sim3_robust_fallback_reason", "")),
         "sim3_anchor_reliable": bool(eval_info.get("sim3_reliable", True)),
         "sim3_reliable": bool(sim3_audit.get("sim3_eval_reliable", True)),
         **sim3_audit,
     }
+
+
+def _default_interactive_view(requested_eval_align_mode: str) -> str:
+    requested = str(requested_eval_align_mode).strip().lower()
+    if requested in {
+        "sim3",
+        "epa_sim3",
+        "ov_sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+        "epa_sim3_v1",
+        "epa_sim3_v2",
+    }:
+        return "sim3"
+    if requested in {"posyaw", "epa_posyaw"}:
+        return "epa_posyaw"
+    return "step3"
+
+
+def _interactive_eval_view_specs(requested_eval_align_mode: str) -> tuple[tuple[str, str, str], ...]:
+    requested = str(requested_eval_align_mode).strip().lower()
+    if requested in {"", "none", "se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
+        return ()
+    if requested in {"posyaw", "epa_posyaw"}:
+        return (("epa_posyaw", "posyaw", "EPA PosYaw"),)
+    if requested in {
+        "sim3",
+        "epa_sim3",
+        "ov_sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+        "epa_sim3_v1",
+        "epa_sim3_v2",
+    }:
+        return (("sim3", "sim3", "Sim3"),)
+    return ()
+
+
+def _public_eval_align_mode(raw_mode: str) -> str:
+    mode = str(raw_mode or "").strip().lower()
+    if mode in {"", "none", "se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
+        return "se3"
+    if mode in {"posyaw", "epa_posyaw"}:
+        return "posyaw"
+    if mode in {
+        "sim3",
+        "epa_sim3",
+        "ov_sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+        "epa_sim3_v1",
+        "epa_sim3_v2",
+        "epica_anchor_sim3",
+    }:
+        return "sim3"
+    return mode
 
 
 def _audit_sim3_full_trajectory(
@@ -944,12 +1012,6 @@ def _annotate_sr_reliability(
     hard_reasons = list(dict.fromkeys(hard_reasons))
     soft_reasons = [reason for reason in dict.fromkeys(soft_reasons) if reason not in hard_reasons]
     status = "failed" if hard_reasons else ("warning" if soft_reasons else "ok")
-    gated_sr_dist = 0.0 if hard_reasons else local_sr_dist
-    gated_sr_time = 0.0 if hard_reasons else local_sr_time
-    if not np.isfinite(gated_sr_dist):
-        gated_sr_dist = np.nan
-    if not np.isfinite(gated_sr_time):
-        gated_sr_time = np.nan
 
     explanation_map = {
         "global_gate_failed": "Global trajectory gate failed; local valid segments may not represent the whole run.",
@@ -963,8 +1025,6 @@ def _annotate_sr_reliability(
         explanations = ["No SR reliability issue was detected."]
 
     update = {
-        "success_rate_distance_reliability_gated": float(gated_sr_dist),
-        "success_rate_time_reliability_gated": float(gated_sr_time),
         "sr_reliability_status": status,
         "sr_reliability_hard_reasons": hard_reasons,
         "sr_reliability_soft_reasons": soft_reasons,
@@ -1162,6 +1222,10 @@ def run_pipeline_modular(args, script_dir: Path):
             f"samples at <= {downsample_info['max_hz']:.3f} Hz"
         )
 
+    requested_eval_align_alias = str(getattr(args, "eval_align", "none")).strip().lower()
+    requested_eval_align_mode = _public_eval_align_mode(requested_eval_align_alias)
+    step3_global_align_mode = "posyaw" if requested_eval_align_mode in {"posyaw", "epa_posyaw"} else "se3"
+
     print("\n--- STEP 2: SOLVING EXTRINSICS ---")
     solved = _solve_step2_step3(
         pr_sync=pr_sync,
@@ -1170,6 +1234,7 @@ def run_pipeline_modular(args, script_dir: Path):
         quat_gt_solve=quat_gt_solve,
         pr_solve=pr_solve,
         qr_solve=qr_solve,
+        global_align_mode=step3_global_align_mode,
     )
     R_calc = solved["R_calc"]
     t_calc = solved["t_calc"]
@@ -1350,17 +1415,11 @@ def run_pipeline_modular(args, script_dir: Path):
         "step2": {"pos": pr_corrected, "quat": q_step2},
         "step3": {"pos": pr_final, "quat": q_step3},
     }
-    requested_eval_align_mode = str(getattr(args, "eval_align", "none")).strip().lower()
-    if requested_eval_align_mode == "epa_se3_eval":
-        requested_eval_align_mode = "epa_se3"
-    elif requested_eval_align_mode == "epa_sim3":
-        requested_eval_align_mode = "sim3"
     eval_align_mode = requested_eval_align_mode
-    if requested_eval_align_mode == "epa_step3":
+    if requested_eval_align_mode in {"se3", "posyaw", "epa_posyaw"}:
         eval_align_mode = "none"
-    elif requested_eval_align_mode == "epa_se3":
-        eval_align_mode = "se3"
     eval_n_to_align = int(getattr(args, "eval_n_to_align", -1))
+    eval_align_indices_by_stage = None
     eval_project_to_plane = str(getattr(args, "eval_project_to_plane", "none"))
     pose_metrics = _compute_pose_metrics_by_stage(
         t_gt=t_gt,
@@ -1370,7 +1429,17 @@ def run_pipeline_modular(args, script_dir: Path):
         eval_align_mode=eval_align_mode,
         eval_n_to_align=eval_n_to_align,
         eval_project_to_plane=eval_project_to_plane,
-        eval_align_step3_only=str(eval_align_mode).lower() in {"sim3", "epa_sim3_v1", "epa_sim3_v2"},
+        eval_align_indices_by_stage=eval_align_indices_by_stage,
+        eval_align_step3_only=str(eval_align_mode).lower()
+        in {
+            "sim3",
+            "epica_sim3",
+            "epica_sim3_stable",
+            "epica_sim3_joint",
+            "epica_sim3_trimmed",
+            "epa_sim3_v1",
+            "epa_sim3_v2",
+        },
         rpe_delta=args.rpe_delta,
         rpe_delta_unit=args.rpe_delta_unit,
         rpe_delta_tol=args.rpe_delta_tol,
@@ -1414,11 +1483,17 @@ def run_pipeline_modular(args, script_dir: Path):
 
     stage_order = ["raw", "step2", "step3"]
     terminal_eval_source = (
-        "epa_step3" if str(eval_align_mode).lower() in {"", "none"} else "epa_eval_align"
+        "epa_posyaw"
+        if requested_eval_align_mode in {"posyaw", "epa_posyaw"}
+        else ("epa_step3" if str(eval_align_mode).lower() in {"", "none"} else "epa_eval_align")
     )
 
     sim3_terminal_style = str(requested_eval_align_mode).lower() in {
         "sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
         "ov_sim3",
         "epa_sim3_v1",
         "epa_sim3_v2",
@@ -1543,6 +1618,7 @@ def run_pipeline_modular(args, script_dir: Path):
             "ape_pose_relation": str(getattr(args, "ape_pose_relation", "trans_part")),
             "rpe_pose_relation": str(getattr(args, "rpe_pose_relation", "trans_part")),
             "eval_align": requested_eval_align_mode,
+            "eval_align_requested_alias": requested_eval_align_alias,
             "eval_align_effective": eval_align_mode,
             "eval_n_to_align": eval_n_to_align,
             "eval_project_to_plane": eval_project_to_plane,
@@ -1585,35 +1661,38 @@ def run_pipeline_modular(args, script_dir: Path):
     metrics_payload["metadata"]["pose_state_csv"] = str(pose_state_csv)
     metrics_payload["metadata"]["eval_source"] = terminal_eval_source
     metrics_payload["metadata"]["eval_alignment"] = pose_metrics.get("eval_alignment", {}).get("step3", {})
-    interactive_step3_metrics = _compute_pose_metrics_by_stage(
-        t_gt=t_gt,
-        pos_gt=pos_gt,
-        quat_gt=quat_gt,
-        stage_trajs={"step3": {"pos": pr_final, "quat": q_step3}},
-        eval_align_mode="none",
-        eval_n_to_align=-1,
-        eval_project_to_plane=eval_project_to_plane,
-        rpe_delta=args.rpe_delta,
-        rpe_delta_unit=args.rpe_delta_unit,
-        rpe_delta_tol=args.rpe_delta_tol,
-        rpe_all_pairs=args.rpe_all_pairs,
-        rpe_pairs_from_reference=args.rpe_pairs_from_reference,
-        success_threshold_mode=str(getattr(args, "success_threshold_mode", "adaptive_knee")),
-        success_threshold_m=float(getattr(args, "success_threshold_m", 10.0)),
-        success_threshold_min_m=float(getattr(args, "success_threshold_min_m", 5.0)),
-        success_threshold_max_m=float(getattr(args, "success_threshold_max_m", 30.0)),
-        success_threshold_trim_percentile=float(getattr(args, "success_threshold_trim_percentile", 95.0)),
-        success_global_gate_m=float(getattr(args, "success_global_gate_m", 30.0)),
-        success_global_gate_percentile=float(getattr(args, "success_global_gate_percentile", 5.0)),
-        success_drift_rpe_1s_m=float(getattr(args, "success_drift_rpe_1s_m", 2.0)),
-        success_drift_ape_slope_mps=float(getattr(args, "success_drift_ape_slope_mps", 1.0)),
-        success_drift_ape_jump_m=float(getattr(args, "success_drift_ape_jump_m", 5.0)),
-        success_drift_threshold_mode=str(getattr(args, "success_drift_threshold_mode", "adaptive")),
-        t_max_diff=float(getattr(args, "t_max_diff", 0.02)),
-        t_offset=float(getattr(args, "t_offset", 0.0)),
-        t_start=getattr(args, "t_start", None),
-        t_end=getattr(args, "t_end", None),
-    )
+    if str(eval_align_mode).lower() in {"", "none"}:
+        interactive_step3_metrics = pose_metrics
+    else:
+        interactive_step3_metrics = _compute_pose_metrics_by_stage(
+            t_gt=t_gt,
+            pos_gt=pos_gt,
+            quat_gt=quat_gt,
+            stage_trajs={"step3": {"pos": pr_final, "quat": q_step3}},
+            eval_align_mode="none",
+            eval_n_to_align=-1,
+            eval_project_to_plane=eval_project_to_plane,
+            rpe_delta=args.rpe_delta,
+            rpe_delta_unit=args.rpe_delta_unit,
+            rpe_delta_tol=args.rpe_delta_tol,
+            rpe_all_pairs=args.rpe_all_pairs,
+            rpe_pairs_from_reference=args.rpe_pairs_from_reference,
+            success_threshold_mode=str(getattr(args, "success_threshold_mode", "adaptive_knee")),
+            success_threshold_m=float(getattr(args, "success_threshold_m", 10.0)),
+            success_threshold_min_m=float(getattr(args, "success_threshold_min_m", 5.0)),
+            success_threshold_max_m=float(getattr(args, "success_threshold_max_m", 30.0)),
+            success_threshold_trim_percentile=float(getattr(args, "success_threshold_trim_percentile", 95.0)),
+            success_global_gate_m=float(getattr(args, "success_global_gate_m", 30.0)),
+            success_global_gate_percentile=float(getattr(args, "success_global_gate_percentile", 5.0)),
+            success_drift_rpe_1s_m=float(getattr(args, "success_drift_rpe_1s_m", 2.0)),
+            success_drift_ape_slope_mps=float(getattr(args, "success_drift_ape_slope_mps", 1.0)),
+            success_drift_ape_jump_m=float(getattr(args, "success_drift_ape_jump_m", 5.0)),
+            success_drift_threshold_mode=str(getattr(args, "success_drift_threshold_mode", "adaptive")),
+            t_max_diff=float(getattr(args, "t_max_diff", 0.02)),
+            t_offset=float(getattr(args, "t_offset", 0.0)),
+            t_start=getattr(args, "t_start", None),
+            t_end=getattr(args, "t_end", None),
+        )
     _annotate_sr_reliability(
         interactive_step3_metrics,
         stage="step3",
@@ -1630,13 +1709,7 @@ def run_pipeline_modular(args, script_dir: Path):
             rpe_relation=rpe_pose_relation,
         )
     }
-    default_interactive_view = "step3"
-    if requested_eval_align_mode == "ov_sim3":
-        default_interactive_view = "ov_sim3"
-    elif requested_eval_align_mode in {"sim3", "epa_sim3_v1", "epa_sim3_v2"}:
-        default_interactive_view = "sim3"
-    elif requested_eval_align_mode in {"posyaw", "epa_posyaw"}:
-        default_interactive_view = "epa_posyaw"
+    default_interactive_view = _default_interactive_view(requested_eval_align_mode)
 
     def _json_float_or_none(value):
         try:
@@ -1645,13 +1718,11 @@ def run_pipeline_modular(args, script_dir: Path):
             return None
         return value_f if np.isfinite(value_f) else None
 
-    for view_key, align_mode, label in (
-        ("epa_posyaw", "posyaw", "EPA PosYaw"),
-        ("ov_sim3", "ov_sim3", "OV Sim3"),
-        ("sim3", "sim3", "Sim3"),
-    ):
+    for view_key, align_mode, label in _interactive_eval_view_specs(requested_eval_align_mode):
         try:
-            if align_mode == eval_align_mode:
+            if align_mode == eval_align_mode or (
+                align_mode == "posyaw" and requested_eval_align_mode in {"posyaw", "epa_posyaw"}
+            ):
                 view_pose_metrics = pose_metrics
             else:
                 view_pose_metrics = _compute_pose_metrics_by_stage(
@@ -1717,6 +1788,9 @@ def run_pipeline_modular(args, script_dir: Path):
                     "confidence": str(view_info.get("sim3_confidence", "")),
                     "consensus_count": int(view_info.get("sim3_consensus_count", 0) or 0),
                     "candidate_reliable_count": int(view_info.get("sim3_candidate_reliable_count", 0) or 0),
+                    "stable_anchor_used": bool(view_info.get("sim3_stable_anchor_used", False)),
+                    "fallback_used": bool(view_info.get("sim3_robust_fallback_used", False)),
+                    "fallback_reason": str(view_info.get("sim3_robust_fallback_reason", "")),
                 },
             }
             interactive_view_metrics[view_key] = _interactive_view_metric_summary(

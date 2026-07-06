@@ -32,13 +32,20 @@ def _run(cmd: list[str], cwd: Path) -> float:
 
 def _metric_eval_align(align_mode: str) -> str:
     mode = str(align_mode).lower()
-    if mode == "epa_step3":
-        return "none"
-    if mode in {"epa_se3", "epa_se3_eval"}:
+    if mode in {"se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
         return "se3"
     if mode == "epa_sim3":
         return "sim3"
-    if mode in {"none", "se3", "posyaw", "sim3", "ov_sim3"}:
+    if mode in {
+        "none",
+        "posyaw",
+        "sim3",
+        "ov_sim3",
+        "epica_sim3",
+        "epica_sim3_stable",
+        "epica_sim3_joint",
+        "epica_sim3_trimmed",
+    }:
         return mode
     raise ValueError(f"Unsupported align mode: {align_mode}")
 
@@ -62,11 +69,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--align-mode",
-        choices=["none", "epa_step3", "epa_se3", "epa_se3_eval", "se3", "posyaw", "sim3", "ov_sim3", "epa_sim3"],
-        default="epa_step3",
+        default="se3",
+        metavar="{se3,posyaw,sim3}",
         help=(
-            "EPA alignment mode used by the direct metric/trajectory tools. "
-            "Use epa_step3 for the native 3-step output and epa_se3 for EPA SE3 mode."
+            "Public alignment mode: se3, posyaw, or sim3. Compatibility aliases are accepted."
         ),
     )
     p.add_argument(
