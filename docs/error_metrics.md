@@ -116,7 +116,7 @@ A stable constant bias is not treated as drift by itself. For example, if a
 trajectory stays consistently offset by `6 m` but its relative motion is stable,
 that bias contributes to ATE but does not by itself create a drift/fail segment.
 
-EPA also applies a global failed-case gate. If the 5th percentile Step-3 APE
+EPA also applies a global failed-case gate. If the 5th percentile final-aligned APE
 translation error is above `30 m`, the case is treated as globally failed and
 drift-valid metrics are reported as `nan`.
 
@@ -244,7 +244,7 @@ svo\_mono & 2.627 / 1.085 & nan / nan & 1.365 / 1.092 & 1.996 / 1.089 \\
 Key observations from this example:
 
 - `TOOL SOURCE: epa=3, ov_eval=0` means all three sequences were evaluated by
-  EPA Step 3; none fell back to ov_eval-style SE3.
+  EPA final alignment; none fell back to ov_eval-style SE3.
 - `R_12_10cp` has full-trajectory ATE translation error `1737.041 m` and
   one-second time RPE translation error `122.646 m`, so it is a severe failure
   case.

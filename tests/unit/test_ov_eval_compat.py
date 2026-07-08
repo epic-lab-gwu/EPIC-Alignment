@@ -170,7 +170,7 @@ def test_evaluate_pair_epa_step3_keeps_sparse_estimate_association(tmp_path: Pat
             0.1 * np.cos(0.15 * t_gt),
         ]
     )
-    quat_gt = R.from_euler("zyx", np.column_stack([0.05 * t_gt, 0.01 * t_gt, 0.02 * t_gt])).as_quat()
+    quat_gt = R.from_euler("zyx", np.column_stack([0.5 * t_gt, 0.2 * t_gt, 0.3 * t_gt])).as_quat()
 
     sparse_ids = np.arange(0, t_gt.size, 100, dtype=int)
     t_est = t_gt[sparse_ids]
@@ -185,6 +185,35 @@ def test_evaluate_pair_epa_step3_keeps_sparse_estimate_association(tmp_path: Pat
     result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
 
     assert int(result["matched"]) == int(t_est.size)
+    assert result["eval_source"] == "epa_step3"
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+
+
+def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates(tmp_path: Path) -> None:
+    t_gt = np.arange(0.0, 10.001, 0.01)
+    pos_gt = np.column_stack(
+        [
+            0.4 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.15 * t_gt),
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.5 * t_gt, 0.2 * t_gt, 0.3 * t_gt])).as_quat()
+
+    sparse_ids = np.arange(0, t_gt.size, 2, dtype=int)
+    t_est = t_gt[sparse_ids]
+    pos_est = pos_gt[sparse_ids]
+    quat_est = quat_gt[sparse_ids]
+
+    gt_path = tmp_path / "gt_dense.tum"
+    est_path = tmp_path / "est_high_coverage.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
+
+    assert int(result["matched"]) > int(t_est.size)
+    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
     assert result["eval_source"] == "epa_step3"
 
 

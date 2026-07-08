@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from epa.core.pipeline_modular import _print_sim3_ov_eval_terminal_metrics
+from epa.core.pipeline_views import _print_sim3_ov_eval_terminal_metrics
 
 
 def test_sim3_terminal_output_includes_latex_table(capsys) -> None:

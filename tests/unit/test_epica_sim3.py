@@ -74,6 +74,51 @@ def test_epica_sim3_differs_from_position_only_baseline_when_pose_is_inconsisten
     assert epica_info["sim3_solver"] == "epica_orientation_consistent"
 
 
+def test_public_sim3_handles_body_frame_extrinsic_rotation() -> None:
+    n = 160
+    t = np.linspace(0.0, 12.0, n)
+    pos_ref = np.column_stack(
+        [
+            0.6 * t + 0.4 * np.sin(0.7 * t),
+            1.2 * np.sin(0.35 * t),
+            0.3 * np.cos(0.5 * t),
+        ]
+    )
+    quat_ref = R.from_euler(
+        "zyx",
+        np.column_stack(
+            [
+                0.4 * t,
+                0.25 * np.sin(0.6 * t),
+                0.18 * np.cos(0.4 * t),
+            ]
+        ),
+    ).as_quat()
+
+    scale_true = 1.8
+    r_world = R.from_euler("zyx", [25.0, -7.0, 4.0], degrees=True)
+    t_world = np.array([0.5, -0.8, 0.3], dtype=float)
+    r_body = R.from_euler("xyz", [12.0, -18.0, 32.0], degrees=True)
+    pos_est = (r_world.inv().as_matrix() @ ((pos_ref - t_world) / scale_true).T).T
+    quat_est_imu = (r_world.inv() * R.from_quat(quat_ref)).as_quat()
+    quat_est_cam = (R.from_quat(quat_est_imu) * r_body).as_quat()
+
+    pos_new, quat_new, info = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_est,
+        quat_est=quat_est_cam,
+        mode="sim3",
+        t_ref=t,
+    )
+    ape = compute_ape(pos_ref, quat_ref, pos_new, quat_new)
+
+    assert info["align_mode"] == "sim3"
+    assert info["sim3_extrinsic_rotation_correction_used"] is True
+    assert ape["translation_part"]["rmse"] < 1e-9
+    assert ape["rotation_angle_deg"]["rmse"] < 1e-9
+
+
 def test_epa_posyaw_aligns_xy_yaw_without_roll_pitch_or_scale() -> None:
     n = 80
     t = np.linspace(0.0, 10.0, n)

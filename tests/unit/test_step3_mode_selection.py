@@ -4,14 +4,13 @@ from scipy.spatial.transform import Rotation as R
 from epa.core.pipeline_modular import (
     _associate_gt_est,
     _compute_piecewise_alignment,
-    _default_interactive_view,
     _downsample_by_max_hz,
-    _interactive_eval_view_specs,
     _match_nearest_timestamps,
     _offset_match_diagnostics,
     _select_gt_overlap_window,
     _search_direct_offset_from_matched_pairs,
 )
+from epa.core.pipeline_views import _default_interactive_view, _interactive_eval_view_specs
 from epa.core.calibration import solve_world_alignment
 from epa.core.steps import (
     _select_step3_solve_variant,
@@ -26,14 +25,14 @@ def test_interactive_eval_views_only_include_requested_alignment() -> None:
     assert _interactive_eval_view_specs("epa_step3") == ()
 
     assert _default_interactive_view("sim3") == "sim3"
-    assert _interactive_eval_view_specs("sim3") == (("sim3", "sim3", "Sim3"),)
-    assert _interactive_eval_view_specs("epa_sim3_v2") == (("sim3", "sim3", "Sim3"),)
+    assert _interactive_eval_view_specs("sim3") == (("sim3", "sim3", "sim3"),)
+    assert _interactive_eval_view_specs("epa_sim3_v2") == (("sim3", "sim3", "sim3"),)
 
     assert _default_interactive_view("epica_sim3_stable") == "sim3"
-    assert _interactive_eval_view_specs("epica_sim3_stable") == (("sim3", "sim3", "Sim3"),)
+    assert _interactive_eval_view_specs("epica_sim3_stable") == (("sim3", "sim3", "sim3"),)
 
     assert _default_interactive_view("posyaw") == "epa_posyaw"
-    assert _interactive_eval_view_specs("posyaw") == (("epa_posyaw", "posyaw", "EPA PosYaw"),)
+    assert _interactive_eval_view_specs("posyaw") == (("epa_posyaw", "posyaw", "posyaw"),)
 
 
 def _make_ref(n: int = 200) -> np.ndarray:

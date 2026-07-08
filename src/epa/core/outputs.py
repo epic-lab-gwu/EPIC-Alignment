@@ -281,7 +281,7 @@ def _plot_stage_alignment_maps(
         stage_titles = {
             "raw": "Raw (After Step-1 Sync)",
             "step2": "Sensor Fixed (Step 2)",
-            "step3": "Aligned (Step 3)",
+            "step3": "Final aligned",
         }
         stage_pos = {
             "raw": np.asarray(pr_sync, dtype=float),
@@ -321,7 +321,7 @@ def _plot_stage_alignment_maps(
         pos_est=np.asarray(pr_final, dtype=float),
         errors_m=step3_err_subset,
         title=(
-            "Step3 Alignment Map\n"
+            "Final Alignment Map\n"
             f"ATE translation RMSE={float(np.sqrt(np.mean(step3_err_subset**2))):.6f} m"
         ),
     )

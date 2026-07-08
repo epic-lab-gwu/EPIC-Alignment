@@ -575,20 +575,20 @@ def _build_user_alert(
         "alignment_poor": "Overall alignment quality is poor",
         "rigid_diagnostic_flag": "Rigid-diagnostic checks flagged potential model mismatch",
         "scale_mismatch_severe": "Severe scale mismatch between trajectory and ground truth",
-        "step3_rmse_high": "High absolute Step-3 error",
-        "step3_improvement_small": "Limited Step-3 improvement over raw",
+        "step3_rmse_high": "High final alignment error",
+        "step3_improvement_small": "Limited final-alignment improvement over raw",
     }
     reasons_en = [reason_map[item] for item in issues if item in reason_map]
 
     if level == "ok":
-        message_en = "The result is stable overall; Step-3 output is reliable."
+        message_en = "The result is stable overall; final alignment is reliable."
     elif level == "warning":
         message_en = "Suspicious indicators were detected; please review plots and raw data."
     else:
         if "scale_mismatch_severe" in issues:
-            message_en = "Critical issue: VIO and ground truth differ by orders of magnitude in scale; Step-3 may be unreliable."
+            message_en = "Critical issue: VIO and ground truth differ by orders of magnitude in scale; final alignment may be unreliable."
         else:
-            message_en = "Critical issue detected; Step-3 may be unreliable. Check data pairing and time alignment first."
+            message_en = "Critical issue detected; final alignment may be unreliable. Check data pairing and time alignment first."
 
     return {
         "alert_level_code": float(level_code),

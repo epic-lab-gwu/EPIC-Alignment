@@ -3,7 +3,7 @@
 
 It provides:
 
-- 3-step alignment pipeline (time offset, extrinsic, world alignment)
+- trajectory alignment pipeline with public modes `se3`, `posyaw`, and `sim3`
 - a set of CLI tools (`traj`, `ape`, `rpe`, `res`, `config`)
 - OpenVINS compatibility entrypoints
 - optional plotting and rerun-based visualization
@@ -23,7 +23,7 @@ High-level system view:
 - the `ov_eval` compatibility layer for legacy-style summaries
 
 <p align="center">
-  <img src="docs/images/readme_step23_alignment_3d.png" alt="Step 1 to Step 3 trajectory alignment" width="88%">
+  <img src="docs/images/readme_step23_alignment_3d.png" alt="trajectory alignment report" width="88%">
 </p>
 
 <p align="center">
@@ -66,6 +66,14 @@ Example:
 
 ```bash
 epa ./example_data/example_groundtruth.csv ./example_data/example_estimation.txt
+```
+
+Choose an evaluation mode explicitly when needed:
+
+```bash
+epa ./gt.tum ./estimate.tum --mode se3
+epa ./gt.tum ./estimate.tum --mode posyaw
+epa ./gt.tum ./estimate.tum --mode sim3
 ```
 
 Run a multi-case benchmark:
@@ -115,6 +123,7 @@ Multi-case benchmark with `epa_bench`:
 
 - creates `outputs/<cases_root_name>_bench/run_YYYYMMDD_HHMMSS/`
 - typical files and folders inside:
+- `summary_public.csv`
 - `summary.csv`
 - `summary.md`
 - `paper_tables/`
@@ -138,7 +147,7 @@ The notebook reads an existing `summary.csv`, summarizes datasets and methods, r
 
 ## Common CLI Toolchain
 
-- `epa` / `epica`: run the main 3-step EPA pipeline for one GT/EST pair
+- `epa` / `epica`: run the main EPA pipeline for one GT/EST pair
 - `epa_bench`: run the multi-case benchmark harness over a cases root
 - `epa_ape`: compute APE for one trajectory pair
 - `epa_rpe`: compute RPE for one trajectory pair

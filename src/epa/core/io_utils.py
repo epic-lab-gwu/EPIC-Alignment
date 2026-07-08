@@ -150,18 +150,18 @@ METRIC_ZH_EXPLAIN = {
     "translation_constraints": "Step2 有效平移约束数量，越多通常越稳。",
     "ate_rmse_raw_m": "未完成空间对齐前（Step1 后）的绝对轨迹误差 RMSE（米）。",
     "ate_rmse_step2_m": "完成 Step2 外参修正后的绝对轨迹误差 RMSE（米）。",
-    "ate_rmse_step3_m": "完成 Step3 世界系对齐后的绝对轨迹误差 RMSE（米）。",
+    "ate_rmse_step3_m": "完成最终世界系对齐后的绝对轨迹误差 RMSE（米）。",
     "ate_p95_raw_m": "raw 绝对轨迹误差 95 分位（米）。",
     "ate_p95_step2_m": "step2 绝对轨迹误差 95 分位（米）。",
-    "ate_p95_step3_m": "step3 绝对轨迹误差 95 分位（米）。",
-    "ate_rmse_improve_raw_to_step3_pct": "从 raw 到 step3 的 RMSE 改善百分比。",
-    "ate_rmse_improve_step2_to_step3_pct": "从 step2 到 step3 的 RMSE 改善百分比。",
-    "step3_rmse_selected_m": "Step3 世界系对齐后的拟合 RMSE（米）。",
+    "ate_p95_step3_m": "最终对齐后绝对轨迹误差 95 分位（米）。",
+    "ate_rmse_improve_raw_to_step3_pct": "从 raw 到最终对齐结果的 RMSE 改善百分比。",
+    "ate_rmse_improve_step2_to_step3_pct": "从 step2 到最终对齐结果的 RMSE 改善百分比。",
+    "step3_rmse_selected_m": "最终世界系对齐后的拟合 RMSE（米）。",
     "alert_level_code": "异常提示等级编码：0=ok，1=warning，2=critical。",
     "alert_count": "触发的异常提示条目数量。",
     "quality_label_code": "对齐质量标签编码：2=good_align，1=partial_align，0=poor_align。",
     "rigid_alignability_code": "刚体可对齐性标签编码：1=rigidly_alignable，0=not_rigidly_alignable。",
-    "step3_rmse_m": "用于质量门控的 Step3 全局 RMSE（米）。",
+    "step3_rmse_m": "用于质量门控的最终全局 RMSE（米）。",
     "raw_to_step3_improve_pct": "用于质量门控的 raw 到 step3 RMSE 改善百分比。",
     "segment_count": "质量评估中使用的分段数量。",
     "segment_rmse_mean_m": "分段 RMSE 均值（米）。",
@@ -329,17 +329,17 @@ def _analyze_metric_value(section, metric, value, block):
                     "仍偏大"
                 )
                 return (
-                    f"Step3 RMSE={value:.4f} m（{quality}）；"
+                    f"最终对齐 RMSE={value:.4f} m（{quality}）；"
                     f"相对 raw 降低 {drop:.4f} m（{ratio:.2f}%）。"
                 )
         if metric == "ate_rmse_step2_m" and not np.isnan(step3):
             delta = value - step3
-            return f"Step2 RMSE={value:.4f} m；比 Step3 高 {delta:.4f} m。"
+            return f"Step2 RMSE={value:.4f} m；比最终对齐结果高 {delta:.4f} m。"
         if metric == "ate_rmse_raw_m" and not np.isnan(step3):
             delta = value - step3
-            return f"Raw RMSE={value:.4f} m；比 Step3 高 {delta:.4f} m。"
+            return f"Raw RMSE={value:.4f} m；比最终对齐结果高 {delta:.4f} m。"
         if metric == "ate_p95_step3_m":
-            return f"Step3 P95={value:.4f} m，表示 95% 时刻误差不超过该值。"
+            return f"最终对齐 P95={value:.4f} m，表示 95% 时刻误差不超过该值。"
         if metric == "ate_p95_step2_m" and not np.isnan(step2):
             return f"Step2 P95={value:.4f} m。"
         if metric == "ate_p95_raw_m" and not np.isnan(raw):
@@ -695,9 +695,9 @@ def _append_time_rpe_report(lines: list[str], *, metrics_payload: dict, language
             [
                 "## 1-second RPE（局部跳变）",
                 "",
-                f"- Step3 translation RMSE：`{trans_rmse}` m",
-                f"- Step3 translation p95 / max：`{trans_p95}` / `{trans_max}` m",
-                f"- Step3 rotation RMSE：`{rot_rmse}` deg",
+                f"- Final aligned translation RMSE：`{trans_rmse}` m",
+                f"- Final aligned translation p95 / max：`{trans_p95}` / `{trans_max}` m",
+                f"- Final aligned rotation RMSE：`{rot_rmse}` deg",
                 f"- Pair count：`{pair_text}`",
                 f"- Local drift threshold：`{drift_threshold}` m",
                 "- 图：[`series p95`](plots/rpe_time_1s_translation_part_series_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",
@@ -709,9 +709,9 @@ def _append_time_rpe_report(lines: list[str], *, metrics_payload: dict, language
             [
                 "## 1-second RPE (Local Jumps)",
                 "",
-                f"- Step3 translation RMSE: `{trans_rmse}` m",
-                f"- Step3 translation p95 / max: `{trans_p95}` / `{trans_max}` m",
-                f"- Step3 rotation RMSE: `{rot_rmse}` deg",
+                f"- Final aligned translation RMSE: `{trans_rmse}` m",
+                f"- Final aligned translation p95 / max: `{trans_p95}` / `{trans_max}` m",
+                f"- Final aligned rotation RMSE: `{rot_rmse}` deg",
                 f"- Pair count: `{pair_text}`",
                 f"- Local drift threshold: `{drift_threshold}` m",
                 "- Figures: [`series p95`](plots/rpe_time_1s_translation_part_series_p95.png) / [`stats core`](plots/rpe_time_1s_translation_part_stats_core.png) / [`box p95`](plots/rpe_time_1s_translation_part_box_p95.png)",

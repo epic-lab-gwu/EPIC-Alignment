@@ -9,24 +9,14 @@ import sys
 import time
 from pathlib import Path
 
+from epa.alignment.modes import (
+    COMPAT_ALIGN_MODES,
+    LEGACY_ORIGIN_ALIGN_MODES,
+    resolve_metric_eval_align_mode,
+)
 
-_KNOWN_ALIGN_MODES = {
-    "none",
-    "epa_step3",
-    "se3",
-    "epa_se3",
-    "epa_se3_eval",
-    "sim3",
-    "ov_sim3",
-    "epica_sim3",
-    "epica_sim3_stable",
-    "epica_sim3_joint",
-    "epica_sim3_trimmed",
-    "se3single",
-    "posyaw",
-    "posyawsingle",
-}
-_LEGACY_ALIGN_MODES = {"se3single", "posyawsingle"}
+_KNOWN_ALIGN_MODES = set(COMPAT_ALIGN_MODES)
+_LEGACY_ALIGN_MODES = set(LEGACY_ORIGIN_ALIGN_MODES)
 
 
 def _is_case_dir(path_str: str) -> bool:
@@ -40,25 +30,14 @@ def _safe_case_label(path_str: str) -> str:
 
 
 def _map_align_mode_to_eval_align(mode: str) -> str:
-    m = str(mode).lower()
-    if m == "none":
-        return "none"
-    if m in {"se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
-        return "se3"
-    if m in {
-        "sim3",
-        "ov_sim3",
-        "epica_sim3",
-        "epica_sim3_stable",
-        "epica_sim3_joint",
-        "epica_sim3_trimmed",
-    }:
-        return "sim3"
-    if m in {"se3single", "posyawsingle"}:
-        return "origin"
-    if m == "posyaw":
-        return "posyaw"
-    raise ValueError(f"Unsupported align_mode: {mode}")
+    return resolve_metric_eval_align_mode(
+        mode,
+        default="none",
+        collapse_sim3_aliases=True,
+        legacy_origin=True,
+        step3_as_se3=True,
+        strict=True,
+    )
 
 
 def _parse_run_dir(stdout: str, stderr: str) -> Path | None:

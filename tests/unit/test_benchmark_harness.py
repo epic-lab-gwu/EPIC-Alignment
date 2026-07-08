@@ -4,13 +4,19 @@ import numpy as np
 import pytest
 
 from epa.benchmark.benchmark_harness import (
-    BenchmarkCase,
     _run_benchmark_case,
     _resolve_jobs,
-    _write_summary_html,
-    _write_summary_md,
+)
+from epa.benchmark.cases import (
+    BenchmarkCase,
     discover_cases,
     load_pose_table,
+)
+from epa.benchmark.summary import (
+    _public_summary_rows,
+    _write_public_summary_csv,
+    _write_summary_html,
+    _write_summary_md,
 )
 
 
@@ -235,10 +241,60 @@ def test_summary_markdown_contains_direction_arrows(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert "raw_rmse_m (↓)" in text
     assert "improve_pct (↑)" in text
-    assert "Valid Segment Status" in text
-    assert "globally_unstable" in text
+    assert "Public Summary" in text
+    assert "Advanced Diagnostics" in text
+    assert "global gate failed" in text
     assert "robust_trimmed" in text
     assert "epa_xcorr_peak (↑)" in text
+
+
+def test_public_summary_csv_uses_stable_user_facing_schema(tmp_path: Path) -> None:
+    rows = [
+        {
+            "case": "demo_case",
+            "dataset": "demo",
+            "method": "rovio",
+            "status": "ok",
+            "epa_eval_align": "epa_sim3",
+            "epa_sr_distance": 0.5,
+            "epa_sr_time": 0.6,
+            "epa_sr_reliability_status": "warning",
+            "epa_ate_rmse_step3_m": 1.2,
+            "epa_rpe_time_1s_trans_rmse_m": 0.3,
+            "epa_rpe_time_1s_rot_rmse_deg": 4.0,
+            "epa_valid_distance_m": 12.0,
+            "epa_total_distance_m": 24.0,
+            "epa_sim3_scale": 0.9,
+            "epa_sim3_reliable": "True",
+        }
+    ]
+    public_rows = _public_summary_rows(rows)
+    assert list(public_rows[0].keys()) == [
+        "case",
+        "dataset",
+        "method",
+        "mode",
+        "status",
+        "sr_distance_pct",
+        "sr_time_pct",
+        "sr_reliability",
+        "ape_rmse_m",
+        "rpe_1s_trans_rmse_m",
+        "rpe_1s_rot_rmse_deg",
+        "valid_distance_m",
+        "total_distance_m",
+        "sim3_scale",
+        "sim3_reliable",
+        "notes",
+    ]
+    assert public_rows[0]["mode"] == "sim3"
+    assert public_rows[0]["sr_distance_pct"] == 50.0
+
+    out = tmp_path / "summary_public.csv"
+    _write_public_summary_csv(rows, out)
+    text = out.read_text(encoding="utf-8")
+    assert text.splitlines()[0].startswith("case,dataset,method,mode,status")
+    assert "epa_step3" not in text
 
 
 def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> None:
@@ -297,11 +353,11 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
     assert "showMarked" in text
     assert "showAll" in text
     assert "localStorage" in text
-    assert "Sim3 audit" in text
+    assert "details" in text
     assert "SR reliability" in text
     assert "1s RPE trans" in text
     assert "valid distance" in text
-    assert "global gate" in text
+    assert "Global gate" in text
     assert "42.0%" in text
     assert "raw / local / gated" not in text
     assert "90.0% / 42.0% / 0.0%" not in text
@@ -310,6 +366,7 @@ def test_summary_html_links_interactive_report_and_status(tmp_path: Path) -> Non
     assert 'data-case="case_a"' in text
     assert "Trajectory has jump or divergence" in text
     assert "Sim3 is not reliable" in text
+    assert "Sim3 audit" not in text
     assert "openImageViewer" not in text
 
 

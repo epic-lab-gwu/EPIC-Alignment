@@ -498,7 +498,7 @@ def _send_blueprint(timeline_name: str):
                                         ),
                                     ),
                                     rrb.Spatial3DView(
-                                        name="Follow Step3",
+                                        name="Follow final aligned",
                                         time_ranges=history_range,
                                         contents=[
                                             "/epa/replay/gt/**",

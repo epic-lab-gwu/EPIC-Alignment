@@ -1,6 +1,7 @@
 import argparse
 import sys
 
+from .alignment.modes import COMPAT_ALIGN_MODES, PUBLIC_ALIGN_MODES
 from .config_cli import parse_args_with_config
 from .runner import run
 
@@ -13,7 +14,7 @@ def build_parser() -> argparse.ArgumentParser:
         "inputs",
         nargs="*",
         metavar="INPUT",
-        help="Optional positional inputs: <gt_file> <est_file>.",
+        help="Optional positional inputs: <gt_file> [<est_file>].",
     )
     parser.add_argument(
         "--engine",
@@ -287,29 +288,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--mode",
+        choices=PUBLIC_ALIGN_MODES,
+        default="",
+        metavar="{se3,posyaw,sim3}",
+        help="Public alignment mode used for evaluation and reports.",
+    )
+    parser.add_argument(
         "--eval-align",
-        choices=[
-            "none",
-            "epa_step3",
-            "se3",
-            "epa_se3",
-            "epa_se3_eval",
-            "posyaw",
-            "epa_posyaw",
-            "sim3",
-            "ov_sim3",
-            "epica_sim3",
-            "epica_sim3_stable",
-            "epica_sim3_joint",
-            "epica_sim3_trimmed",
-            "epa_sim3",
-            "epa_sim3_v1",
-            "epa_sim3_v2",
-            "epica_anchor_sim3",
-            "scale",
-            "origin",
-        ],
-        default="none",
+        choices=COMPAT_ALIGN_MODES,
+        default="",
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
@@ -390,7 +378,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Generate additional debug figures, including raw/Step2/Step3 trajectory comparison.",
+        help="Generate additional debug figures, including raw/intermediate/final trajectory comparison.",
     )
     parser.add_argument(
         "--save-results",
@@ -453,6 +441,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _normalize_mode_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> argparse.Namespace:
+    public_mode = str(getattr(args, "mode", "") or "").strip().lower()
+    compat_mode = str(getattr(args, "eval_align", "") or "").strip().lower()
+    if public_mode and compat_mode:
+        parser.error("Use only one of --mode or --eval-align.")
+    args.eval_align = public_mode or compat_mode or "none"
+    return args
+
+
 def _normalize_inputs(parser: argparse.ArgumentParser, args: argparse.Namespace) -> argparse.Namespace:
     inputs = list(getattr(args, "inputs", []) or [])
     if len(inputs) > 2:
@@ -477,9 +474,12 @@ def _normalize_inputs(parser: argparse.ArgumentParser, args: argparse.Namespace)
         parser.error("Use either positional inputs or --gt/--est flags, not both.")
 
     if inputs:
-        if len(inputs) != 2:
-            parser.error("Positional mode requires exactly two inputs: <gt_file> <est_file>.")
-        args.gt_csv, args.est_path = inputs
+        if len(inputs) == 1:
+            # Legacy smoke/runtime entry: evaluate the file against itself.
+            args.gt_csv = inputs[0]
+            args.est_path = inputs[0]
+        else:
+            args.gt_csv, args.est_path = inputs
     else:
         args.gt_csv = gt_flags[0] if gt_flags else ""
         args.est_path = est_flags[0] if est_flags else ""
@@ -496,6 +496,7 @@ def main(argv=None) -> int:
     raw_argv = list(sys.argv[1:] if argv is None else argv)
     args = parse_args_with_config(parser, argv=argv, config_dest="config", tool_name="epa")
     args._raw_argv = raw_argv
+    args = _normalize_mode_args(parser, args)
     args = _normalize_inputs(parser, args)
     return run(args)
 

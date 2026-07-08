@@ -4,12 +4,12 @@ import argparse
 import contextlib
 import io
 import json
-import math
 from pathlib import Path
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from epa.alignment.modes import COMPAT_ALIGN_MODES, public_align_mode, resolve_metric_eval_align_mode
 from epa.core.evaluation import (
     compute_ape,
     compute_path_length,
@@ -17,240 +17,54 @@ from epa.core.evaluation import (
     compute_valid_segment_metrics,
     resolve_success_threshold,
 )
-from epa.core.math_utils import compute_error_statistics, normalize_quat_array
+from epa.core.math_utils import compute_error_statistics
 from epa.core.steps import (
+    _prepare_solve_eval_trajectories,
     _run_time_alignment,
     _solve_step2_step3,
 )
 from epa.core.sim3 import solve_anchor_sim3, solve_epica_sim3_variant
 from epa.metric_cli_common import align_for_eval_with_info, project_to_plane
+from epa.ov_align import (
+    associate_est_gt as _associate_est_gt,
+    rot_z as _rot_z,
+    umeyama as _umeyama,
+)
+from epa.ov_io import load_ov_csv as _load_ov_eval_csv
+from epa.ov_io import load_pose_file as _load_pose_file
+from epa.ov_report import (
+    fmt_num as _fmt,
+    print_comparison_tables,
+    source_counts as _format_source_counts,
+    source_details as _format_source_details,
+)
 from epa.traj_tool import build_parser as build_traj_parser
 from epa.traj_tool import run as run_traj
 
 
-_VALID_ALIGN_MODES = {
-    "epa_step3",
-    "posyaw",
-    "posyawsingle",
-    "se3",
-    "epa_se3",
-    "epa_se3_eval",
-    "se3single",
-    "sim3",
-    "ov_sim3",
-    "epica_sim3",
-    "epica_sim3_stable",
-    "epica_sim3_joint",
-    "epica_sim3_trimmed",
-    "epa_sim3",
-    "epa_sim3_v1",
-    "epa_sim3_v2",
-    "epica_anchor_sim3",
-    "none",
-}
+_VALID_ALIGN_MODES = set(COMPAT_ALIGN_MODES)
 _LEGACY_ALIGN_MODES = {"se3", "se3single", "posyawsingle"}
 _DEFAULT_ASSOC_MAX_DIFF = 0.02
 _DEFAULT_EPA_DT_RESAMPLE = 0.001
 _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO = 0.3
 _DEFAULT_EPA_DOWNSAMPLE_HZ = 100.0
 _DEFAULT_EPA_QUAT_INTERP = "linear"
+_DENSE_TIMELINE_MIN_GT_MATCH_RATIO = 0.5
 _ORIENTATION_WARNING_MIN_SR = 0.99
 _ORIENTATION_WARNING_APE_RMSE_DEG = 45.0
 _ORIENTATION_WARNING_RPE_RMSE_DEG = 30.0
 
 
 def _public_align_mode(raw_mode: str) -> str:
-    mode = str(raw_mode or "").strip().lower()
-    if mode in {"se3", "epa_step3", "epa_se3", "epa_se3_eval"}:
-        return "se3"
-    if mode in {"posyaw", "epa_posyaw"}:
-        return "posyaw"
-    if mode in {
-        "sim3",
-        "epa_sim3",
-        "ov_sim3",
-        "epica_sim3",
-        "epica_sim3_stable",
-        "epica_sim3_joint",
-        "epica_sim3_trimmed",
-        "epa_sim3_v1",
-        "epa_sim3_v2",
-        "epica_anchor_sim3",
-    }:
-        return "sim3"
-    return mode
-
-
-def _fmt(v: float, nd: int = 3) -> str:
-    if not np.isfinite(v):
-        return "nan"
-    return f"{float(v):.{nd}f}"
-
-
-def _load_ov_eval_txt(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    times: list[float] = []
-    pos: list[list[float]] = []
-    quat: list[list[float]] = []
-
-    with path.open("r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.replace(",", " ").split()
-            if len(parts) < 8:
-                continue
-            vals = [float(x) for x in parts[:8]]
-            times.append(vals[0])
-            pos.append(vals[1:4])
-            quat.append(vals[4:8])
-
-    if len(times) == 0:
-        raise ValueError(f"Could not parse any trajectory samples from: {path}")
-
-    t = np.asarray(times, dtype=float)
-    p = np.asarray(pos, dtype=float)
-    q = normalize_quat_array(np.asarray(quat, dtype=float))
-    return t, p, q
-
-
-def _load_ov_eval_csv(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    times: list[float] = []
-    pos: list[list[float]] = []
-    quat: list[list[float]] = []
-
-    with path.open("r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = [x for x in line.split(",") if x != ""]
-            if len(parts) < 8:
-                continue
-            vals = [float(x) for x in parts[:8]]
-            times.append(vals[0] * 1e-9)
-            pos.append(vals[1:4])
-            quat.append([vals[5], vals[6], vals[7], vals[4]])
-
-    if len(times) == 0:
-        raise ValueError(f"Could not parse any CSV samples from: {path}")
-
-    t = np.asarray(times, dtype=float)
-    p = np.asarray(pos, dtype=float)
-    q = normalize_quat_array(np.asarray(quat, dtype=float))
-    return t, p, q
-
-
-def _load_pose_file(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    if path.suffix.lower() == ".csv":
-        return _load_ov_eval_csv(path)
-    return _load_ov_eval_txt(path)
-
-
-def _associate_est_gt(
-    t_est: np.ndarray,
-    p_est: np.ndarray,
-    q_est: np.ndarray,
-    t_gt: np.ndarray,
-    p_gt: np.ndarray,
-    q_gt: np.ndarray,
-    max_diff: float,
-    offset: float = 0.0,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    i_est: list[int] = []
-    i_gt: list[int] = []
-    gt_ptr = 0
-
-    for i, te in enumerate(np.asarray(t_est, dtype=float).reshape(-1)):
-        tgt = te + float(offset)
-        best_diff = float(max_diff)
-        best_gt = -1
-
-        while gt_ptr < int(t_gt.size) and t_gt[gt_ptr] < tgt and abs(float(t_gt[gt_ptr] - tgt)) > float(max_diff):
-            gt_ptr += 1
-
-        while gt_ptr < int(t_gt.size) and abs(float(t_gt[gt_ptr] - tgt)) <= float(max_diff):
-            cur = abs(float(t_gt[gt_ptr] - tgt))
-            if cur >= best_diff:
-                break
-            best_diff = cur
-            best_gt = int(gt_ptr)
-            gt_ptr += 1
-
-        if best_gt != -1:
-            i_est.append(int(i))
-            i_gt.append(best_gt)
-
-    if len(i_est) < 3:
-        raise ValueError(
-            "Unable to associate enough timestamps between estimate and ground truth. "
-            f"matches={len(i_est)}, max_diff={max_diff}, offset={offset}."
-        )
-
-    ie = np.asarray(i_est, dtype=int)
-    ig = np.asarray(i_gt, dtype=int)
-
-    t_match = np.asarray(t_gt, dtype=float)[ig]
-    return (
-        t_match,
-        np.asarray(p_est, dtype=float)[ie],
-        np.asarray(q_est, dtype=float)[ie],
-        t_match,
-        np.asarray(p_gt, dtype=float)[ig],
-        np.asarray(q_gt, dtype=float)[ig],
-        ie,
+    mode = resolve_metric_eval_align_mode(
+        raw_mode,
+        default="none",
+        collapse_sim3_aliases=True,
+        legacy_origin=False,
     )
-
-
-def _rot_z(theta: float) -> np.ndarray:
-    c = math.cos(float(theta))
-    s = math.sin(float(theta))
-    return np.asarray([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=float)
-
-
-def _best_yaw(c_mat: np.ndarray) -> float:
-    return float(math.atan2(float(c_mat[0, 1] - c_mat[1, 0]), float(c_mat[0, 0] + c_mat[1, 1])))
-
-
-def _umeyama(
-    data_xyz: np.ndarray,
-    model_xyz: np.ndarray,
-    known_scale: bool,
-    yaw_only: bool,
-) -> tuple[float, np.ndarray, np.ndarray]:
-    data = np.asarray(data_xyz, dtype=float)
-    model = np.asarray(model_xyz, dtype=float)
-    if data.shape != model.shape or data.shape[0] < 2:
-        raise ValueError("Alignment requires paired points with count >= 2.")
-
-    mu_m = np.mean(model, axis=0)
-    mu_d = np.mean(data, axis=0)
-    m0 = model - mu_m
-    d0 = data - mu_d
-
-    n = float(data.shape[0])
-    c_mat = (m0.T @ d0) / n
-    sigma2 = float(np.mean(np.sum(d0**2, axis=1)))
-
-    u, svals, vt = np.linalg.svd(c_mat)
-    s_mat = np.eye(3, dtype=float)
-    if np.linalg.det(u) * np.linalg.det(vt) < 0:
-        s_mat[2, 2] = -1.0
-
-    if yaw_only:
-        r_fit = _rot_z(_best_yaw(n * c_mat.T))
-    else:
-        r_fit = u @ s_mat @ vt
-
-    if known_scale:
-        scale = 1.0
-    else:
-        if sigma2 < 1e-12:
-            raise ValueError("Degenerate variance for Sim3 alignment.")
-        scale = float(np.trace(np.diag(svals) @ s_mat) / sigma2)
-
-    t_fit = mu_m - scale * (r_fit @ mu_d)
-    return scale, r_fit, t_fit
+    if mode == "none":
+        return "none"
+    return public_align_mode(mode, default=mode)
 
 
 def _solve_alignment(
@@ -333,18 +147,6 @@ def _solve_alignment(
         return 1.0, r_fit, t_fit
 
     raise ValueError(f"Unsupported alignment mode: {method}")
-
-
-def _apply_similarity(
-    p_est: np.ndarray,
-    q_est: np.ndarray,
-    scale: float,
-    r_fit: np.ndarray,
-    t_fit: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    p_new = float(scale) * (np.asarray(r_fit, dtype=float) @ np.asarray(p_est, dtype=float).T).T + np.asarray(t_fit, dtype=float)
-    q_new = normalize_quat_array((R.from_matrix(np.asarray(r_fit, dtype=float)) * R.from_quat(np.asarray(q_est, dtype=float))).as_quat())
-    return p_new, q_new
 
 
 def _evaluate_pair_ov_style(
@@ -465,7 +267,7 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
-    t_est_m, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, _ = _associate_est_gt(
+    t_est_sparse, p_est_sparse, q_est_sparse, t_gt_sparse, p_gt_sparse, q_gt_sparse, _ = _associate_est_gt(
         t_est=t_est,
         p_est=p_est,
         q_est=q_est,
@@ -475,6 +277,41 @@ def _evaluate_pair_epa_step3(
         max_diff=float(max_diff),
         offset=-float(step1["calculated_offset"]),
     )
+    sparse_gt_match_ratio = float(t_gt_sparse.size) / max(float(t_gt.size), 1.0)
+    use_dense_timeline = bool(sparse_gt_match_ratio >= _DENSE_TIMELINE_MIN_GT_MATCH_RATIO)
+    if use_dense_timeline:
+        solve_eval = _prepare_solve_eval_trajectories(
+            t_gt=t_gt,
+            pos_gt=p_gt,
+            quat_gt=q_gt,
+            t_est=t_est,
+            pos_est=p_est,
+            quat_est=q_est,
+            calculated_offset=float(step1["calculated_offset"]),
+            downsample_hz=float(downsample_hz),
+            quat_interp=str(quat_interp),
+        )
+        t_gt_m = np.asarray(solve_eval["t_gt"], dtype=float)
+        p_gt_m = np.asarray(solve_eval["pos_gt"], dtype=float)
+        q_gt_m = np.asarray(solve_eval["quat_gt"], dtype=float)
+        p_est_m = np.asarray(solve_eval["pr_sync"], dtype=float)
+        q_est_m = np.asarray(solve_eval["qr_sync"], dtype=float)
+        pos_gt_solve = np.asarray(solve_eval["pos_gt_solve"], dtype=float)
+        quat_gt_solve = np.asarray(solve_eval["quat_gt_solve"], dtype=float)
+        p_est_solve = np.asarray(solve_eval["pr_solve"], dtype=float)
+        q_est_solve = np.asarray(solve_eval["qr_solve"], dtype=float)
+        timeline_policy = "dense_overlap"
+    else:
+        t_gt_m = t_gt_sparse
+        p_gt_m = p_gt_sparse
+        q_gt_m = q_gt_sparse
+        p_est_m = p_est_sparse
+        q_est_m = q_est_sparse
+        pos_gt_solve = p_gt_sparse
+        quat_gt_solve = q_gt_sparse
+        p_est_solve = p_est_sparse
+        q_est_solve = q_est_sparse
+        timeline_policy = "sparse_est_association"
     eval_mode = str(eval_align_mode or "none").strip().lower()
     if eval_mode in {"epa_se3_eval", "epa_se3"}:
         eval_mode = "se3"
@@ -485,10 +322,10 @@ def _evaluate_pair_epa_step3(
     solved = _solve_step2_step3(
         pr_sync=p_est_m,
         qr_sync=q_est_m,
-        pos_gt_solve=p_gt_m,
-        quat_gt_solve=q_gt_m,
-        pr_solve=p_est_m,
-        qr_solve=q_est_m,
+        pos_gt_solve=pos_gt_solve,
+        quat_gt_solve=quat_gt_solve,
+        pr_solve=p_est_solve,
+        qr_solve=q_est_solve,
         global_align_mode=global_align_mode,
     )
 
@@ -501,6 +338,10 @@ def _evaluate_pair_epa_step3(
         "align_mode": "posyaw_step3" if global_align_mode == "posyaw" else "none",
         "step3_global_align_mode": global_align_mode,
         "step3_alignment_mode": str(solved.get("step3_choice", {}).get("step3_alignment_mode", "")),
+        "timeline_policy": timeline_policy,
+        "sparse_gt_match_ratio": sparse_gt_match_ratio,
+        "sparse_matched": int(t_gt_sparse.size),
+        "dense_timeline_used": bool(use_dense_timeline),
     }
     if eval_mode not in {"", "none", "posyaw", "epa_posyaw"}:
         est_pos, est_quat, eval_alignment = align_for_eval_with_info(
@@ -619,27 +460,6 @@ def _epa_eval_kwargs(args: argparse.Namespace) -> dict[str, object]:
         "epa_no_fallback": bool(getattr(args, "epa_no_fallback", False)),
         "epa_verbose_fallback": bool(getattr(args, "epa_verbose_fallback", False)),
     }
-
-
-def _format_source_counts(counts: dict[str, int]) -> str:
-    epa_count = int(counts.get("epa_step3", 0))
-    epa_eval_count = int(counts.get("epa_eval_align", 0))
-    epa_posyaw_count = int(counts.get("epa_posyaw", 0))
-    failed_count = int(counts.get("failed", 0))
-    known = {"epa_step3", "epa_eval_align", "epa_posyaw", "failed"}
-    unknown_count = sum(int(v) for k, v in counts.items() if k not in known)
-    parts = [f"epa_step3={epa_count}", f"epa_eval={epa_eval_count}", f"failed={failed_count}"]
-    if epa_posyaw_count:
-        parts.insert(2, f"epa_posyaw={epa_posyaw_count}")
-    if unknown_count:
-        parts.append(f"unknown={unknown_count}")
-    return ", ".join(parts)
-
-
-def _format_source_details(items: list[str]) -> str:
-    if not items:
-        return "none"
-    return ", ".join(items)
 
 
 def _orientation_quality_warning(eval_res: dict, success: dict, time_rpe: dict) -> dict[str, object]:
@@ -1655,183 +1475,17 @@ def run_error_comparison(args: argparse.Namespace) -> int:
     if unreliable_total:
         print(f"UNRELIABLE RUNS: {_format_source_details(unreliable_total)}")
     print("============================================")
-    print("============================================")
-    print("FULL TRAJECTORY ATE LATEX TABLE (ROT DEG / TRANS M)")
-    print("============================================")
-    for gt in gt_files:
-        name = gt.stem.replace("_", "\\_")
-        print(f" & \\textbf{{{name}}}", end="")
-    print(" & \\textbf{Average} \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        sum_ori = 0.0
-        sum_pos = 0.0
-        cnt = 0
-        for gt in gt_files:
-            ds = gt.stem
-            if ds not in ate_table[algo.name]:
-                print(" & - / -", end="")
-                continue
-            o, p = ate_table[algo.name][ds]
-            print(f" & {_fmt(o)} / {_fmt(p)}", end="")
-            if np.isfinite(o) and np.isfinite(p):
-                sum_ori += o
-                sum_pos += p
-                cnt += 1
-        avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
-        avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
-        print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
-    print("============================================")
-
-    print("============================================")
-    print("FULL TRAJECTORY 1S TIME RPE LATEX TABLE (ROT DEG / TRANS M)")
-    print("============================================")
-    for gt in gt_files:
-        name = gt.stem.replace("_", "\\_")
-        print(f" & \\textbf{{{name}}}", end="")
-    print(" & \\textbf{Average} \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        sum_ori = 0.0
-        sum_pos = 0.0
-        cnt = 0
-        for gt in gt_files:
-            ds = gt.stem
-            if ds not in time_rpe_table[algo.name]:
-                print(" & - / -", end="")
-                continue
-            o, p = time_rpe_table[algo.name][ds]
-            print(f" & {_fmt(o)} / {_fmt(p)}", end="")
-            if np.isfinite(o) and np.isfinite(p):
-                sum_ori += o
-                sum_pos += p
-                cnt += 1
-        avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
-        avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
-        print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
-    print("============================================")
-
-    print("============================================")
-    print("DRIFT-VALID SUCCESS RATE LATEX TABLE (% PATH LENGTH)")
-    print("============================================")
-    for gt in gt_files:
-        name = gt.stem.replace("_", "\\_")
-        print(f" & \\textbf{{{name}}}", end="")
-    print(" & \\textbf{Average} \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        sum_dist = 0.0
-        cnt = 0
-        for gt in gt_files:
-            ds = gt.stem
-            if ds not in success_table[algo.name]:
-                print(" & -", end="")
-                continue
-            sr_dist, _ = success_table[algo.name][ds]
-            print(f" & {_fmt(sr_dist * 100.0, 2)}", end="")
-            if np.isfinite(sr_dist):
-                sum_dist += sr_dist
-                cnt += 1
-        avg_dist = sum_dist / cnt if cnt > 0 else float("nan")
-        print(f" & {_fmt(avg_dist * 100.0, 2)} \\\\")
-    print("============================================")
-
-    print("============================================")
-    print("DRIFT-VALID ONLY ATE LATEX TABLE (ROT DEG / TRANS M)")
-    print("============================================")
-    for gt in gt_files:
-        name = gt.stem.replace("_", "\\_")
-        print(f" & \\textbf{{{name}}}", end="")
-    print(" & \\textbf{Average} \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        sum_ori = 0.0
-        sum_pos = 0.0
-        cnt = 0
-        for gt in gt_files:
-            ds = gt.stem
-            if ds not in valid_ate_table[algo.name]:
-                print(" & - / -", end="")
-                continue
-            o, p = valid_ate_table[algo.name][ds]
-            print(f" & {_fmt(o)} / {_fmt(p)}", end="")
-            if np.isfinite(o) and np.isfinite(p):
-                sum_ori += o
-                sum_pos += p
-                cnt += 1
-        avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
-        avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
-        print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
-    print("============================================")
-
-    for seg in segments:
-        print("============================================")
-        print(f"DRIFT-VALID ONLY {int(seg)}m SEGMENT RPE LATEX TABLE (ROT DEG / TRANS M)")
-        print("============================================")
-        for gt in gt_files:
-            name = gt.stem.replace("_", "\\_")
-            print(f" & \\textbf{{{name}}}", end="")
-        print(" & \\textbf{Average} \\\\hline")
-
-        for algo in algo_dirs:
-            name = algo.name.replace("_", "\\_")
-            print(name, end="")
-            sum_ori = 0.0
-            sum_pos = 0.0
-            cnt = 0
-            for gt in gt_files:
-                ds = gt.stem
-                if ds not in valid_rpe_table[algo.name][seg]:
-                    print(" & - / -", end="")
-                    continue
-                o, p = valid_rpe_table[algo.name][seg][ds]
-                print(f" & {_fmt(o)} / {_fmt(p)}", end="")
-                if np.isfinite(o) and np.isfinite(p):
-                    sum_ori += o
-                    sum_pos += p
-                    cnt += 1
-            avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
-            avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
-            print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
-        print("============================================")
-
-    print("============================================")
-    print("DRIFT-VALID ONLY 1S TIME RPE LATEX TABLE (ROT DEG / TRANS M)")
-    print("============================================")
-    for gt in gt_files:
-        name = gt.stem.replace("_", "\\_")
-        print(f" & \\textbf{{{name}}}", end="")
-    print(" & \\textbf{Average} \\\\hline")
-
-    for algo in algo_dirs:
-        name = algo.name.replace("_", "\\_")
-        print(name, end="")
-        sum_ori = 0.0
-        sum_pos = 0.0
-        cnt = 0
-        for gt in gt_files:
-            ds = gt.stem
-            if ds not in valid_time_rpe_table[algo.name]:
-                print(" & - / -", end="")
-                continue
-            o, p = valid_time_rpe_table[algo.name][ds]
-            print(f" & {_fmt(o)} / {_fmt(p)}", end="")
-            if np.isfinite(o) and np.isfinite(p):
-                sum_ori += o
-                sum_pos += p
-                cnt += 1
-        avg_ori = sum_ori / cnt if cnt > 0 else float("nan")
-        avg_pos = sum_pos / cnt if cnt > 0 else float("nan")
-        print(f" & {_fmt(avg_ori)} / {_fmt(avg_pos)} \\\\")
-    print("============================================")
+    print_comparison_tables(
+        gt_files=gt_files,
+        algo_names=[algo.name for algo in algo_dirs],
+        ate_table=ate_table,
+        time_rpe_table=time_rpe_table,
+        success_table=success_table,
+        valid_ate_table=valid_ate_table,
+        valid_rpe_table=valid_rpe_table,
+        valid_time_rpe_table=valid_time_rpe_table,
+        segments=segments,
+    )
     return 0
 
 

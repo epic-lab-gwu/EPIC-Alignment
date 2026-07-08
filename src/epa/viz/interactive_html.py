@@ -96,7 +96,7 @@ def _speed_plot_data(
 ) -> dict[str, Any]:
     traces = [
         _speed_trace(timestamps, pos_gt, label="ground truth", max_points=max_points),
-        _speed_trace(timestamps, pr_final, label="EPA SE3", max_points=max_points),
+        _speed_trace(timestamps, pr_final, label="se3", max_points=max_points),
     ]
     for label, pos in (extra_traces or {}).items():
         traces.append(_speed_trace(timestamps, pos, label=label, max_points=max_points))
@@ -215,14 +215,19 @@ def _summary_card(label: str, value: Any, unit: str = "", *, percent: bool = Fal
     return {"label": label, "value": text}
 
 
+def _public_mode_label(key: str, label: Any = "") -> str:
+    text = f"{key} {label}".strip().lower()
+    if any(token in text for token in ("sim3", "sim(3)")):
+        return "sim3"
+    if "posyaw" in text or "pos_yaw" in text:
+        return "posyaw"
+    return "se3"
+
+
 def _metric_summary_cards(metrics_payload: dict, *, ape_relation: str, rpe_relation: str) -> list[dict[str, str]]:
     return [
         _summary_card("diagnosis", _lookup(metrics_payload, ("case_diagnostics", "diagnosis_primary"))),
         _summary_card("diagnosis tags", _lookup(metrics_payload, ("case_diagnostics", "diagnosis_summary"))),
-        _summary_card(
-            "case status",
-            _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "case_status")),
-        ),
         _summary_card(
             "SR distance",
             _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "success_rate_distance")),
@@ -238,12 +243,12 @@ def _metric_summary_cards(metrics_payload: dict, *, ape_relation: str, rpe_relat
             percent=True,
         ),
         _summary_card(
-            "APE EPA SE3 RMSE",
+            "APE RMSE",
             _lookup(metrics_payload, ("pose_metrics", "ape", "step3", ape_relation, "rmse")),
             "m",
         ),
         _summary_card(
-            "RPE EPA SE3 RMSE",
+            "RPE RMSE",
             _lookup(metrics_payload, ("pose_metrics", "rpe", "step3", rpe_relation, "rmse")),
             "m",
         ),
@@ -252,20 +257,11 @@ def _metric_summary_cards(metrics_payload: dict, *, ape_relation: str, rpe_relat
             _lookup(metrics_payload, ("pose_metrics", "rpe_time_1s", "step3", "translation_part", "rmse")),
             "m",
         ),
-        _summary_card("EPA SE3 mode", _lookup(metrics_payload, ("step3_selection", "step3_alignment_mode"))),
+        _summary_card("mode", _public_mode_label("step3", _lookup(metrics_payload, ("metadata", "eval_align")) or "se3")),
         _summary_card(
-            "EPA SE3 rejected",
+            "rejected",
             _lookup(metrics_payload, ("step3_selection", "step3_rejection_ratio")),
             percent=True,
-        ),
-        _summary_card(
-            "global gate",
-            _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "global_gate_failed")),
-        ),
-        _summary_card(
-            "gate value",
-            _lookup(metrics_payload, ("pose_metrics", "valid_segment", "step3", "success", "global_gate_value_m")),
-            "m",
         ),
         _summary_card(
             "orientation",
@@ -427,13 +423,14 @@ def write_interactive_run_html(
         "step3Err": _error_xyz(pos_gt, pr_final, max_points=max_points),
     }
     views = {
-        "step3": {"label": "EPA SE3", "pos": pr_final},
+        "step3": {"label": "se3", "pos": pr_final},
     }
     for key, view in (trajectory_views or {}).items():
         if not isinstance(view, dict) or "pos" not in view:
             continue
+        public_label = _public_mode_label(str(key), view.get("label", key))
         views[str(key)] = {
-            "label": str(view.get("label", key)),
+            "label": public_label,
             "pos": view["pos"],
             "meta": dict(view.get("meta", {})) if isinstance(view.get("meta", {}), dict) else {},
         }
@@ -453,10 +450,12 @@ def write_interactive_run_html(
         )
     time_block = dict(time_alignment or {})
     lag_times = np.asarray(time_block.get("lags", []), dtype=float).reshape(-1) * float(time_block.get("dt_resample", 1.0))
+    default_view_key = str(default_trajectory_view or "step3")
     data = {
         "title": str(title or "EPA Interactive Report"),
         "debug": debug_outputs,
-        "defaultTrajectoryView": str(default_trajectory_view or "step3"),
+        "defaultTrajectoryView": default_view_key,
+        "publicMode": str(views.get(default_view_key, views["step3"]).get("label", "se3")),
         "trajectory": trajectory,
         "trajectoryViews": {
             key: {
@@ -563,10 +562,11 @@ main{{padding:18px 22px}}
 .panel h2{{font-size:16px;margin:0;line-height:1.25;overflow-wrap:anywhere}}
 .panelClose{{width:26px;height:26px;line-height:20px;font-size:14px;flex:0 0 auto}}
 .plot{{height:560px}} .plot.small{{height:390px}}
-.trajectoryControls{{display:flex;align-items:center;gap:12px;margin:0 0 10px;color:#52606d;font-size:13px;flex-wrap:wrap}}
+.trajectoryControls{{display:flex;align-items:center;gap:12px;margin:10px 0 0;color:#52606d;font-size:13px;flex-wrap:wrap}}
 .trajectoryControls input{{flex:1;min-width:180px}}
 .trajectoryControls select{{border:1px solid #ccd5e1;border-radius:4px;background:#fff;color:#334155;padding:5px 7px;font-size:13px}}
 .trajectoryControls output{{min-width:48px;text-align:right;font-variant-numeric:tabular-nums}}
+.trajectoryPlay{{border:1px solid #ccd5e1;border-radius:4px;background:#fff;color:#334155;padding:5px 10px;font-size:13px;min-width:58px}}
 .trajectoryModeMeta{{font-size:12px;color:#667085;margin:-4px 0 10px;overflow-wrap:anywhere}}
 .metricCards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px}}
 .metricCard{{border:1px solid #dce3ed;border-radius:6px;padding:11px;background:#fbfcfe;min-width:0;overflow:hidden}}
@@ -597,8 +597,14 @@ main{{padding:18px 22px}}
 .metricTable tr:last-child td{{border-bottom:0}}
 .metricTable th{{color:#52606d;background:#fff;font-weight:650}}
 .metricTable td:last-child{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#17202a}}
-.figureLinks{{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}}
+.figureLinks{{display:flex;flex-wrap:wrap;gap:8px;margin:0}}
 .figureLinks a{{display:inline-block;border:1px solid #dce3ed;border-radius:4px;padding:6px 8px;color:#1d4ed8;text-decoration:none;background:#fbfcfe;font-size:13px}}
+.emptyState{{color:#667085;font-size:13px}}
+.trajectoryWrap{{position:relative}}
+.trajectoryLegend{{position:absolute;left:6px;bottom:8px;display:flex;align-items:center;gap:18px;color:#4b5563;font-size:13px;pointer-events:none;z-index:2}}
+.legendItem{{display:flex;align-items:center;gap:7px;white-space:nowrap}}
+.legendLine{{display:inline-block;width:32px;height:0;border-top:4px solid #20242a}}
+.legendGradient{{display:inline-block;width:44px;height:5px;border-radius:999px;background:linear-gradient(90deg,#0025b8 0%,#00c8ff 33%,#fff000 66%,#d50000 100%)}}
 .fallback{{padding:12px;background:#fff3cd;border:1px solid #ffec99;border-radius:6px;display:none}}
 @media (max-width: 980px){{.dashboard{{grid-template-columns:1fr}}.panel.span2{{grid-column:span 1}}.plot{{height:460px}}}}
 </style>
@@ -606,7 +612,7 @@ main{{padding:18px 22px}}
 <body>
 <header>
 <h1>{data["title"]}</h1>
-<div class="meta"><span>EPA SE3 mode: {data["step3"]["mode"]}</span><span>inliers: {data["step3"]["inliers"]}</span><span>rejected: {data["step3"]["rejected"]}</span></div>
+<div class="meta"><span>mode: {data["publicMode"]}</span><span>internal alignment: {data["step3"]["mode"]}</span><span>inliers: {data["step3"]["inliers"]}</span><span>rejected: {data["step3"]["rejected"]}</span></div>
 </header>
 <main>
 <div id="plotlyFallback" class="fallback">Plotly did not load. Check network access or use a browser with access to cdn.plot.ly.</div>
@@ -614,11 +620,11 @@ main{{padding:18px 22px}}
 <div id="dashboard" class="dashboard">
 <section class="panel span2" data-panel="summary">
   <div class="panelHeader" draggable="true"><h2>Metrics Summary</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="summary">x</button></div>
-  <div id="metricCards" class="metricCards"></div><div id="figureLinks" class="figureLinks"></div><details class="summaryDetails"><summary>Metrics details</summary><div id="metricDetails" class="detailBody"></div></details>
+  <div id="metricCards" class="metricCards"></div><details class="summaryDetails"><summary>Figures</summary><div class="detailBody"><div id="figureLinks" class="figureLinks"></div></div></details><details class="summaryDetails"><summary>Metrics details</summary><div id="metricDetails" class="detailBody"></div></details>
 </section>
 <section class="panel span2" data-panel="trajectory">
   <div class="panelHeader" draggable="true"><h2>3D Trajectory</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="trajectory">x</button></div>
-  <div class="trajectoryControls"><label for="trajectoryMode">view</label><select id="trajectoryMode"></select><label for="trajectoryDragMode">mouse</label><select id="trajectoryDragMode"><option value="orbit">orbit</option><option value="pan">pan</option></select><span>progress</span><input id="trajectoryProgress" type="range" min="2" max="100" value="100"><output id="trajectoryProgressLabel">100%</output></div><div id="trajectoryModeMeta" class="trajectoryModeMeta"></div><div id="trajectory3d" class="plot"></div>
+  <div id="trajectoryModeMeta" class="trajectoryModeMeta"></div><div class="trajectoryWrap"><div id="trajectory3d" class="plot"></div><div class="trajectoryLegend"><span class="legendItem"><span class="legendLine"></span>ground truth</span><span class="legendItem"><span class="legendGradient"></span><span id="trajectoryLegendMode">se3</span></span></div></div><div class="trajectoryControls"><label for="trajectoryMode">mode</label><select id="trajectoryMode"></select><button id="trajectoryPlay" class="trajectoryPlay" type="button">Play</button><span>progress</span><input id="trajectoryProgress" type="range" min="2" max="100" value="100"><output id="trajectoryProgressLabel">100%</output></div>
 </section>
 <section class="panel span2" data-panel="speed">
   <div class="panelHeader" draggable="true"><h2>Linear Velocity</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="speed">x</button></div>
@@ -656,7 +662,7 @@ const payload = JSON.parse(document.getElementById('epaInteractiveData').textCon
 const config = {{responsive:true, scrollZoom:true, displaylogo:false, modeBarButtonsToAdd:['pan2d','zoom2d','resetScale2d'], modeBarButtonsToRemove:['lasso2d','select2d']}};
 const defaultPanelOrder = ['summary','trajectory','speed','ape','apeDistribution','rpe1s','rpe1sDistribution','rpe','rpeDistribution'].concat(payload.debug ? ['timeSignals','timeCorrelation'] : []);
 function layout(title, xTitle, yTitle) {{
-  return {{title, margin:{{l:58,r:20,t:42,b:52}}, hovermode:'closest', dragmode:'pan', xaxis:{{title:xTitle}}, yaxis:{{title:yTitle}}, legend:{{orientation:'h'}}}};
+  return {{title:'', margin:{{l:58,r:20,t:16,b:52}}, hovermode:'closest', dragmode:'pan', xaxis:{{title:xTitle}}, yaxis:{{title:yTitle}}, legend:{{orientation:'h'}}}};
 }}
 function line3d(name, obj, color, visible) {{
   return {{type:'scatter3d', mode:'lines', name, x:obj.x, y:obj.y, z:obj.z, visible, line:{{color, width:4}}}};
@@ -723,10 +729,10 @@ function card(label, value, unit, percent) {{
 }}
 function displayText(value) {{
   return String(value ?? '')
-    .replace(new RegExp('3' + '-step', 'g'), 'EPA SE3')
-    .replace(/Step-3/g, 'EPA SE3')
-    .replace(/Step3/g, 'EPA SE3')
-    .replace(/step3/g, 'EPA SE3');
+    .replace(new RegExp('3' + '-step', 'g'), 'final aligned')
+    .replace(/Step-3/g, 'final aligned')
+    .replace(/Step3/g, 'final aligned')
+    .replace(/step3/g, 'final aligned');
 }}
 function staticMetricValue(label) {{
   const item = (payload.metricSummary || []).find(card => card.label === label);
@@ -744,13 +750,10 @@ function currentMetricBlocks() {{
   const metrics = payload.trajectoryViewMetrics[document.getElementById('trajectoryMode')?.value || 'step3'] || {{}};
   const isSim3 = (view.label || '').toLowerCase().includes('sim3') || String(metrics.sim3_solver || '').toLowerCase().includes('sim3');
   const summary = [
-    compactCard('view', view.label),
-    compactCard('diagnosis', staticMetricValue('diagnosis')),
-    compactCard('case status', metrics.case_status),
+    compactCard('mode', view.label),
     compactCard('SR distance', metrics.sr_distance, '', true),
     compactCard('APE RMSE', metrics.ape_trans_rmse_m, 'm'),
     compactCard('1s RPE RMSE', metrics.rpe_time_1s_trans_rmse_m, 'm'),
-    compactCard('global gate', metrics.global_gate_failed ? `fail ${{scalarText(metrics.global_gate_value_m, 'm')}}` : `pass ${{scalarText(metrics.global_gate_value_m, 'm')}}`),
     compactCard('SR reliability', metrics.sr_reliability_status),
   ];
   if (isSim3) {{
@@ -765,7 +768,7 @@ function currentMetricBlocks() {{
     {{
       title: 'Status',
       cards: [
-        compactCard('view', view.label),
+        compactCard('mode', view.label),
         compactCard('diagnosis', staticMetricValue('diagnosis')),
         compactCard('diagnosis summary', staticMetricValue('diagnosis tags')),
         compactCard('case status', metrics.case_status),
@@ -808,8 +811,9 @@ function currentMetricBlocks() {{
     {{
       title: 'Alignment Gates',
       cards: [
-        compactCard('EPA SE3 mode', staticMetricValue('EPA SE3 mode')),
-        compactCard('EPA SE3 rejected', staticMetricValue('EPA SE3 rejected')),
+        compactCard('mode', view.label),
+        compactCard('internal alignment', payload.step3?.mode || ''),
+        compactCard('rejected', staticMetricValue('rejected')),
         compactCard('global gate', metrics.global_gate_failed),
         compactCard('gate value', metrics.global_gate_value_m, 'm'),
         compactCard('scale', metrics.sim3_scale ?? metrics.align_scale),
@@ -849,10 +853,6 @@ function currentMetricBlocks() {{
 function currentMetricSummary() {{
   return currentMetricBlocks().summary;
 }}
-function activeTrajectoryDragMode() {{
-  const selector = document.getElementById('trajectoryDragMode');
-  return selector && selector.value ? selector.value : 'orbit';
-}}
 function currentTrajectoryCamera() {{
   const plot = document.getElementById('trajectory3d');
   const scene = (plot.layout && plot.layout.scene) || (plot._fullLayout && plot._fullLayout.scene);
@@ -863,11 +863,11 @@ function trajectoryLayout(camera) {{
   const scene = {{aspectmode:'data'}};
   if (camera) scene.camera = camera;
   return {{
-    title:'Trajectory alignment',
-    margin:{{l:0,r:0,t:36,b:0}},
+    title:'',
+    margin:{{l:0,r:0,t:8,b:0}},
     scene,
-    legend:{{orientation:'h'}},
-    dragmode: activeTrajectoryDragMode(),
+    showlegend:false,
+    dragmode:'orbit',
     uirevision:'trajectory-camera'
   }};
 }}
@@ -933,7 +933,9 @@ function renderMetrics() {{
     <div class="metricCard important${{String(item.value).length > 28 ? ' span2' : ''}}"><div class="metricLabel">${{item.label}}</div><div class="metricValue${{String(item.value).length > 28 ? ' compact' : ''}}">${{item.value}}</div></div>
   `).join('');
   const figureLinks = document.getElementById('figureLinks');
-  figureLinks.innerHTML = payload.figureLinks.map(item => `<a href="${{item.href}}">${{item.label}}</a>`).join('');
+  figureLinks.innerHTML = payload.figureLinks.length
+    ? payload.figureLinks.map(item => `<a href="${{item.href}}">${{item.label}}</a>`).join('')
+    : '<div class="emptyState">No figure files were exported for this run.</div>';
   const details = document.getElementById('metricDetails');
   const grouped = blocks.detailSections.map(section => `
     <div class="detailSectionTitle">${{section.title}}</div>
@@ -967,24 +969,50 @@ function render() {{
   if (payload.defaultTrajectoryView && payload.trajectoryViews[payload.defaultTrajectoryView]) {{
     modeSelector.value = payload.defaultTrajectoryView;
   }}
-  const dragModeSelector = document.getElementById('trajectoryDragMode');
   const modeMeta = document.getElementById('trajectoryModeMeta');
+  const modeLegend = document.getElementById('trajectoryLegendMode');
+  const playButton = document.getElementById('trajectoryPlay');
   const progress = document.getElementById('trajectoryProgress');
   const progressLabel = document.getElementById('trajectoryProgressLabel');
+  let playTimer = null;
+  function stopPlayback() {{
+    if (playTimer) window.clearInterval(playTimer);
+    playTimer = null;
+    if (playButton) playButton.textContent = 'Play';
+  }}
+  function startPlayback() {{
+    if (Number(progress.value) >= 100) progress.value = 2;
+    if (playButton) playButton.textContent = 'Pause';
+    playTimer = window.setInterval(() => {{
+      const next = Math.min(100, Number(progress.value) + 1);
+      progress.value = String(next);
+      refreshTrajectory();
+      if (next >= 100) stopPlayback();
+    }}, 80);
+  }}
   function refreshTrajectory() {{
     const pct = Number(progress.value);
     const camera = currentTrajectoryCamera();
     progressLabel.textContent = `${{pct}}%`;
     modeMeta.textContent = trajectoryModeMetaText();
+    if (modeLegend) modeLegend.textContent = activeTrajectoryView().label;
     renderMetrics();
     Plotly.react('trajectory3d', trajectoryTraces(pct), trajectoryLayout(camera), config);
   }}
   renderMetrics();
   renderPlot('trajectory3d', trajectoryTraces(Number(progress.value)), trajectoryLayout(null));
   modeMeta.textContent = trajectoryModeMetaText();
+  if (modeLegend) modeLegend.textContent = activeTrajectoryView().label;
   progress.addEventListener('input', refreshTrajectory);
+  progress.addEventListener('input', stopPlayback);
   modeSelector.addEventListener('change', refreshTrajectory);
-  dragModeSelector.addEventListener('change', refreshTrajectory);
+  modeSelector.addEventListener('change', stopPlayback);
+  if (playButton) {{
+    playButton.addEventListener('click', () => {{
+      if (playTimer) stopPlayback();
+      else startPlayback();
+    }});
+  }}
 
   const speedTraces = payload.speed.traces.map(t => ({{type:'scattergl', mode:'lines', name:t.label, x:t.x, y:t.y}}));
   renderPlot('linearVelocity', speedTraces, layout(payload.speed.title, payload.speed.xLabel, payload.speed.yLabel));

@@ -65,11 +65,11 @@ Advanced utilities such as `epa_config`, `epa_fig`, `epa_plot_summary`, and `epa
 
 ## Alignment Modes
 
-The main EPA modes are `epa_se3`, `sim3`, and `epa_posyaw`.
+The public EPA modes are `se3`, `posyaw`, and `sim3`.
 
-- `epa_se3`: metric-scale SE3 evaluation for VIO/odometry.
+- `se3`: metric-scale SE3 evaluation for VIO/odometry.
 - `sim3`: scale-aware Sim3 evaluation for scale-ambiguous visual SLAM/VO.
-- `epa_posyaw`: yaw-only + translation evaluation for gravity-aligned VIO.
+- `posyaw`: yaw-only + translation evaluation for gravity-aligned VIO.
 
 See [EPA Alignment Modes](cli.md#epa-alignment-modes) for the exact behavior,
 reliability notes, and one-command examples for each mode.

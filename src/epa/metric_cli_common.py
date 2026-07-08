@@ -8,6 +8,8 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from epa.alignment.modes import resolve_metric_eval_align_mode
+from epa.core.calibration import solve_extrinsic_rotation
 from epa.core.sim3 import solve_anchor_sim3, solve_epa_sim3, solve_epa_sim3_v1, solve_epa_sim3_v2, solve_epica_sim3_variant
 from epa.core.io_utils import load_estimation_trajectory, load_reference_trajectory
 from epa.core.math_utils import normalize_quat_array
@@ -163,14 +165,11 @@ def sync_trajectories(
 
 def resolve_eval_align_mode(args) -> str:
     explicit = str(getattr(args, "eval_align", "") or "").strip().lower()
-    if explicit == "epa_step3":
-        return "none"
-    if explicit in {"epa_se3", "epa_se3_eval"}:
-        return "se3"
-    if explicit == "epa_sim3":
-        return "sim3"
     if explicit:
-        return explicit
+        return resolve_metric_eval_align_mode(explicit)
+    public_mode = str(getattr(args, "mode", "") or "").strip().lower()
+    if public_mode:
+        return resolve_metric_eval_align_mode(public_mode)
     if bool(getattr(args, "align_origin", False)):
         return "origin"
     align = bool(getattr(args, "align", False))
@@ -321,6 +320,46 @@ def _finalize_sim3_alignment_info(
     return info
 
 
+def _alignment_subset_errors(
+    *,
+    pos_ref: np.ndarray,
+    quat_ref: np.ndarray,
+    pos_est_aligned: np.ndarray,
+    quat_est_aligned: np.ndarray,
+    idx: np.ndarray,
+) -> tuple[float, float]:
+    idx = np.asarray(idx, dtype=int).reshape(-1)
+    if idx.size == 0:
+        return float("inf"), float("inf")
+    p_ref = np.asarray(pos_ref, dtype=float)[idx]
+    p_est = np.asarray(pos_est_aligned, dtype=float)[idx]
+    q_ref = np.asarray(quat_ref, dtype=float)[idx]
+    q_est = np.asarray(quat_est_aligned, dtype=float)[idx]
+    pos_err = np.linalg.norm(p_ref - p_est, axis=1)
+    rot_err = (R.from_quat(q_ref) * R.from_quat(q_est).inv()).magnitude()
+    pos_rmse = float(np.sqrt(np.mean(np.square(pos_err))))
+    rot_rmse = float(np.degrees(np.sqrt(np.mean(np.square(rot_err)))))
+    return pos_rmse, rot_rmse
+
+
+def _should_use_extrinsic_sim3_candidate(
+    *,
+    raw_pos_rmse: float,
+    raw_rot_rmse_deg: float,
+    corrected_pos_rmse: float,
+    corrected_rot_rmse_deg: float,
+) -> bool:
+    values = (raw_pos_rmse, raw_rot_rmse_deg, corrected_pos_rmse, corrected_rot_rmse_deg)
+    if not all(np.isfinite(v) for v in values):
+        return False
+    if raw_rot_rmse_deg < 5.0:
+        return False
+    orientation_much_better = corrected_rot_rmse_deg <= max(5.0, 0.5 * raw_rot_rmse_deg)
+    position_not_worse = corrected_pos_rmse <= max(raw_pos_rmse * 1.10, raw_pos_rmse + 0.05)
+    position_much_better = corrected_pos_rmse <= max(0.75 * raw_pos_rmse, raw_pos_rmse - 0.10)
+    return bool(orientation_much_better and (position_not_worse or position_much_better))
+
+
 def align_for_eval_with_info(
     pos_ref: np.ndarray,
     quat_ref: np.ndarray,
@@ -460,6 +499,90 @@ def align_for_eval_with_info(
             t_fit=t_eval,
             sim3_info=sim3_info,
         )
+        raw_pos_rmse, raw_rot_rmse = _alignment_subset_errors(
+            pos_ref=pos_ref,
+            quat_ref=quat_ref,
+            pos_est_aligned=pos_new,
+            quat_est_aligned=q_new,
+            idx=idx,
+        )
+        info["sim3_extrinsic_rotation_correction_used"] = False
+        info["sim3_raw_candidate_position_rmse_m"] = raw_pos_rmse
+        info["sim3_raw_candidate_orientation_rmse_deg"] = raw_rot_rmse
+        if mode in {"sim3", "epa_sim3"}:
+            try:
+                r_body = solve_extrinsic_rotation(
+                    np.asarray(quat_ref[idx], dtype=float),
+                    np.asarray(quat_est[idx], dtype=float),
+                )
+                q_est_body_corrected = normalize_quat_array(
+                    R.from_matrix(
+                        np.einsum(
+                            "nij,jk->nik",
+                            R.from_quat(np.asarray(quat_est, dtype=float)).as_matrix(),
+                            np.asarray(r_body, dtype=float).T,
+                        )
+                    ).as_quat()
+                )
+                solver_kwargs = (
+                    {"timestamps_s": np.asarray(t_ref, dtype=float)[idx]}
+                    if t_ref is not None and mode in {"sim3", "epa_sim3"}
+                    else {}
+                )
+                s_ext, r_ext_fit, t_ext_fit, ext_sim3_info = solver_fn(
+                    pos_ref=pref,
+                    quat_ref=np.asarray(quat_ref[idx], dtype=float),
+                    pos_est=pest,
+                    quat_est=np.asarray(q_est_body_corrected[idx], dtype=float),
+                    **solver_kwargs,
+                )
+                pos_ext = s_ext * (r_ext_fit @ np.asarray(pos_est, dtype=float).T).T + t_ext_fit
+                q_ext = normalize_quat_array(
+                    (R.from_matrix(r_ext_fit) * R.from_quat(q_est_body_corrected)).as_quat()
+                )
+                ext_pos_rmse, ext_rot_rmse = _alignment_subset_errors(
+                    pos_ref=pos_ref,
+                    quat_ref=quat_ref,
+                    pos_est_aligned=pos_ext,
+                    quat_est_aligned=q_ext,
+                    idx=idx,
+                )
+                info["sim3_extrinsic_candidate_position_rmse_m"] = ext_pos_rmse
+                info["sim3_extrinsic_candidate_orientation_rmse_deg"] = ext_rot_rmse
+                if _should_use_extrinsic_sim3_candidate(
+                    raw_pos_rmse=raw_pos_rmse,
+                    raw_rot_rmse_deg=raw_rot_rmse,
+                    corrected_pos_rmse=ext_pos_rmse,
+                    corrected_rot_rmse_deg=ext_rot_rmse,
+                ):
+                    ext_info: dict[str, object] = {
+                        "align_mode": mode,
+                        "n_to_align": int(n_to_align),
+                        "align_pair_count": int(idx.size),
+                        "sim3_extrinsic_rotation_correction_used": True,
+                        "sim3_raw_candidate_position_rmse_m": raw_pos_rmse,
+                        "sim3_raw_candidate_orientation_rmse_deg": raw_rot_rmse,
+                        "sim3_extrinsic_candidate_position_rmse_m": ext_pos_rmse,
+                        "sim3_extrinsic_candidate_orientation_rmse_deg": ext_rot_rmse,
+                        "sim3_extrinsic_rotation_matrix": np.asarray(r_body, dtype=float).tolist(),
+                    }
+                    if requested_mode != mode:
+                        ext_info["requested_align_mode"] = requested_mode
+                    if align_indices is not None:
+                        ext_info["align_index_count"] = int(idx.size)
+                        if idx.size:
+                            ext_info["align_index_first"] = int(idx[0])
+                            ext_info["align_index_last"] = int(idx[-1])
+                    _finalize_sim3_alignment_info(
+                        ext_info,
+                        scale=float(s_ext),
+                        r_fit=r_ext_fit,
+                        t_fit=t_ext_fit,
+                        sim3_info=ext_sim3_info,
+                    )
+                    return pos_ext, q_ext, ext_info
+            except Exception as exc:
+                info["sim3_extrinsic_rotation_correction_error"] = str(exc)
         return pos_new, q_new, info
 
     if mode == "epica_anchor_sim3":

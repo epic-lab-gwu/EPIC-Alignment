@@ -99,7 +99,7 @@ def _pose_relation_title_label(relation: str) -> str:
 def _stage_caption(stage: str) -> str:
     stage_name = str(stage).lower()
     if stage_name == "step3":
-        return "EPA Step-3 world alignment (SE(3) SVD)"
+        return "Final world alignment (SE(3) SVD)"
     if stage_name == "step2":
         return "after extrinsic calibration"
     return "without alignment"
@@ -387,7 +387,7 @@ def _line_plot_suffix(file_prefix: str) -> str:
 
 
 def _line_plot_title(metric_name: str, relation: str, *, file_prefix: str, pct: int | None = None) -> str:
-    value_label = "raw values" if str(file_prefix or "").startswith("debug_") else "Step3 values"
+    value_label = "raw values" if str(file_prefix or "").startswith("debug_") else "aligned values"
     clip_label = f", p{pct} clipped" if pct is not None else ""
     return f"{metric_name} {value_label} ({relation}{clip_label})"
 

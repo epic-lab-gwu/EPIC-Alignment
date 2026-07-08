@@ -32,7 +32,7 @@ Interpretation:
 
 Notes:
 
-- `critical`: cases whose EPICA runs are flagged as unreliable in the current reporting logic, typically due to severe scale mismatch, very high Step-3 error, or other strong failure indicators.
+- `critical`: cases whose EPICA runs are flagged as unreliable in the current reporting logic, typically due to severe scale mismatch, very high final-alignment error, or other strong failure indicators.
 - `non-critical`: comparable cases that are not labeled `critical`; this includes both `ok` and `warning` cases and is used here to focus on normal-case performance rather than extreme failure tails.
 
 Winner rule:

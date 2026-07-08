@@ -471,7 +471,7 @@ def test_write_run_reports_highlights_time_rpe_and_pose_state_csv(tmp_path: Path
     assert "## Case Diagnostics" in report
     assert "trajectory_jump" in report
     assert "## 1-second RPE (Local Jumps)" in report
-    assert "Step3 translation RMSE: `1.200000` m" in report
+    assert "Final aligned translation RMSE: `1.200000` m" in report
     assert "[pose_states.csv](pose_states.csv)" in report
     assert report.index("ape_translation_part_hist_p95.png") < report.index("ape_translation_part_hist.png")
     assert report.index("ape_translation_part_series_p95.png") < report.index("ape_translation_part_hist.png")

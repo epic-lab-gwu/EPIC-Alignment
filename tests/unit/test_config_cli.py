@@ -4,7 +4,7 @@ import json
 import pytest
 
 from epa.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config, resolve_scoped_config
-from epa.cli import build_parser
+from epa.cli import _normalize_inputs, _normalize_mode_args, build_parser
 
 
 def test_parse_args_with_config_supports_required_fields(tmp_path) -> None:
@@ -36,6 +36,38 @@ def test_epa_cli_debug_flag_defaults_off() -> None:
 
     assert default_args.debug is False
     assert debug_args.debug is True
+
+
+def test_epa_cli_exposes_public_mode_and_maps_to_eval_align() -> None:
+    parser = build_parser()
+    args = _normalize_mode_args(parser, parser.parse_args(["--mode", "sim3"]))
+
+    assert args.mode == "sim3"
+    assert args.eval_align == "sim3"
+
+
+def test_epa_cli_keeps_hidden_eval_align_for_compatibility() -> None:
+    parser = build_parser()
+    args = _normalize_mode_args(parser, parser.parse_args(["--eval-align", "epica_sim3_stable"]))
+
+    assert args.mode == ""
+    assert args.eval_align == "epica_sim3_stable"
+
+
+def test_epa_cli_keeps_single_input_legacy_entry() -> None:
+    parser = build_parser()
+    args = _normalize_inputs(parser, parser.parse_args(["gt.txt"]))
+
+    assert args.gt_csv == "gt.txt"
+    assert args.est_path == "gt.txt"
+
+
+def test_epa_cli_two_positional_inputs_are_gt_and_est() -> None:
+    parser = build_parser()
+    args = _normalize_inputs(parser, parser.parse_args(["gt.txt", "est.txt"]))
+
+    assert args.gt_csv == "gt.txt"
+    assert args.est_path == "est.txt"
 
 
 def test_parse_args_with_config_overrides_cli_values(tmp_path) -> None:
