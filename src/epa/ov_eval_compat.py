@@ -267,18 +267,32 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
-    t_est_sparse, p_est_sparse, q_est_sparse, t_gt_sparse, p_gt_sparse, q_gt_sparse, _ = _associate_est_gt(
-        t_est=t_est,
-        p_est=p_est,
-        q_est=q_est,
-        t_gt=t_gt,
-        p_gt=p_gt,
-        q_gt=q_gt,
-        max_diff=float(max_diff),
-        offset=-float(step1["calculated_offset"]),
-    )
+    sparse_assoc_failed = False
+    sparse_assoc_failure_reason = ""
+    try:
+        _, p_est_sparse, q_est_sparse, t_gt_sparse, p_gt_sparse, q_gt_sparse, _ = _associate_est_gt(
+            t_est=t_est,
+            p_est=p_est,
+            q_est=q_est,
+            t_gt=t_gt,
+            p_gt=p_gt,
+            q_gt=q_gt,
+            max_diff=float(max_diff),
+            offset=-float(step1["calculated_offset"]),
+        )
+    except ValueError as exc:
+        sparse_assoc_failed = True
+        sparse_assoc_failure_reason = str(exc)
+        p_est_sparse = np.empty((0, 3), dtype=float)
+        q_est_sparse = np.empty((0, 4), dtype=float)
+        t_gt_sparse = np.empty((0,), dtype=float)
+        p_gt_sparse = np.empty((0, 3), dtype=float)
+        q_gt_sparse = np.empty((0, 4), dtype=float)
     sparse_gt_match_ratio = float(t_gt_sparse.size) / max(float(t_gt.size), 1.0)
-    use_dense_timeline = bool(sparse_gt_match_ratio >= _DENSE_TIMELINE_MIN_GT_MATCH_RATIO)
+    use_resampled_fallback = bool(t_gt_sparse.size < 3)
+    use_dense_timeline = bool(
+        use_resampled_fallback or sparse_gt_match_ratio >= _DENSE_TIMELINE_MIN_GT_MATCH_RATIO
+    )
     if use_dense_timeline:
         solve_eval = _prepare_solve_eval_trajectories(
             t_gt=t_gt,
@@ -300,7 +314,7 @@ def _evaluate_pair_epa_step3(
         quat_gt_solve = np.asarray(solve_eval["quat_gt_solve"], dtype=float)
         p_est_solve = np.asarray(solve_eval["pr_solve"], dtype=float)
         q_est_solve = np.asarray(solve_eval["qr_solve"], dtype=float)
-        timeline_policy = "dense_overlap"
+        timeline_policy = "gt_resampled_association_fallback" if use_resampled_fallback else "dense_overlap"
     else:
         t_gt_m = t_gt_sparse
         p_gt_m = p_gt_sparse
@@ -342,6 +356,9 @@ def _evaluate_pair_epa_step3(
         "sparse_gt_match_ratio": sparse_gt_match_ratio,
         "sparse_matched": int(t_gt_sparse.size),
         "dense_timeline_used": bool(use_dense_timeline),
+        "sparse_association_failed": bool(sparse_assoc_failed),
+        "sparse_association_failure_reason": sparse_assoc_failure_reason,
+        "resampled_fallback_used": bool(use_resampled_fallback),
     }
     if eval_mode not in {"", "none", "posyaw", "epa_posyaw"}:
         est_pos, est_quat, eval_alignment = align_for_eval_with_info(

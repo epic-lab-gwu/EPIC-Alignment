@@ -23,7 +23,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.13"
+    assert epa.__version__ == "0.1.15"
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -215,6 +215,41 @@ def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates
     assert int(result["matched"]) > int(t_est.size)
     assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
     assert result["eval_source"] == "epa_step3"
+
+
+def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gate(tmp_path: Path) -> None:
+    t_gt = np.arange(0.0, 30.001, 1.0)
+    t_est = np.arange(0.025, 30.0, 0.05)
+    pos_gt = np.column_stack(
+        [
+            0.2 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.1 * t_gt),
+        ]
+    )
+    pos_est = np.column_stack(
+        [
+            0.2 * t_est,
+            np.sin(0.2 * t_est),
+            0.1 * np.cos(0.1 * t_est),
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.05 * t_gt, 0.02 * t_gt, 0.01 * t_gt])).as_quat()
+    quat_est = R.from_euler("zyx", np.column_stack([0.05 * t_est, 0.02 * t_est, 0.01 * t_est])).as_quat()
+
+    gt_path = tmp_path / "gt_1hz.tum"
+    est_path = tmp_path / "est_20hz_shifted.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
+
+    assert int(result["matched"]) >= 20
+    assert result["eval_source"] == "epa_step3"
+    assert result["eval_alignment"]["timeline_policy"] == "gt_resampled_association_fallback"
+    assert result["eval_alignment"]["sparse_association_failed"] is True
+    assert result["eval_alignment"]["resampled_fallback_used"] is True
+    assert float(result["ate3_pos"]["rmse"]) < 1e-2
 
 
 def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) -> None:
