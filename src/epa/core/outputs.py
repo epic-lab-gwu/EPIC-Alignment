@@ -197,7 +197,7 @@ def _plot_step1_outputs(
 ):
     fig_corr, ax_corr = plt.subplots(figsize=(12, 4))
     lag_times = np.asarray(lags, dtype=float) * float(dt_resample)
-    ax_corr.set_title("Step 1: Cross-Correlation vs Lag")
+    ax_corr.set_title("Time Alignment: Cross-Correlation vs Lag")
     ax_corr.plot(lag_times, corr, color="purple", linewidth=1.2)
     ax_corr.axvline(
         calculated_offset,
@@ -215,14 +215,14 @@ def _plot_step1_outputs(
     plt.close(fig_corr)
 
     fig1, (ax_b, ax_a) = plt.subplots(2, 1, figsize=(12, 8))
-    ax_b.set_title(f"Step 1: Full Sequence BEFORE Alignment ({title_offset})")
+    ax_b.set_title(f"Time Alignment: Full Sequence BEFORE Alignment ({title_offset})")
     ax_b.plot(t_uniform, sig_gt, label="GT Omega", color="green", alpha=0.6)
     ax_b.plot(t_uniform, sig_est, "r--", label="Estimation Omega", alpha=0.6)
     ax_b.set_ylabel("Omega Norm")
     ax_b.legend(loc="upper right")
     ax_b.grid(True, linestyle=":", alpha=0.5)
 
-    ax_a.set_title(f"Step 1: Full Sequence AFTER Alignment (Calculated: {calculated_offset:.4f}s)")
+    ax_a.set_title(f"Time Alignment: Full Sequence AFTER Alignment (Calculated: {calculated_offset:.4f}s)")
     ax_a.plot(t_uniform, sig_gt, label="GT Omega", color="green", alpha=0.6)
     ax_a.plot(t_uniform - calculated_offset, sig_est, "b--", label="Estimation Omega (Corrected)", alpha=0.8)
     ax_a.set_xlabel("Time (s)")
@@ -280,7 +280,7 @@ def _plot_stage_alignment_maps(
         stage_order = ["raw", "step2", "step3"]
         stage_titles = {
             "raw": "Raw (After Step-1 Sync)",
-            "step2": "Sensor Fixed (Step 2)",
+            "step2": "Extrinsic Corrected",
             "step3": "Final aligned",
         }
         stage_pos = {
@@ -307,7 +307,7 @@ def _plot_stage_alignment_maps(
                 ),
             )
         fig2.tight_layout()
-        fig2_path = plots_dir / "debug_step123_trajectory_alignment_3d.png"
+        fig2_path = plots_dir / "debug_alignment_pipeline_3d.png"
         fig2.savefig(fig2_path, dpi=220, bbox_inches="tight")
         plt.close(fig2)
 
@@ -419,7 +419,7 @@ def _generate_and_cleanup_metric_plots(
 
     metrics_payload["metadata"]["plot"] = plot_meta
     core_plot_names = {
-        "debug_step123_trajectory_alignment_3d.png",
+        "debug_alignment_pipeline_3d.png",
         "piecewise_segment_rmse.png",
         "step1_cross_correlation.png",
         "step1_time_alignment.png",

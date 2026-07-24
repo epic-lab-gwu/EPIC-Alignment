@@ -53,13 +53,13 @@ outputs/run_YYYYmmdd_HHMMSS/
     └── step3_alignment_map.png
 ```
 
-Start with `report_en.md` for a readable summary, `interactive_report.html` for pan/zoom trajectory and metric inspection, `metrics_summary.csv` for table-friendly numbers, and `step3_alignment_map.png` for the static aligned trajectory view. Add `--debug` when you need extra diagnostics such as `debug_step123_trajectory_alignment_3d.png` to compare internal alignment stages. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis. Add `--no-downsample` only if you need full-rate solve/evaluation.
+Start with `report_en.md` for a readable summary, `interactive_report.html` for pan/zoom trajectory and metric inspection, `metrics_summary.csv` for table-friendly numbers, and `step3_alignment_map.png` for the static aligned trajectory view. Add `--debug` when you need extra diagnostics such as `debug_alignment_pipeline_3d.png` to compare internal alignment stages. Add `--save-full-metrics` only if you need full per-sample arrays for custom analysis. Add `--no-downsample` only if you need full-rate solve/evaluation.
 
-![Step 1 time alignment result](images/quickstart_step1_time_alignment.png)
+![Time alignment result](images/quickstart_step1_time_alignment.png)
 
-*Step 1: rotational signals after temporal alignment.*
+*Rotational signals after temporal alignment.*
 
-![Final trajectory alignment result](images/quickstart_step23_alignment_3d.png)
+![Final trajectory alignment result](images/quickstart_alignment_pipeline_3d.png)
 
 *Final aligned trajectory in 3D.*
 

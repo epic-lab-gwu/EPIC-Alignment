@@ -228,9 +228,33 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--success-global-gate-mode",
+        choices=["fixed", "scale_aware"],
+        default="fixed",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
         "--success-global-gate-m",
         type=float,
         default=30.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-global-gate-path-ratio",
+        type=float,
+        default=0.05,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-global-gate-min-m",
+        type=float,
+        default=2.0,
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--success-global-gate-max-m",
+        type=float,
+        default=100.0,
         help=argparse.SUPPRESS,
     )
     parser.add_argument(

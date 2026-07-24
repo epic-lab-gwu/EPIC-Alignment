@@ -23,7 +23,7 @@ High-level system view:
 - the `ov_eval` compatibility layer for legacy-style summaries
 
 <p align="center">
-  <img src="docs/images/readme_step23_alignment_3d.png" alt="trajectory alignment report" width="88%">
+  <img src="docs/images/readme_alignment_pipeline_3d.png" alt="trajectory alignment report" width="88%">
 </p>
 
 <p align="center">

@@ -2,7 +2,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from epa.core.calibration import solve_world_alignment
-from epa.core.pipeline_modular import _compute_rigid_alignability
+from epa.core.diagnostics import _compute_rigid_alignability
 
 
 def test_rigid_alignability_positive_case() -> None:

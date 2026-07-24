@@ -283,8 +283,8 @@ def test_write_interactive_run_html_contains_plotly_payload(tmp_path: Path) -> N
     assert "uirevision:'trajectory-camera'" in text
     assert "Metrics Summary" in text
     assert "Linear Velocity" in text
-    assert "Step 1 Signals" not in text
-    assert "Step 1 Correlation" not in text
+    assert "Time Alignment Signals" not in text
+    assert "Time Alignment Correlation" not in text
     assert "Metrics details" in text
     assert "metricSummary" in text
     assert "metricDetails" in text
@@ -362,8 +362,8 @@ def test_write_interactive_run_html_debug_keeps_metric_stages(tmp_path: Path) ->
 
     embedded = _extract_interactive_payload(out.read_text(encoding="utf-8"))
     text = out.read_text(encoding="utf-8")
-    assert "Step 1 Signals" in text
-    assert "Step 1 Correlation" in text
+    assert "Time Alignment Signals" in text
+    assert "Time Alignment Correlation" in text
     assert "raw" in embedded["trajectory"]
     assert "step2" in embedded["trajectory"]
     assert [trace["label"] for trace in embedded["speed"]["traces"]] == ["ground truth", "se3", "raw", "step2"]

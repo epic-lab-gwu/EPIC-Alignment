@@ -450,8 +450,9 @@ def _filter_report_images(images: list[Path], *, include_debug: bool = False) ->
         "rpe_translation_part_raw_p99.png": 69,
     }
     debug_only_names = {
+        "debug_alignment_pipeline_3d.png",
         "debug_step123_trajectory_alignment_3d.png",
-        "step23_trajectory_alignment_3d.png",
+        "alignment_pipeline_trajectory_3d.png",
     }
     report_images = [
         img
@@ -792,7 +793,7 @@ def write_run_reports(output_dir, metrics_payload):
     if bool(metadata.get("step1_failed", False)):
         zh_lines.extend(
             [
-                "## Step 1 失败",
+                "## 时间对齐失败",
                 "",
                 "- 状态：`step1_failed`",
                 f"- 原因：{metadata.get('step1_failure_reason', 'unknown')}",
@@ -802,7 +803,7 @@ def write_run_reports(output_dir, metrics_payload):
     elif bool(metadata.get("step1_forced_candidate", False)):
         zh_lines.extend(
             [
-                "## Step 1 回退",
+                "## 时间对齐回退",
                 "",
                 "- 状态：`step1_forced_candidate`",
                 f"- 原因：{metadata.get('step1_force_reason', 'unknown')}",
@@ -856,7 +857,7 @@ def write_run_reports(output_dir, metrics_payload):
     if bool(metadata.get("step1_failed", False)):
         en_lines.extend(
             [
-                "## Step 1 Failure",
+                "## Time Alignment Failure",
                 "",
                 "- Status: `step1_failed`",
                 f"- Reason: {metadata.get('step1_failure_reason', 'unknown')}",
@@ -866,7 +867,7 @@ def write_run_reports(output_dir, metrics_payload):
     elif bool(metadata.get("step1_forced_candidate", False)):
         en_lines.extend(
             [
-                "## Step 1 Fallback",
+                "## Time Alignment Fallback",
                 "",
                 "- Status: `step1_forced_candidate`",
                 f"- Reason: {metadata.get('step1_force_reason', 'unknown')}",

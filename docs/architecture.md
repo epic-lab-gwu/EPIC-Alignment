@@ -35,11 +35,11 @@ The current architecture can be read as three related entry paths: the main `epa
 
 ![EPA system diagram](images/architecture_system_diagram_v2.png)
 
-*System-level view of the current EPA architecture, including the main modular pipeline, benchmark harness reuse, and the `ov_eval_compat` `se3` path that now reuses EPA Step 1/2/3 internals.*
+*System-level view of the current EPA architecture, including the main modular pipeline, benchmark harness reuse, and the `ov_eval_compat` `se3` path that now reuses EPA's time alignment, extrinsic calibration, and world-frame alignment internals.*
 
 ## Main Pipeline Stages
 
-### Step 1: Time Alignment
+### Time Alignment
 
 The pipeline first estimates temporal offset by comparing rotational motion signals derived from the trajectories.
 
@@ -66,16 +66,16 @@ After resampling both signals onto a common timeline, the pipeline searches for 
 
 In code, this is implemented as relative-rotation magnitude divided by the positive timestamp delta, with the resulting signal indexed at the midpoint between consecutive samples. The selected offset is the one that best aligns the rotational dynamics of the two trajectories.
 
-![Step 1 cross-correlation result](images/architecture_step1_cross_correlation.png)
+![Time alignment cross-correlation result](images/architecture_step1_cross_correlation.png)
 
-*Example Step 1 output: cross-correlation used to estimate temporal offset.*
+*Example time-alignment output: cross-correlation used to estimate temporal offset.*
 
 Main implementation:
 
 - `src/epa/core/time_alignment.py`
 - `src/epa/core/pipeline_modular.py`
 
-### Step 2: Extrinsic Calibration
+### Extrinsic Calibration
 
 After temporal alignment, `epica` estimates the rigid relationship between the synchronized estimation trajectory and the reference trajectory.
 
@@ -121,7 +121,7 @@ Main implementation:
 
 - `src/epa/core/calibration.py`
 
-### Step 3: World-Frame Alignment
+### World-Frame Alignment
 
 After extrinsic calibration, the pipeline compensates the synchronized estimation trajectory for the solved extrinsic translation and then estimates the world-frame rigid transform needed to bring the two trajectories into a comparable frame.
 
@@ -139,9 +139,9 @@ p_{\mathrm{gt},i} - \left(R \, p_{\mathrm{est,corr},i} + t\right)
 
 This solve is rigid only, with no additional scale term. The result is the world-frame transform that best overlays the corrected estimation trajectory onto the reference trajectory.
 
-![Step 2/3 alignment result](images/quickstart_step23_alignment_3d.png)
+![Extrinsic and world-frame alignment result](images/quickstart_alignment_pipeline_3d.png)
 
-*Example Step 2 and Step 3 output: aligned trajectories after extrinsic and world-frame alignment.*
+*Example output: aligned trajectories after extrinsic and world-frame alignment.*
 
 Main implementation:
 

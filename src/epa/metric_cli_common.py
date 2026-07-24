@@ -11,7 +11,7 @@ from scipy.spatial.transform import Rotation as R
 from epa.alignment.modes import resolve_metric_eval_align_mode
 from epa.core.calibration import solve_extrinsic_rotation
 from epa.core.sim3 import solve_anchor_sim3, solve_epa_sim3, solve_epa_sim3_v1, solve_epa_sim3_v2, solve_epica_sim3_variant
-from epa.core.io_utils import load_estimation_trajectory, load_reference_trajectory
+from epa.io.trajectory import load_estimation_trajectory, load_reference_trajectory
 from epa.core.math_utils import normalize_quat_array
 from epa.core.time_alignment import matching_time_indices
 

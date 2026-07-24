@@ -528,11 +528,11 @@ def write_interactive_run_html(
     debug_sections = (
         """
 <section class="panel" data-panel="timeSignals">
-  <div class="panelHeader" draggable="true"><h2>Step 1 Signals</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="timeSignals">x</button></div>
+  <div class="panelHeader" draggable="true"><h2>Time Alignment Signals</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="timeSignals">x</button></div>
   <div id="timeSignals" class="plot small"></div>
 </section>
 <section class="panel" data-panel="timeCorrelation">
-  <div class="panelHeader" draggable="true"><h2>Step 1 Correlation</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="timeCorrelation">x</button></div>
+  <div class="panelHeader" draggable="true"><h2>Time Alignment Correlation</h2><button class="panelClose" type="button" title="Close panel" data-close-panel="timeCorrelation">x</button></div>
   <div id="timeCorrelation" class="plot small"></div>
 </section>
 """

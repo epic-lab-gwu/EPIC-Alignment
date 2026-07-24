@@ -31,8 +31,8 @@ algorithm_pose_folder/
       svo_poses.txt
 ```
 
-The default `se3` mode uses EPA Step 1/2/3 for evaluation when possible. If EPA
-Step 3 cannot evaluate a case, it quietly falls back to ov_eval-style SE3 and
+The default `se3` mode uses EPA's time alignment, extrinsic calibration, and world-frame
+alignment for evaluation when possible. If EPA's direct alignment cannot evaluate a case, it quietly falls back to ov_eval-style SE3 and
 reports the count in `TOOL SOURCE`.
 
 ## Common Commands
@@ -98,7 +98,7 @@ These command names are forwarded to `python -m epa.ov_eval_compat ...`.
 
 The compatibility output reports:
 
-- `TOOL SOURCE: epa=N, ov_eval=M`: how many cases used EPA Step 3 versus the
+- `TOOL SOURCE: epa=N, ov_eval=M`: how many cases used EPA direct alignment versus the
   ov_eval-style fallback.
 - `FULL TRAJECTORY ATE`: full-sequence absolute trajectory error.
 - `FULL TRAJECTORY DISTANCE RPE`: distance-segment relative pose error.
@@ -195,6 +195,15 @@ python -m epa.ov_eval_compat error_comparison se3 \
   /path/to/gt_folder \
   /path/to/algorithm_pose_folder \
   --epa-no-fallback
+```
+
+Return a non-zero exit code if any run is skipped or no valid run is found:
+
+```bash
+python -m epa.ov_eval_compat error_comparison se3 \
+  /path/to/gt_folder \
+  /path/to/algorithm_pose_folder \
+  --fail-on-skipped
 ```
 
 ## Full EPA Pipeline Wrapper

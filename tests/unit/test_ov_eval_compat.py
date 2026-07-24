@@ -17,6 +17,7 @@ from epa.ov_eval_compat import (
     _evaluate_pair_epa_step3,
     _evaluate_pair_ov_style,
     _format_source_details,
+    main,
     run_error_comparison,
     run_error_dataset,
 )
@@ -77,7 +78,9 @@ def test_ov_eval_rpe_segments_use_fixed_half_meter_distance_window() -> None:
     )
 
     assert int(out[8.0]["pair_count"]) == 3
-    np.testing.assert_array_equal(np.asarray(out[8.0]["pair_ids"], dtype=int), np.array([[0, 8], [1, 9], [2, 10]]))
+    np.testing.assert_array_equal(
+        np.asarray(out[8.0]["pair_ids"], dtype=int), np.array([[0, 8], [1, 9], [2, 10]])
+    )
     assert float(out[8.0]["ori_stats"]["median"]) == 0.0
     assert float(out[8.0]["pos_stats"]["median"]) == 0.0
     assert int(out[40.0]["pair_count"]) == 0
@@ -111,7 +114,9 @@ def test_valid_rpe_segments_filter_by_valid_edge_mask() -> None:
 
     assert int(full[4.0]["pair_count"]) == 7
     assert int(valid[4.0]["pair_count"]) == 2
-    np.testing.assert_array_equal(np.asarray(valid[4.0]["pair_ids"], dtype=int), np.array([[0, 4], [1, 5]]))
+    np.testing.assert_array_equal(
+        np.asarray(valid[4.0]["pair_ids"], dtype=int), np.array([[0, 4], [1, 5]])
+    )
     assert int(valid[8.0]["pair_count"]) == 0
     np.testing.assert_allclose(float(valid[4.0]["pos_stats"]["rmse"]), 0.0)
 
@@ -125,7 +130,9 @@ def _write_tum(path: Path, t: np.ndarray, pos: np.ndarray, quat: np.ndarray) -> 
     path.write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(tmp_path: Path) -> None:
+def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(
+    tmp_path: Path,
+) -> None:
     n = 400
     t = np.arange(n, dtype=float) * 0.05
     yaw = np.linspace(0.0, np.deg2rad(100.0), n)
@@ -161,7 +168,9 @@ def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(
     assert epa["eval_source"] == "epa_step3"
 
 
-def test_evaluate_pair_epa_step3_keeps_sparse_estimate_association(tmp_path: Path) -> None:
+def test_evaluate_pair_epa_step3_uses_sparse_timeline_for_low_rate_estimates(
+    tmp_path: Path,
+) -> None:
     t_gt = np.arange(0.0, 10.001, 0.01)
     pos_gt = np.column_stack(
         [
@@ -187,9 +196,78 @@ def test_evaluate_pair_epa_step3_keeps_sparse_estimate_association(tmp_path: Pat
     assert int(result["matched"]) == int(t_est.size)
     assert result["eval_source"] == "epa_step3"
     assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+    assert int(result["eval_alignment"]["sparse_matched"]) == int(t_est.size)
+    assert result["eval_alignment"]["auto_sparse_low_rate_estimate_used"] is True
 
 
-def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates(tmp_path: Path) -> None:
+def test_evaluate_pair_epa_step3_uses_dense_timeline_for_moderate_rate_estimates(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 10.001, 0.01)
+    pos_gt = np.column_stack(
+        [
+            0.4 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.15 * t_gt),
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.5 * t_gt, 0.2 * t_gt, 0.3 * t_gt])).as_quat()
+
+    sparse_ids = np.arange(0, t_gt.size, 10, dtype=int)
+    t_est = t_gt[sparse_ids]
+    pos_est = pos_gt[sparse_ids]
+    quat_est = quat_gt[sparse_ids]
+
+    gt_path = tmp_path / "gt_dense.tum"
+    est_path = tmp_path / "est_10hz.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
+
+    assert int(result["matched"]) > int(t_est.size)
+    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
+    assert result["eval_alignment"]["auto_sparse_low_rate_estimate_used"] is False
+
+
+def test_evaluate_pair_epa_step3_no_fallback_keeps_sparse_estimate_association(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 10.001, 0.01)
+    pos_gt = np.column_stack(
+        [
+            0.4 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.15 * t_gt),
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.5 * t_gt, 0.2 * t_gt, 0.3 * t_gt])).as_quat()
+
+    sparse_ids = np.arange(0, t_gt.size, 100, dtype=int)
+    t_est = t_gt[sparse_ids]
+    pos_est = pos_gt[sparse_ids]
+    quat_est = quat_gt[sparse_ids]
+
+    gt_path = tmp_path / "gt_dense.tum"
+    est_path = tmp_path / "est_sparse.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(
+        gt_path,
+        est_path,
+        0.02,
+        allow_resampled_fallback=False,
+    )
+
+    assert int(result["matched"]) == int(t_est.size)
+    assert result["eval_source"] == "epa_step3"
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+
+
+def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates(
+    tmp_path: Path,
+) -> None:
     t_gt = np.arange(0.0, 10.001, 0.01)
     pos_gt = np.column_stack(
         [
@@ -217,7 +295,9 @@ def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates
     assert result["eval_source"] == "epa_step3"
 
 
-def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gate(tmp_path: Path) -> None:
+def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gate(
+    tmp_path: Path,
+) -> None:
     t_gt = np.arange(0.0, 30.001, 1.0)
     t_est = np.arange(0.025, 30.0, 0.05)
     pos_gt = np.column_stack(
@@ -234,8 +314,12 @@ def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gat
             0.1 * np.cos(0.1 * t_est),
         ]
     )
-    quat_gt = R.from_euler("zyx", np.column_stack([0.05 * t_gt, 0.02 * t_gt, 0.01 * t_gt])).as_quat()
-    quat_est = R.from_euler("zyx", np.column_stack([0.05 * t_est, 0.02 * t_est, 0.01 * t_est])).as_quat()
+    quat_gt = R.from_euler(
+        "zyx", np.column_stack([0.05 * t_gt, 0.02 * t_gt, 0.01 * t_gt])
+    ).as_quat()
+    quat_est = R.from_euler(
+        "zyx", np.column_stack([0.05 * t_est, 0.02 * t_est, 0.01 * t_est])
+    ).as_quat()
 
     gt_path = tmp_path / "gt_1hz.tum"
     est_path = tmp_path / "est_20hz_shifted.tum"
@@ -250,6 +334,30 @@ def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gat
     assert result["eval_alignment"]["sparse_association_failed"] is True
     assert result["eval_alignment"]["resampled_fallback_used"] is True
     assert float(result["ate3_pos"]["rmse"]) < 1e-2
+
+
+def test_evaluate_pair_epa_step3_no_fallback_rejects_low_rate_gt(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 30.001, 1.0)
+    t_est = np.arange(0.025, 30.0, 0.05)
+    pos_gt = np.column_stack([0.2 * t_gt, np.sin(0.2 * t_gt), np.zeros_like(t_gt)])
+    pos_est = np.column_stack([0.2 * t_est, np.sin(0.2 * t_est), np.zeros_like(t_est)])
+    quat_gt = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t_gt.size, 1))
+    quat_est = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t_est.size, 1))
+
+    gt_path = tmp_path / "gt_1hz.tum"
+    est_path = tmp_path / "est_20hz_shifted.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    with pytest.raises(ValueError, match="resampled fallback disabled"):
+        _evaluate_pair_epa_step3(
+            gt_path,
+            est_path,
+            0.02,
+            allow_resampled_fallback=False,
+        )
 
 
 def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) -> None:
@@ -277,10 +385,138 @@ def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) 
 
     result = _evaluate_pair_ov_style(gt_path, est_path, "sim3", 0.02)
 
-    np.testing.assert_allclose(float(result["eval_alignment"]["align_scale"]), scale_true, rtol=1e-6)
+    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
+    assert int(result["eval_alignment"]["sparse_matched"]) == int(t.size)
+    np.testing.assert_allclose(
+        float(result["eval_alignment"]["align_scale"]), scale_true, rtol=1e-6
+    )
     assert float(result["ate3_pos"]["rmse"]) < 1e-6
     assert float(result["ate3_ori"]["rmse"]) < 1e-6
     assert result["eval_alignment"]["sim3_reliable"] is True
+
+
+def test_evaluate_pair_ov_style_sim3_resamples_when_low_rate_gt_misses_timestamp_gate(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 30.001, 1.0)
+    t_est = np.arange(0.025, 30.0, 0.05)
+    pos_gt = np.column_stack(
+        [
+            0.2 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.1 * t_gt),
+        ]
+    )
+    pos_est_base = np.column_stack(
+        [
+            0.2 * t_est,
+            np.sin(0.2 * t_est),
+            0.1 * np.cos(0.1 * t_est),
+        ]
+    )
+    pos_est = 1.4 * pos_est_base + np.array([2.0, -0.5, 0.2], dtype=float)
+    quat_gt = R.from_euler(
+        "zyx", np.column_stack([0.05 * t_gt, 0.02 * t_gt, 0.01 * t_gt])
+    ).as_quat()
+    quat_est = R.from_euler(
+        "zyx", np.column_stack([0.05 * t_est, 0.02 * t_est, 0.01 * t_est])
+    ).as_quat()
+
+    gt_path = tmp_path / "gt_1hz.tum"
+    est_path = tmp_path / "est_20hz_shifted.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_ov_style(gt_path, est_path, "sim3", 0.02)
+
+    assert int(result["matched"]) >= 20
+    assert result["eval_source"] == "epa_eval_align"
+    assert result["eval_alignment"]["align_mode"] == "sim3"
+    assert result["eval_alignment"]["timeline_policy"] == "gt_resampled_association_fallback"
+    assert result["eval_alignment"]["sparse_association_failed"] is True
+    assert result["eval_alignment"]["resampled_fallback_used"] is True
+    assert float(result["ate3_pos"]["rmse"]) < 0.5
+
+
+def test_evaluate_pair_ov_style_no_fallback_rejects_low_rate_gt(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 30.001, 1.0)
+    t_est = np.arange(0.025, 30.0, 0.05)
+    pos_gt = np.column_stack([0.2 * t_gt, np.sin(0.2 * t_gt), np.zeros_like(t_gt)])
+    pos_est = np.column_stack([0.2 * t_est, np.sin(0.2 * t_est), np.zeros_like(t_est)])
+    quat_gt = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t_gt.size, 1))
+    quat_est = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t_est.size, 1))
+
+    gt_path = tmp_path / "gt_1hz.tum"
+    est_path = tmp_path / "est_20hz_shifted.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    with pytest.raises(ValueError, match="Unable to associate enough timestamps"):
+        _evaluate_pair_ov_style(
+            gt_path,
+            est_path,
+            "sim3",
+            0.02,
+            allow_resampled_fallback=False,
+        )
+
+
+def test_error_comparison_sim3_resamples_when_low_rate_gt_misses_timestamp_gate(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    t_gt = np.arange(0.0, 30.001, 1.0)
+    t_est = np.arange(0.025, 30.0, 0.05)
+    pos_gt = np.column_stack(
+        [
+            0.2 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.1 * t_gt),
+        ]
+    )
+    pos_est_base = np.column_stack(
+        [
+            0.2 * t_est,
+            np.sin(0.2 * t_est),
+            0.1 * np.cos(0.1 * t_est),
+        ]
+    )
+    pos_est = 1.4 * pos_est_base + np.array([2.0, -0.5, 0.2], dtype=float)
+    quat_gt = R.from_euler(
+        "zyx", np.column_stack([0.05 * t_gt, 0.02 * t_gt, 0.01 * t_gt])
+    ).as_quat()
+    quat_est = R.from_euler(
+        "zyx", np.column_stack([0.05 * t_est, 0.02 * t_est, 0.01 * t_est])
+    ).as_quat()
+    gt_root = tmp_path / "gt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "sqrtVINs_Mono" / "archaeo_sequence_2"
+    gt_root.mkdir()
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_root / "archaeo_sequence_2.txt", t_gt, pos_gt, quat_gt)
+    _write_tum(run_dir / "traj_estimate.txt", t_est, pos_est, quat_est)
+
+    args = _build_error_comparison_parser().parse_args(
+        [
+            "sim3",
+            str(gt_root),
+            str(alg_root),
+            "--epa-success-threshold-mode",
+            "fixed",
+            "--epa-success-threshold-m",
+            "10",
+            "--epa-success-global-gate-m",
+            "30",
+        ]
+    )
+
+    assert run_error_comparison(args) == 0
+    out = capsys.readouterr().out
+    assert "skipping traj_estimate.txt" not in out
+    assert "eval_source: epa_step3=0, epa_eval=1, failed=0" in out
+    assert "TOOL SOURCE: epa_step3=0, epa_eval=1, failed=0" in out
 
 
 def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
@@ -328,6 +564,7 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
             "1.5",
             "--epa-success-drift-ape-jump-m",
             "7",
+            "--fail-on-skipped",
         ]
     )
 
@@ -351,6 +588,19 @@ def test_error_comparison_parser_accepts_epa_advanced_args() -> None:
     assert args.epa_success_drift_rpe_1s_m == 3
     assert args.epa_success_drift_ape_slope_mps == 1.5
     assert args.epa_success_drift_ape_jump_m == 7
+    assert bool(args.fail_on_skipped)
+
+
+def test_module_subcommand_help_uses_real_command_parser(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["error_comparison", "--help"])
+
+    assert exc.value.code == 0
+    out = capsys.readouterr().out
+    assert "align_mode folder_groundtruth folder_algorithms" in out
+    assert "--epa-no-fallback" in out
 
 
 def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Path) -> None:
@@ -534,6 +784,32 @@ def test_error_comparison_skips_failed_small_trajectory_runs(
     assert "EVAL SOURCE NON-EPA RUNS" not in out
 
 
+def test_error_comparison_fail_on_skipped_returns_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    gt_root = tmp_path / "gt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    gt_root.mkdir()
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_root / "seq.txt", t, gt_pos, quat)
+    (run_dir / "bad_small.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**_kwargs):
+        raise ValueError("Unable to associate enough timestamps")
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_comparison_parser().parse_args(
+        ["se3", str(gt_root), str(alg_root), "--fail-on-skipped"]
+    )
+
+    assert run_error_comparison(args) == 1
+
+
 def test_error_dataset_skips_failed_small_trajectory_runs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -560,6 +836,31 @@ def test_error_dataset_skips_failed_small_trajectory_runs(
     assert "[warn] skipping bad_small.txt" in out
     assert "no valid runs for algo/seq" in out
     assert "failed_runs: bad_small.txt:failed" in out
+
+
+def test_error_dataset_fail_on_skipped_returns_nonzero(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    t = np.arange(5, dtype=float)
+    gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
+    quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (t.size, 1))
+    gt_path = tmp_path / "seq.txt"
+    alg_root = tmp_path / "algorithms"
+    run_dir = alg_root / "algo" / "seq"
+    run_dir.mkdir(parents=True)
+    _write_tum(gt_path, t, gt_pos, quat)
+    (run_dir / "bad_small.txt").write_text("", encoding="utf-8")
+
+    def fake_evaluate_pair(**_kwargs):
+        raise ValueError("Unable to associate enough timestamps")
+
+    monkeypatch.setattr("epa.ov_eval_compat._evaluate_pair", fake_evaluate_pair)
+    args = _build_error_dataset_parser().parse_args(
+        ["se3", str(gt_path), str(alg_root), "--fail-on-skipped"]
+    )
+
+    assert run_error_dataset(args) == 1
 
 
 def test_error_dataset_reports_unreliable_rotation_with_high_translation_sr(

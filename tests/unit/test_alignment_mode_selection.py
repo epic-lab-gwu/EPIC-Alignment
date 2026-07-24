@@ -12,9 +12,9 @@ from epa.core.pipeline_modular import (
 )
 from epa.core.pipeline_views import _default_interactive_view, _interactive_eval_view_specs
 from epa.core.calibration import solve_world_alignment
-from epa.core.steps import (
-    _select_step3_solve_variant,
-    _solve_step2_step3_candidate,
+from epa.core.trajectory_alignment import (
+    _select_world_alignment_variant,
+    _solve_extrinsic_world_candidate,
     _solve_world_alignment_posyaw_robust_trimmed,
 )
 
@@ -272,7 +272,7 @@ def test_step3_robust_trimmed_alignment_ignores_drift_for_transform_only() -> No
     )
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (n, 1))
 
-    out = _solve_step2_step3_candidate(
+    out = _solve_extrinsic_world_candidate(
         name="base",
         R_calc=np.eye(3),
         pr_sync=pr,
@@ -285,12 +285,8 @@ def test_step3_robust_trimmed_alignment_ignores_drift_for_transform_only() -> No
 
     assert out["step3_alignment_mode"] == "robust_trimmed"
     assert int(out["step3_rejected_count"]) > 0
-    early_rmse = float(
-        np.sqrt(np.mean(np.sum((out["pr_final"][:80] - pos_gt[:80]) ** 2, axis=1)))
-    )
-    late_rmse = float(
-        np.sqrt(np.mean(np.sum((out["pr_final"][80:] - pos_gt[80:]) ** 2, axis=1)))
-    )
+    early_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][:80] - pos_gt[:80]) ** 2, axis=1))))
+    late_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][80:] - pos_gt[80:]) ** 2, axis=1))))
     assert early_rmse < 0.2
     assert late_rmse > 5.0
 
@@ -305,7 +301,7 @@ def test_step3_uses_stable_prefix_when_trajectory_jumps() -> None:
     pr[35:] += np.array([5000.0, -2000.0, 1000.0])
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (n, 1))
 
-    out = _solve_step2_step3_candidate(
+    out = _solve_extrinsic_world_candidate(
         name="base",
         R_calc=np.eye(3),
         pr_sync=pr,
@@ -342,7 +338,7 @@ def test_step3_motion_prefix_only_overrides_global_failures() -> None:
         "step3_stable_solve_ratio": 0.38,
     }
 
-    assert _select_step3_solve_variant([full_ok, motion]) is full_ok
+    assert _select_world_alignment_variant([full_ok, motion]) is full_ok
 
     full_failed = {
         "step3_solve_variant": "full",
@@ -358,4 +354,4 @@ def test_step3_motion_prefix_only_overrides_global_failures() -> None:
         "step3_stable_solve_ratio": 0.16,
     }
 
-    assert _select_step3_solve_variant([full_failed, motion_recovery]) is motion_recovery
+    assert _select_world_alignment_variant([full_failed, motion_recovery]) is motion_recovery

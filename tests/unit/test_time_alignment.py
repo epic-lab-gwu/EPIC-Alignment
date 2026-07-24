@@ -12,7 +12,7 @@ from epa.core.time_alignment import (
     interpolate_quat_slerp,
     matching_time_indices,
 )
-from epa.core.steps import _run_time_alignment
+from epa.core.time_sync import _run_time_alignment
 
 
 def test_matching_time_indices_respects_offset() -> None:

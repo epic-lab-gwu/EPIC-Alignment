@@ -14,6 +14,9 @@ dist/
 configs/
 tools/epa_ov_eval_shims/
 
+# experimental docs site, keep local until it replaces docs/
+docs2/
+
 # externalized datasets (keep outside repo)
 AlignAnything/
 README_PYPI.md

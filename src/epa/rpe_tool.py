@@ -19,8 +19,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from epa.config_cli import parse_args_with_config
+from epa.alignment.modes import COMPAT_ALIGN_MODES
 from epa.core.evaluation import RELATION_UNITS, compute_rpe, normalize_pose_relation
-from epa.core.io_utils import save_metrics, to_builtin, write_result_bundle
+from epa.io.serialization import save_metrics, to_builtin, write_result_bundle
 from epa.metric_cli_common import (
     MetricInputs,
     align_for_eval_with_info,
@@ -36,6 +37,7 @@ from epa.metric_cli_common import (
     resolve_map_tile_contextily,
     sync_trajectories,
 )
+from epa.metric_tools.common_cli import add_plot_runtime_args, add_usability_args
 from epa.viz.plot_bundle import (
     make_plot_bundle,
     make_raw_line_spec,
@@ -274,25 +276,7 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
     algo.add_argument("-s", "--correct_scale", action="store_true", default=dflt(False), help="enable scale correction")
     algo.add_argument(
         "--eval-align",
-        choices=[
-            "",
-            "none",
-            "epa_step3",
-            "se3",
-            "epa_se3",
-            "epa_se3_eval",
-            "posyaw",
-            "epa_posyaw",
-            "sim3",
-            "ov_sim3",
-            "epa_sim3",
-            "epica_sim3",
-            "epica_sim3_stable",
-            "epica_sim3_joint",
-            "epica_sim3_trimmed",
-            "origin",
-            "scale",
-        ],
+        choices=("", *COMPAT_ALIGN_MODES),
         default=dflt(""),
         help="Explicit EPA alignment mode; overrides --align/--correct_scale/--align_origin.",
     )
@@ -412,40 +396,10 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
         help="use percentile as colormap max (overrides --plot_colormap_max)",
     )
     output.add_argument("--save_plot", default=dflt(""), help="path stem to save plot files")
-    output.add_argument(
-        "--plot_interactive",
-        "--plot-interactive",
-        action="store_true",
-        default=dflt(False),
-        help="Show interactive matplotlib window after generating plots.",
-    )
-    output.add_argument(
-        "--plot_backend",
-        "--plot-backend",
-        default=dflt(""),
-        help="Optional matplotlib backend override (e.g. qtagg, tkagg).",
-    )
-    output.add_argument(
-        "--serialize_plot",
-        "--serialize-plot",
-        default=dflt(""),
-        help="path to save serialized plot bundle JSON for later re-rendering",
-    )
-    output.add_argument("--rerun", action="store_true", default=dflt(False), help="Log visualization data to rerun.")
-    output.add_argument(
-        "--rerun_rec_id",
-        "--rerun-rec-id",
-        default=dflt(None),
-        help="Use a specific recording ID for rerun.",
-    )
+    add_plot_runtime_args(output, suppress_defaults=suppress_defaults)
     output.add_argument("--out_dir", default=dflt(""), help="output directory")
     output.add_argument("--save_results", default=dflt(""), help="path to save result zip bundle")
-    usability = p.add_argument_group("usability options")
-    usability.add_argument("--no_warnings", action="store_true", default=dflt(False), help="reserved for compatibility")
-    usability.add_argument("-v", "--verbose", action="store_true", default=dflt(False), help="reserved for compatibility")
-    usability.add_argument("--silent", action="store_true", default=dflt(False), help="reserved for compatibility")
-    usability.add_argument("--debug", action="store_true", default=dflt(False), help="reserved for compatibility")
-    usability.add_argument("--logfile", default=dflt(None), help="reserved for compatibility")
+    add_usability_args(p, suppress_defaults=suppress_defaults)
     _add_time_sync_args(p, suppress_defaults=suppress_defaults)
 
 

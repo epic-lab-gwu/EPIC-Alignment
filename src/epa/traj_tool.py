@@ -12,8 +12,9 @@ from pathlib import Path
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from epa.alignment.modes import COMPAT_ALIGN_MODES
 from epa.config_cli import parse_args_with_config
-from epa.core.io_utils import (
+from epa.io.trajectory import (
     SUPPORTED_ROS_MSGS,
     load_estimation_csv,
     load_estimation_trajectory,
@@ -808,20 +809,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--eval-align",
-        choices=[
-            "",
-            "none",
-            "epa_step3",
-            "se3",
-            "epa_se3",
-            "epa_se3_eval",
-            "posyaw",
-            "epa_posyaw",
-            "sim3",
-            "ov_sim3",
-            "epa_sim3",
-            "scale",
-        ],
+        choices=("", *COMPAT_ALIGN_MODES),
         default="",
         help="Explicit EPA alignment mode; overrides --align/--correct-scale.",
     )

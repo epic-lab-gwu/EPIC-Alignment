@@ -1,7 +1,7 @@
 import numpy as np
 
 from epa.core.diagnostics import _diagnosis_tags_from_metrics
-from epa.core.pipeline_modular import _build_user_alert
+from epa.core.diagnostics import _build_user_alert
 
 
 def test_user_alert_highlights_severe_scale_mismatch() -> None:
