@@ -25,6 +25,7 @@ from .evaluate import (
     _evaluate_pair_ov_style,
     _eval_quality_flags,
     _fmt_sr_config,
+    _timeline_decision_for_strict_association,
 )
 from .parsers import (
     _build_error_comparison_parser,
@@ -67,6 +68,7 @@ __all__ = [
     "_evaluate_pair_ov_style",
     "_eval_quality_flags",
     "_fmt_sr_config",
+    "_timeline_decision_for_strict_association",
     "_format_source_counts",
     "_format_source_details",
     "build_parser",

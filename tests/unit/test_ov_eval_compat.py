@@ -17,6 +17,7 @@ from epa.ov_eval_compat import (
     _evaluate_pair_epa_step3,
     _evaluate_pair_ov_style,
     _format_source_details,
+    _timeline_decision_for_strict_association,
     main,
     run_error_comparison,
     run_error_dataset,
@@ -24,7 +25,7 @@ from epa.ov_eval_compat import (
 
 
 def test_package_version_matches_release() -> None:
-    assert epa.__version__ == "0.1.15"
+    assert epa.__version__ == "0.1.16"
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -168,39 +169,7 @@ def test_evaluate_pair_epa_step3_reduces_rotation_error_for_body_frame_mismatch(
     assert epa["eval_source"] == "epa_step3"
 
 
-def test_evaluate_pair_epa_step3_uses_sparse_timeline_for_low_rate_estimates(
-    tmp_path: Path,
-) -> None:
-    t_gt = np.arange(0.0, 10.001, 0.01)
-    pos_gt = np.column_stack(
-        [
-            0.4 * t_gt,
-            np.sin(0.2 * t_gt),
-            0.1 * np.cos(0.15 * t_gt),
-        ]
-    )
-    quat_gt = R.from_euler("zyx", np.column_stack([0.5 * t_gt, 0.2 * t_gt, 0.3 * t_gt])).as_quat()
-
-    sparse_ids = np.arange(0, t_gt.size, 100, dtype=int)
-    t_est = t_gt[sparse_ids]
-    pos_est = pos_gt[sparse_ids]
-    quat_est = quat_gt[sparse_ids]
-
-    gt_path = tmp_path / "gt_dense.tum"
-    est_path = tmp_path / "est_sparse.tum"
-    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
-    _write_tum(est_path, t_est, pos_est, quat_est)
-
-    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
-
-    assert int(result["matched"]) == int(t_est.size)
-    assert result["eval_source"] == "epa_step3"
-    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
-    assert int(result["eval_alignment"]["sparse_matched"]) == int(t_est.size)
-    assert result["eval_alignment"]["auto_sparse_low_rate_estimate_used"] is True
-
-
-def test_evaluate_pair_epa_step3_uses_dense_timeline_for_moderate_rate_estimates(
+def test_evaluate_pair_epa_step3_uses_strict_timeline_when_estimate_matches_well(
     tmp_path: Path,
 ) -> None:
     t_gt = np.arange(0.0, 10.001, 0.01)
@@ -225,9 +194,48 @@ def test_evaluate_pair_epa_step3_uses_dense_timeline_for_moderate_rate_estimates
 
     result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
 
-    assert int(result["matched"]) > int(t_est.size)
-    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
-    assert result["eval_alignment"]["auto_sparse_low_rate_estimate_used"] is False
+    assert int(result["matched"]) == int(t_est.size)
+    assert result["eval_source"] == "epa_step3"
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+    assert int(result["eval_alignment"]["sparse_matched"]) == int(t_est.size)
+    assert result["eval_alignment"]["strict_association_timeline_used"] is True
+    assert result["eval_alignment"]["auto_sparse_low_rate_estimate_used"] is True
+
+
+def test_evaluate_pair_epa_step3_uses_strict_timeline_for_moderate_rate_estimates(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 10.001, 0.01)
+    pos_gt = np.column_stack(
+        [
+            0.4 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.15 * t_gt),
+        ]
+    )
+    quat_gt = R.from_euler("zyx", np.column_stack([0.5 * t_gt, 0.2 * t_gt, 0.3 * t_gt])).as_quat()
+
+    t_est = np.arange(0.005, 10.0, 0.1)
+    pos_est = np.column_stack(
+        [
+            0.4 * t_est,
+            np.sin(0.2 * t_est),
+            0.1 * np.cos(0.15 * t_est),
+        ]
+    )
+    quat_est = R.from_euler("zyx", np.column_stack([0.5 * t_est, 0.2 * t_est, 0.3 * t_est])).as_quat()
+
+    gt_path = tmp_path / "gt_dense.tum"
+    est_path = tmp_path / "est_10hz.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
+
+    assert int(result["matched"]) == int(t_est.size)
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+    assert result["eval_alignment"]["strict_association_timeline_used"] is True
+    assert result["eval_alignment"]["auto_sparse_low_rate_estimate_used"] is True
 
 
 def test_evaluate_pair_epa_step3_no_fallback_keeps_sparse_estimate_association(
@@ -265,7 +273,7 @@ def test_evaluate_pair_epa_step3_no_fallback_keeps_sparse_estimate_association(
     assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
 
 
-def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates(
+def test_evaluate_pair_epa_step3_uses_strict_timeline_for_high_coverage_estimates(
     tmp_path: Path,
 ) -> None:
     t_gt = np.arange(0.0, 10.001, 0.01)
@@ -290,9 +298,103 @@ def test_evaluate_pair_epa_step3_uses_dense_timeline_for_high_coverage_estimates
 
     result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
 
-    assert int(result["matched"]) > int(t_est.size)
-    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
+    assert int(result["matched"]) == int(t_est.size)
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+    assert result["eval_alignment"]["strict_association_timeline_used"] is True
     assert result["eval_source"] == "epa_step3"
+
+
+def test_evaluate_pair_epa_step3_keeps_partial_estimate_on_strict_timeline(
+    tmp_path: Path,
+) -> None:
+    t_gt = np.arange(0.0, 20.001, 0.01)
+    pos_gt = np.column_stack(
+        [
+            0.4 * t_gt,
+            np.sin(0.2 * t_gt),
+            0.1 * np.cos(0.15 * t_gt),
+        ]
+    )
+    quat_gt = R.from_euler(
+        "zyx", np.column_stack([0.08 * t_gt, 0.04 * np.sin(t_gt), 0.03 * t_gt])
+    ).as_quat()
+
+    partial_gt_ids = np.arange(0, int(t_gt.size * 0.25), 5, dtype=int)
+    t_est = t_gt[partial_gt_ids]
+    pos_est = pos_gt[partial_gt_ids]
+    quat_est = quat_gt[partial_gt_ids]
+
+    gt_path = tmp_path / "gt_full.tum"
+    est_path = tmp_path / "est_partial_20hz.tum"
+    _write_tum(gt_path, t_gt, pos_gt, quat_gt)
+    _write_tum(est_path, t_est, pos_est, quat_est)
+
+    result = _evaluate_pair_epa_step3(gt_path, est_path, 0.02)
+
+    assert int(result["matched"]) == int(t_est.size)
+    assert int(result["matched"]) < int(t_gt.size * 0.25)
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+    assert result["eval_alignment"]["strict_association_timeline_used"] is True
+    assert float(result["ate3_ori"]["rmse"]) < 1e-6
+    assert float(result["ate3_pos"]["rmse"]) < 1e-6
+
+
+def test_timeline_decision_marks_estimate_gap_without_forcing_dense() -> None:
+    t_est = np.r_[np.arange(0.0, 2.0, 0.1), np.arange(8.0, 10.0, 0.1)]
+    pos_est = np.column_stack([0.2 * t_est, np.zeros_like(t_est), np.zeros_like(t_est)])
+    decision = _timeline_decision_for_strict_association(
+        t_est=t_est,
+        t_gt=np.arange(0.0, 10.0, 0.01),
+        t_matched=t_est,
+        i_est=np.arange(t_est.size),
+        sparse_matched=int(t_est.size),
+        pos_est_matched=pos_est,
+    )
+
+    assert decision["strict_association_timeline_used"] is True
+    assert decision["strict_has_large_gap"] is True
+    assert decision["strict_has_large_unmatched_gap"] is False
+    assert decision["strict_has_large_motion_gap"] is False
+    assert "covers the estimate timeline" in str(decision["timeline_policy_reason"])
+
+
+def test_timeline_decision_rejects_large_gap_with_abnormal_motion() -> None:
+    t_est = np.r_[np.arange(0.0, 2.0, 0.1), np.arange(8.0, 10.0, 0.1)]
+    pos_est = np.column_stack([0.2 * t_est, np.zeros_like(t_est), np.zeros_like(t_est)])
+    pos_est[t_est >= 8.0, 0] += 200.0
+    decision = _timeline_decision_for_strict_association(
+        t_est=t_est,
+        t_gt=np.arange(0.0, 10.0, 0.01),
+        t_matched=t_est,
+        i_est=np.arange(t_est.size),
+        sparse_matched=int(t_est.size),
+        pos_est_matched=pos_est,
+    )
+
+    assert decision["strict_association_timeline_used"] is False
+    assert decision["strict_has_large_gap"] is True
+    assert decision["strict_has_large_motion_gap"] is True
+    assert "abnormal estimate motion" in str(decision["timeline_policy_reason"])
+
+
+def test_timeline_decision_rejects_large_unmatched_gap() -> None:
+    t_est = np.arange(0.0, 10.0, 0.1)
+    matched_ids = np.r_[np.arange(0, 20), np.arange(80, 100)]
+    t_matched = t_est[matched_ids]
+    pos_est = np.column_stack([0.2 * t_matched, np.zeros_like(t_matched), np.zeros_like(t_matched)])
+    decision = _timeline_decision_for_strict_association(
+        t_est=t_est,
+        t_gt=np.arange(0.0, 10.0, 0.01),
+        t_matched=t_matched,
+        i_est=matched_ids,
+        sparse_matched=int(matched_ids.size),
+        pos_est_matched=pos_est,
+    )
+
+    assert decision["strict_association_timeline_used"] is False
+    assert decision["strict_has_large_gap"] is True
+    assert decision["strict_has_large_unmatched_gap"] is True
+    assert "large unmatched timestamp gap" in str(decision["timeline_policy_reason"])
 
 
 def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gate(
@@ -385,7 +487,7 @@ def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) 
 
     result = _evaluate_pair_ov_style(gt_path, est_path, "sim3", 0.02)
 
-    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
+    assert result["eval_alignment"]["timeline_policy"] == "strict_timestamp_association"
     assert int(result["eval_alignment"]["sparse_matched"]) == int(t.size)
     np.testing.assert_allclose(
         float(result["eval_alignment"]["align_scale"]), scale_true, rtol=1e-6

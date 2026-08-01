@@ -30,8 +30,14 @@ from .constants import (
     _DEFAULT_EPA_DT_RESAMPLE,
     _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
     _DEFAULT_EPA_QUAT_INTERP,
-    _LOW_RATE_ESTIMATE_STRICT_MIN_DT_S,
-    _LOW_RATE_ESTIMATE_STRICT_MIN_EST_MATCH_RATIO,
+    _STRICT_ASSOCIATION_GAP_MIN_JUMP_M,
+    _STRICT_ASSOCIATION_GAP_MIN_SPEED_MPS,
+    _STRICT_ASSOCIATION_GAP_MOTION_FACTOR,
+    _STRICT_ASSOCIATION_GAP_SPEED_FACTOR,
+    _STRICT_ASSOCIATION_HIGH_EST_MATCH_RATIO,
+    _STRICT_ASSOCIATION_MAX_GAP_FACTOR,
+    _STRICT_ASSOCIATION_MIN_EST_MATCH_RATIO,
+    _STRICT_ASSOCIATION_MIN_EST_SPAN_RATIO,
     _ORIENTATION_WARNING_APE_RMSE_DEG,
     _ORIENTATION_WARNING_MIN_SR,
     _ORIENTATION_WARNING_RPE_RMSE_DEG,
@@ -49,21 +55,186 @@ def _median_positive_dt_s(timestamps: np.ndarray) -> float:
     return float(np.nanmedian(diffs))
 
 
-def _prefer_sparse_timeline_for_low_rate_estimate(
+def _duration_s(timestamps: np.ndarray) -> float:
+    tvals = np.asarray(timestamps, dtype=float).reshape(-1)
+    tvals = tvals[np.isfinite(tvals)]
+    if tvals.size < 2:
+        return 0.0
+    return max(0.0, float(np.max(tvals) - np.min(tvals)))
+
+
+def _max_positive_gap_s(timestamps: np.ndarray) -> float:
+    tvals = np.asarray(timestamps, dtype=float).reshape(-1)
+    tvals = tvals[np.isfinite(tvals)]
+    if tvals.size < 2:
+        return float("nan")
+    diffs = np.diff(np.sort(tvals))
+    diffs = diffs[np.isfinite(diffs) & (diffs > 0.0)]
+    if diffs.size == 0:
+        return float("nan")
+    return float(np.max(diffs))
+
+
+def _timeline_decision_for_strict_association(
     *,
     t_est: np.ndarray,
+    t_gt: np.ndarray,
+    t_matched: np.ndarray,
+    i_est: np.ndarray,
     sparse_matched: int,
-) -> bool:
-    if int(sparse_matched) < 3:
-        return False
+    pos_est_matched: np.ndarray | None = None,
+) -> dict[str, object]:
+    matched_count = int(sparse_matched)
     est_count = int(np.asarray(t_est).reshape(-1).size)
-    if est_count <= 0:
-        return False
-    est_match_ratio = float(sparse_matched) / float(est_count)
-    if est_match_ratio < float(_LOW_RATE_ESTIMATE_STRICT_MIN_EST_MATCH_RATIO):
-        return False
-    est_dt_s = _median_positive_dt_s(np.asarray(t_est, dtype=float))
-    return bool(np.isfinite(est_dt_s) and est_dt_s >= float(_LOW_RATE_ESTIMATE_STRICT_MIN_DT_S))
+    gt_count = int(np.asarray(t_gt).reshape(-1).size)
+    est_t = np.asarray(t_est, dtype=float).reshape(-1)
+    matched_t = np.asarray(t_matched, dtype=float).reshape(-1)
+    matched_ids = np.asarray(i_est, dtype=int).reshape(-1)
+    est_duration = _duration_s(est_t)
+    gt_duration = _duration_s(np.asarray(t_gt, dtype=float))
+    matched_duration = _duration_s(matched_t)
+    est_match_ratio = float(matched_count) / max(float(est_count), 1.0)
+    gt_match_ratio = float(matched_count) / max(float(gt_count), 1.0)
+    matched_span_ratio_est = matched_duration / max(est_duration, 1e-12)
+    matched_span_ratio_gt = matched_duration / max(gt_duration, 1e-12)
+    est_median_dt_s = _median_positive_dt_s(est_t)
+    gt_median_dt_s = _median_positive_dt_s(np.asarray(t_gt, dtype=float))
+    matched_max_gap_s = _max_positive_gap_s(matched_t)
+    full_est_max_gap_s = _max_positive_gap_s(est_t)
+    gap_limit_s = float("nan")
+    if np.isfinite(est_median_dt_s):
+        gap_limit_s = max(float(_STRICT_ASSOCIATION_MAX_GAP_FACTOR) * est_median_dt_s, 2.0 * float(est_median_dt_s))
+    has_large_matched_gap = bool(
+        np.isfinite(matched_max_gap_s)
+        and np.isfinite(gap_limit_s)
+        and matched_max_gap_s > gap_limit_s
+    )
+    matched_pos = (
+        np.asarray(pos_est_matched, dtype=float)
+        if pos_est_matched is not None
+        else np.empty((0, 3), dtype=float)
+    )
+    gap_jump_m = float("nan")
+    gap_speed_mps = float("nan")
+    nominal_step_m = float("nan")
+    nominal_speed_mps = float("nan")
+    has_large_motion_gap = False
+    matched_dt = np.diff(matched_t) if matched_t.size > 1 else np.asarray([], dtype=float)
+    if matched_pos.ndim == 2 and matched_pos.shape[0] == matched_t.size and matched_t.size > 1:
+        matched_step = np.linalg.norm(np.diff(matched_pos, axis=0), axis=1)
+        finite_steps = matched_step[np.isfinite(matched_step)]
+        if finite_steps.size > 0:
+            nominal_step_m = float(np.nanmedian(finite_steps))
+        finite_dt = matched_dt[np.isfinite(matched_dt) & (matched_dt > 0.0)]
+        speeds = matched_step / np.maximum(matched_dt, 1e-12)
+        finite_speeds = speeds[np.isfinite(speeds)]
+        if finite_speeds.size > 0:
+            nominal_speed_mps = float(np.nanmedian(finite_speeds))
+        large_gap_mask = (
+            np.isfinite(matched_dt)
+            & np.isfinite(matched_step)
+            & (matched_dt > gap_limit_s)
+        )
+        if np.any(large_gap_mask):
+            gap_steps = matched_step[large_gap_mask]
+            gap_speeds = speeds[large_gap_mask]
+            gap_jump_m = float(np.nanmax(gap_steps))
+            finite_gap_speeds = gap_speeds[np.isfinite(gap_speeds)]
+            if finite_gap_speeds.size > 0:
+                gap_speed_mps = float(np.nanmax(finite_gap_speeds))
+            motion_jump_limit_m = max(
+                float(_STRICT_ASSOCIATION_GAP_MIN_JUMP_M),
+                float(_STRICT_ASSOCIATION_GAP_MOTION_FACTOR)
+                * max(nominal_step_m, 1e-12),
+            )
+            motion_speed_limit_mps = max(
+                float(_STRICT_ASSOCIATION_GAP_MIN_SPEED_MPS),
+                float(_STRICT_ASSOCIATION_GAP_SPEED_FACTOR)
+                * max(nominal_speed_mps, 1e-12),
+            )
+            has_large_motion_gap = bool(
+                np.isfinite(gap_jump_m)
+                and np.isfinite(gap_speed_mps)
+                and gap_jump_m > motion_jump_limit_m
+                and gap_speed_mps > motion_speed_limit_mps
+            )
+    has_large_unmatched_gap = bool(
+        has_large_matched_gap
+        and (
+            not np.isfinite(full_est_max_gap_s)
+            or not np.isfinite(est_median_dt_s)
+            or matched_max_gap_s > max(full_est_max_gap_s * 1.5, gap_limit_s)
+        )
+    )
+    matched_est_span_ratio = 0.0
+    if est_count > 1 and matched_ids.size > 0:
+        matched_est_span_ratio = float(int(np.max(matched_ids)) - int(np.min(matched_ids)) + 1) / float(est_count)
+    low_rate_estimate = bool(np.isfinite(est_median_dt_s) and est_median_dt_s >= 0.25)
+    low_rate_gt = bool(np.isfinite(gt_median_dt_s) and gt_median_dt_s >= 0.25)
+    enough_pairs = matched_count >= 3
+    representative_count = est_match_ratio >= float(_STRICT_ASSOCIATION_MIN_EST_MATCH_RATIO)
+    near_complete_count = est_match_ratio >= float(_STRICT_ASSOCIATION_HIGH_EST_MATCH_RATIO)
+    representative_span = (
+        matched_span_ratio_est >= float(_STRICT_ASSOCIATION_MIN_EST_SPAN_RATIO)
+        or matched_est_span_ratio >= float(_STRICT_ASSOCIATION_MIN_EST_SPAN_RATIO)
+    )
+    use_strict = bool(
+        enough_pairs
+        and representative_count
+        and (near_complete_count or representative_span)
+        and not has_large_unmatched_gap
+        and not has_large_motion_gap
+    )
+    reasons: list[str] = []
+    if not enough_pairs:
+        reasons.append("strict association has fewer than 3 matched pairs")
+    if not representative_count:
+        reasons.append("strict association does not cover enough estimate samples")
+    if representative_count and not (near_complete_count or representative_span):
+        reasons.append("strict matches cover estimate count but not estimate time span")
+    if has_large_matched_gap:
+        if has_large_motion_gap:
+            reasons.append("strict matches contain a large timestamp gap with abnormal estimate motion")
+        elif has_large_unmatched_gap:
+            reasons.append("strict matches contain a large unmatched timestamp gap")
+    if use_strict:
+        if has_large_matched_gap:
+            reasons.append("strict association covers the estimate timeline; timestamp gap motion is stable")
+        else:
+            reasons.append("strict association covers the estimate timeline without large gaps")
+
+    return {
+        "strict_association_timeline_used": use_strict,
+        "timeline_policy_reason": "; ".join(reasons) if reasons else "strict association diagnostics unavailable",
+        "sparse_matched": matched_count,
+        "sparse_est_match_ratio": est_match_ratio,
+        "sparse_gt_match_ratio": gt_match_ratio,
+        "strict_est_span_ratio": matched_span_ratio_est,
+        "strict_gt_span_ratio": matched_span_ratio_gt,
+        "strict_est_index_span_ratio": matched_est_span_ratio,
+        "strict_max_gap_s": matched_max_gap_s,
+        "strict_full_est_max_gap_s": full_est_max_gap_s,
+        "strict_gap_limit_s": gap_limit_s,
+        "strict_has_large_gap": has_large_matched_gap,
+        "strict_has_large_unmatched_gap": has_large_unmatched_gap,
+        "strict_has_large_motion_gap": has_large_motion_gap,
+        "strict_gap_jump_m": gap_jump_m,
+        "strict_gap_speed_mps": gap_speed_mps,
+        "strict_nominal_step_m": nominal_step_m,
+        "strict_nominal_speed_mps": nominal_speed_mps,
+        "estimate_median_dt_s": est_median_dt_s,
+        "gt_median_dt_s": gt_median_dt_s,
+        "low_rate_estimate": low_rate_estimate,
+        "low_rate_gt": low_rate_gt,
+        "strict_min_est_match_ratio": float(_STRICT_ASSOCIATION_MIN_EST_MATCH_RATIO),
+        "strict_high_est_match_ratio": float(_STRICT_ASSOCIATION_HIGH_EST_MATCH_RATIO),
+        "strict_min_est_span_ratio": float(_STRICT_ASSOCIATION_MIN_EST_SPAN_RATIO),
+        "strict_max_gap_factor": float(_STRICT_ASSOCIATION_MAX_GAP_FACTOR),
+        "strict_gap_motion_factor": float(_STRICT_ASSOCIATION_GAP_MOTION_FACTOR),
+        "strict_gap_speed_factor": float(_STRICT_ASSOCIATION_GAP_SPEED_FACTOR),
+        "strict_gap_min_jump_m": float(_STRICT_ASSOCIATION_GAP_MIN_JUMP_M),
+        "strict_gap_min_speed_mps": float(_STRICT_ASSOCIATION_GAP_MIN_SPEED_MPS),
+    }
 
 
 def _public_align_mode(raw_mode: str) -> str:
@@ -101,8 +272,9 @@ def _associate_or_resample_ov_style(
     sparse_matched = 0
     sparse_assoc_failed = False
     sparse_assoc_failure_reason = ""
+    strict_decision: dict[str, object] | None = None
     try:
-        _, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, _ = _associate_est_gt(
+        _, p_est_m, q_est_m, t_gt_m, p_gt_m, q_gt_m, i_est_m = _associate_est_gt(
             t_est=t_est,
             p_est=p_est,
             q_est=q_est,
@@ -113,11 +285,18 @@ def _associate_or_resample_ov_style(
             offset=0.0,
         )
         sparse_matched = int(t_gt_m.size)
-        auto_sparse = _prefer_sparse_timeline_for_low_rate_estimate(
+        strict_decision = _timeline_decision_for_strict_association(
             t_est=t_est,
+            t_gt=t_gt,
+            t_matched=t_gt_m,
+            i_est=i_est_m,
             sparse_matched=sparse_matched,
+            pos_est_matched=p_est_m,
         )
-        if (not bool(allow_resampled_fallback)) or auto_sparse:
+        use_strict_timeline = bool(strict_decision["strict_association_timeline_used"])
+        if (not bool(allow_resampled_fallback)) or use_strict_timeline:
+            strict_decision["strict_association_timeline_used"] = bool(use_strict_timeline)
+            strict_decision["auto_sparse_low_rate_estimate_used"] = bool(use_strict_timeline)
             return (
                 t_gt_m,
                 p_gt_m,
@@ -129,14 +308,8 @@ def _associate_or_resample_ov_style(
                     "sparse_association_failed": False,
                     "sparse_association_failure_reason": "",
                     "resampled_fallback_used": False,
-                    "sparse_matched": sparse_matched,
-                    "sparse_est_match_ratio": float(sparse_matched)
-                    / max(float(np.asarray(t_est).reshape(-1).size), 1.0),
-                    "estimate_median_dt_s": _median_positive_dt_s(t_est),
-                    "auto_sparse_low_rate_estimate_used": bool(
-                        bool(allow_resampled_fallback) and auto_sparse
-                    ),
                     "dense_timeline_used": False,
+                    **strict_decision,
                 },
             )
     except ValueError as exc:
@@ -168,6 +341,19 @@ def _associate_or_resample_ov_style(
             f"overlap_samples={overlap_samples}."
         )
 
+    fallback_decision = strict_decision or _timeline_decision_for_strict_association(
+        t_est=t_est,
+        t_gt=t_gt,
+        t_matched=np.asarray([], dtype=float),
+        i_est=np.asarray([], dtype=int),
+        sparse_matched=sparse_matched,
+        pos_est_matched=None,
+    )
+    fallback_decision["timeline_policy_reason"] = (
+        sparse_assoc_failure_reason
+        if sparse_assoc_failed
+        else str(fallback_decision["timeline_policy_reason"])
+    )
     return (
         t_gt_m,
         np.asarray(solve_eval["pos_gt"], dtype=float),
@@ -181,14 +367,11 @@ def _associate_or_resample_ov_style(
             "sparse_association_failed": bool(sparse_assoc_failed),
             "sparse_association_failure_reason": sparse_assoc_failure_reason,
             "resampled_fallback_used": bool(sparse_assoc_failed),
-            "sparse_matched": sparse_matched,
-            "sparse_est_match_ratio": float(sparse_matched)
-            / max(float(np.asarray(t_est).reshape(-1).size), 1.0),
-            "estimate_median_dt_s": _median_positive_dt_s(t_est),
             "auto_sparse_low_rate_estimate_used": False,
             "dense_timeline_used": True,
             "overlap_info": overlap_info,
             "downsample_info": solve_eval.get("downsample_info", {}),
+            **fallback_decision,
         },
     )
 
@@ -330,7 +513,7 @@ def _evaluate_pair_epa_step3(
     sparse_assoc_failed = False
     sparse_assoc_failure_reason = ""
     try:
-        _, p_est_sparse, q_est_sparse, t_gt_sparse, p_gt_sparse, q_gt_sparse, _ = _associate_est_gt(
+        _, p_est_sparse, q_est_sparse, t_gt_sparse, p_gt_sparse, q_gt_sparse, i_est_sparse = _associate_est_gt(
             t_est=t_est,
             p_est=p_est,
             q_est=q_est,
@@ -348,18 +531,24 @@ def _evaluate_pair_epa_step3(
         t_gt_sparse = np.empty((0,), dtype=float)
         p_gt_sparse = np.empty((0, 3), dtype=float)
         q_gt_sparse = np.empty((0, 4), dtype=float)
-    sparse_gt_match_ratio = float(t_gt_sparse.size) / max(float(t_gt.size), 1.0)
-    sparse_est_match_ratio = float(t_gt_sparse.size) / max(float(t_est.size), 1.0)
+        i_est_sparse = np.empty((0,), dtype=int)
+    strict_decision = _timeline_decision_for_strict_association(
+        t_est=t_est,
+        t_gt=t_gt,
+        t_matched=t_gt_sparse,
+        i_est=i_est_sparse,
+        sparse_matched=int(t_gt_sparse.size),
+        pos_est_matched=p_est_sparse,
+    )
+    if sparse_assoc_failed and sparse_assoc_failure_reason:
+        strict_decision["timeline_policy_reason"] = sparse_assoc_failure_reason
     use_resampled_fallback = bool(t_gt_sparse.size < 3)
     if use_resampled_fallback and not bool(allow_resampled_fallback):
         reason = sparse_assoc_failure_reason or (
             "Strict timestamp association produced fewer than 3 matches."
         )
         raise ValueError(f"EPA resampled fallback disabled; {reason}")
-    prefer_sparse_timeline = _prefer_sparse_timeline_for_low_rate_estimate(
-        t_est=t_est,
-        sparse_matched=int(t_gt_sparse.size),
-    )
+    prefer_sparse_timeline = bool(strict_decision["strict_association_timeline_used"])
     use_dense_timeline = bool(allow_resampled_fallback and not prefer_sparse_timeline)
     if use_dense_timeline:
         solve_eval = _prepare_solve_eval_trajectories(
@@ -423,15 +612,12 @@ def _evaluate_pair_epa_step3(
         "step3_global_align_mode": global_align_mode,
         "step3_alignment_mode": str(solved.get("step3_choice", {}).get("step3_alignment_mode", "")),
         "timeline_policy": timeline_policy,
-        "sparse_gt_match_ratio": sparse_gt_match_ratio,
-        "sparse_est_match_ratio": sparse_est_match_ratio,
-        "sparse_matched": int(t_gt_sparse.size),
-        "estimate_median_dt_s": _median_positive_dt_s(t_est),
         "dense_timeline_used": bool(use_dense_timeline),
         "auto_sparse_low_rate_estimate_used": bool(prefer_sparse_timeline),
         "sparse_association_failed": bool(sparse_assoc_failed),
         "sparse_association_failure_reason": sparse_assoc_failure_reason,
         "resampled_fallback_used": bool(use_resampled_fallback),
+        **strict_decision,
     }
     if eval_mode not in {"", "none", "posyaw", "epa_posyaw"}:
         est_pos, est_quat, eval_alignment = align_for_eval_with_info(
