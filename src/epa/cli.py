@@ -396,7 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-plot",
         dest="plot",
         action="store_false",
-        help="Disable metric plot generation.",
+        help="Run terminal-only: skip plots, HTML, reports, CSV, and metrics files.",
     )
     parser.set_defaults(plot=True)
     parser.add_argument(

@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -131,6 +132,7 @@ def _run_epa_case(
         cmd.extend(["--eval-align", eval_align])
     if bool(no_downsample):
         cmd.append("--no-downsample")
+    started = time.perf_counter()
     proc = subprocess.run(
         cmd,
         cwd=repo_root,
@@ -140,6 +142,7 @@ def _run_epa_case(
         check=False,
     )
 
+    runtime_s = float(time.perf_counter() - started)
     stdout_log_path.parent.mkdir(parents=True, exist_ok=True)
     stdout_log_path.write_text(proc.stdout, encoding="utf-8")
     stderr_log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,6 +151,7 @@ def _run_epa_case(
     result: dict[str, object] = {
         "status": _bool_to_status(proc.returncode == 0),
         "returncode": proc.returncode,
+        "runtime_s": runtime_s,
         "stdout_log": str(stdout_log_path),
         "stderr_log": str(stderr_log_path),
         "stderr_tail": _tail(proc.stderr) if proc.returncode != 0 else "",
@@ -769,6 +773,8 @@ def _failed_summary_row(
         "est": est,
         "epa_status": "failed",
         "evo_status": "failed",
+        "epa_runtime_s": float("nan"),
+        "evo_runtime_s": float("nan"),
         "epa_offset_est_s": float("nan"),
         "evo_offset_s": float("nan"),
         "epa_ate_rmse_raw_m": float("nan"),
@@ -904,6 +910,7 @@ def _run_benchmark_case(
     )
 
     if with_evo:
+        evo_started = time.perf_counter()
         try:
             evo_result = _run_evo_case(
                 gt_data=gt_data,
@@ -928,9 +935,11 @@ def _run_benchmark_case(
                 "sweep_evals": 0,
                 "error": str(exc),
             }
+        evo_result["runtime_s"] = float(time.perf_counter() - evo_started)
     else:
         evo_result = {
             "status": "not_run",
+            "runtime_s": float("nan"),
             "offset_s": float("nan"),
             "matches": 0,
             "ape_raw_rmse_m": float("nan"),
@@ -950,6 +959,8 @@ def _run_benchmark_case(
         "est": str(case.est_path.relative_to(align_root)),
         "epa_status": epa_result.get("status", "failed"),
         "evo_status": evo_result.get("status", "failed"),
+        "epa_runtime_s": _as_float(epa_result.get("runtime_s")),
+        "evo_runtime_s": _as_float(evo_result.get("runtime_s")),
         "epa_offset_est_s": _as_float(epa_result.get("offset_est_s")),
         "evo_offset_s": _as_float(evo_result.get("offset_s")),
         "epa_ate_rmse_raw_m": _as_float(epa_result.get("ate_rmse_raw_m")),
@@ -1061,6 +1072,8 @@ def _summary_row_from_case_payload(
         "est": _relative_or_absolute(payload.get("est_path", case.est_path), align_root),
         "epa_status": epa_result.get("status", "failed"),
         "evo_status": evo_result.get("status", "failed"),
+        "epa_runtime_s": _as_float(epa_result.get("runtime_s")),
+        "evo_runtime_s": _as_float(evo_result.get("runtime_s")),
         "epa_offset_est_s": _as_float(epa_result.get("offset_est_s")),
         "evo_offset_s": _as_float(evo_result.get("offset_s")),
         "epa_ate_rmse_raw_m": _as_float(epa_result.get("ate_rmse_raw_m")),

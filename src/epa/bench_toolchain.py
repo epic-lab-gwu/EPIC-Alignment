@@ -74,6 +74,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Local evo repository path. Default: $EVO_REPO.",
     )
     p.add_argument(
+        "--with-evo",
+        action="store_true",
+        help="Run the evo comparison for every discovered case.",
+    )
+    p.add_argument(
         "--t-max-diff",
         type=float,
         default=0.02,
@@ -154,6 +159,8 @@ def run(args: argparse.Namespace) -> int:
     ]
     if str(args.evo_repo).strip():
         bench_cmd.extend(["--evo-repo", str(Path(args.evo_repo).expanduser())])
+    if bool(args.with_evo):
+        bench_cmd.append("--with-evo")
     if cases_root is not None:
         bench_cmd.extend(["--cases-root", str(cases_root)])
     if str(args.methods).strip():

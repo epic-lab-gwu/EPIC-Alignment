@@ -82,14 +82,20 @@ from .pipeline_views import (
 
 def run_pipeline_modular(args, script_dir: Path):
     verbose = bool(getattr(args, "verbose", False))
-    run_dir = make_output_dir(
-        script_dir,
-        output_root=getattr(args, "output_root", ""),
-        run_label=getattr(args, "run_label", ""),
-    )
+    terminal_only = not bool(getattr(args, "plot", True))
+    if terminal_only:
+        # Preserve the terminal preamble without creating a persistent output tree.
+        run_dir = Path("/tmp") / f"epa-terminal-only-{os.getpid()}"
+    else:
+        run_dir = make_output_dir(
+            script_dir,
+            output_root=getattr(args, "output_root", ""),
+            run_label=getattr(args, "run_label", ""),
+        )
     print(f"Saving outputs to: {run_dir}")
     plots_dir = run_dir / "plots"
-    plots_dir.mkdir(parents=True, exist_ok=True)
+    if not terminal_only:
+        plots_dir.mkdir(parents=True, exist_ok=True)
 
     gt_path = Path(args.gt_csv)
     if not gt_path.is_absolute():
@@ -212,18 +218,21 @@ def run_pipeline_modular(args, script_dir: Path):
             },
         )
 
-    title_offset = f"Known offset: {ARTIFICIAL_OFFSET}s" if args.synthetic else "Unknown offset"
-    fig_corr_path, fig1_path = _plot_step1_outputs(
-        plots_dir=plots_dir,
-        t_uniform=t_uniform,
-        sig_gt=sig_gt,
-        sig_est=sig_est,
-        corr=corr,
-        lags=lags,
-        dt_resample=dt_resample,
-        calculated_offset=calculated_offset,
-        title_offset=title_offset,
-    )
+    if terminal_only:
+        fig_corr_path, fig1_path = None, None
+    else:
+        title_offset = f"Known offset: {ARTIFICIAL_OFFSET}s" if args.synthetic else "Unknown offset"
+        fig_corr_path, fig1_path = _plot_step1_outputs(
+            plots_dir=plots_dir,
+            t_uniform=t_uniform,
+            sig_gt=sig_gt,
+            sig_est=sig_est,
+            corr=corr,
+            lags=lags,
+            dt_resample=dt_resample,
+            calculated_offset=calculated_offset,
+            title_offset=title_offset,
+        )
 
     downsample_hz = 0.0 if bool(getattr(args, "no_downsample", False)) else float(getattr(args, "downsample_hz", 100.0))
     solve_eval = _prepare_solve_eval_trajectories(
@@ -453,7 +462,8 @@ def run_pipeline_modular(args, script_dir: Path):
     if alert_reasons:
         print(f"alert_reasons: {alert_reasons}")
 
-    _plot_piecewise_diagnostics(plots_dir=plots_dir, piecewise_detail=piecewise_detail)
+    if not terminal_only:
+        _plot_piecewise_diagnostics(plots_dir=plots_dir, piecewise_detail=piecewise_detail)
 
     stage_trajs = {
         "raw": {"pos": pr_sync, "quat": qr_sync},
@@ -591,6 +601,11 @@ def run_pipeline_modular(args, script_dir: Path):
                     f"{stage_name}: "
                     f"pairs={pairs}, time_pairs={time_pairs}, threshold_m={success_threshold_m:g}"
                 )
+
+    # Terminal-only mode ends after the normal metric blocks.  This keeps the
+    # existing terminal format while skipping all report/visualization output.
+    if terminal_only:
+        return
 
     debug_outputs = bool(getattr(args, "debug", False))
     fig2_path, fig_step3_map_path = _plot_stage_alignment_maps(
