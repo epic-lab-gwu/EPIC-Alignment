@@ -436,6 +436,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the default post-time-alignment downsampling.",
     )
     parser.add_argument(
+        "--robust-kernel",
+        choices=["standard", "none", "huber", "cauchy"],
+        default="none",
+        help=(
+            "Calibration weighting: standard (ordinary least squares), none "
+            "(legacy hard trimming in Step 3), or huber/cauchy (soft IRLS; default: none)."
+        ),
+    )
+    parser.add_argument(
+        "--robust-kernel-delta-m",
+        type=float,
+        default=None,
+        help="Huber transition residual in metres; omitted uses an adaptive MAD scale.",
+    )
+    parser.add_argument(
+        "--robust-kernel-max-iterations",
+        type=int,
+        default=3,
+        help="Maximum Huber IRLS iterations for calibration (default: 3).",
+    )
+    parser.add_argument(
         "--rerun",
         action="store_true",
         help="Enable optional Rerun trajectory visualization/logging.",

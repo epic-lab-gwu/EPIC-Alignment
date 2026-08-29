@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+from numpy.lib.stride_tricks import sliding_window_view
 
 from .calibration import (
     build_translation_system,
+    huber_weights,
+    robust_weights,
+    robust_scale,
     solve_extrinsic_rotation,
     solve_extrinsic_translation,
     solve_world_alignment,
+    solve_world_alignment_robust,
 )
 from .evaluation import summarize_abs_errors
 from .math_utils import normalize_quat_array, rmse
@@ -67,6 +72,170 @@ def _solve_world_alignment_standard(P: np.ndarray, Q: np.ndarray) -> dict[str, o
         "pred": pred,
         "residuals": residuals,
         "rmse_all_m": _alignment_rmse(pred, Q),
+    }
+
+
+def _standard_world_fit_with_info(
+    P: np.ndarray, Q: np.ndarray, *, posyaw: bool
+) -> dict[str, object]:
+    """Adapt ordinary alignment to the common Step-3 diagnostics schema."""
+    standard = (
+        _solve_world_alignment_posyaw_standard(P, Q)
+        if posyaw
+        else _solve_world_alignment_standard(P, Q)
+    )
+    n = int(np.asarray(P).shape[0])
+    rmse = float(standard["rmse_all_m"])
+    return {
+        **standard,
+        "mode": "posyaw_standard" if posyaw else "standard",
+        "selected_mask": np.ones(n, dtype=bool),
+        "inlier_count": n,
+        "rejected_count": 0,
+        "rejection_ratio": 0.0,
+        "outlier_threshold_m": float("inf"),
+        "robust_available": False,
+        "standard_rmse_all_m": rmse,
+        "standard_rmse_on_inliers_m": rmse,
+        "robust_rmse_inliers_m": rmse,
+        "robust_rmse_all_m": rmse,
+        "kernel": "standard",
+        "iterations": 0,
+        "delta_m": float("nan"),
+        "scale_m": float("nan"),
+        "downweighted_count": 0,
+        "effective_weight_fraction": 1.0,
+    }
+
+
+def _solve_world_alignment_posyaw_robust_kernel(
+    P: np.ndarray,
+    Q: np.ndarray,
+    *,
+    robust_delta_m: float | None = None,
+    robust_max_iterations: int = 3,
+    robust_kernel: str = "huber",
+) -> dict[str, object]:
+    """Weighted PosYaw alignment using Huber IRLS without hard rejection."""
+    P = np.asarray(P, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    standard = _solve_world_alignment_posyaw_standard(P, Q)
+    Rw = np.asarray(standard["R"], dtype=float)
+    tw = np.asarray(standard["t"], dtype=float)
+    residuals = np.asarray(standard["residuals"], dtype=float)
+    info = {
+        "iterations": 0,
+        "delta_m": float("nan"),
+        "scale_m": float("nan"),
+        "downweighted_count": 0,
+        "effective_weight_fraction": 1.0,
+    }
+    for iteration in range(max(1, int(robust_max_iterations))):
+        scale = robust_scale(residuals, floor=1e-6)
+        delta = (
+            float(robust_delta_m)
+            if robust_delta_m is not None
+            else 1.345 * max(scale, 1e-3)
+        )
+        weights = robust_weights(residuals, delta, robust_kernel)
+        weight_sum = float(np.sum(weights))
+        if weight_sum <= 0.0:
+            break
+        src_xy = P[:, :2]
+        dst_xy = Q[:, :2]
+        mu_src_xy = np.sum(src_xy * weights[:, None], axis=0) / weight_sum
+        mu_dst_xy = np.sum(dst_xy * weights[:, None], axis=0) / weight_sum
+        src0 = src_xy - mu_src_xy
+        dst0 = dst_xy - mu_dst_xy
+        cov = dst0.T @ (src0 * weights[:, None])
+        yaw = float(np.arctan2(cov[1, 0] - cov[0, 1], cov[0, 0] + cov[1, 1]))
+        updated_R = _rot_z(yaw)
+        updated_t = np.sum(Q * weights[:, None], axis=0) / weight_sum - updated_R @ (
+            np.sum(P * weights[:, None], axis=0) / weight_sum
+        )
+        updated_pred = (updated_R @ P.T).T + updated_t
+        updated_residuals = np.linalg.norm(updated_pred - Q, axis=1)
+        info.update(
+            {
+                "iterations": int(iteration + 1),
+                "delta_m": float(delta),
+                "scale_m": float(scale),
+                "downweighted_count": int(np.count_nonzero(weights < 0.999999)),
+                "effective_weight_fraction": float(np.mean(weights)),
+            }
+        )
+        rotation_delta = R.from_matrix(updated_R @ Rw.T).magnitude()
+        translation_delta = np.linalg.norm(updated_t - tw)
+        Rw, tw, residuals = updated_R, updated_t, updated_residuals
+        if rotation_delta <= 1e-9 and translation_delta <= 1e-9 * (1.0 + np.linalg.norm(tw)):
+            break
+
+    pred = (Rw @ P.T).T + tw
+    robust_rmse = _alignment_rmse(pred, Q)
+    return {
+        "R": Rw,
+        "t": tw,
+        "pred": pred,
+        "residuals": np.linalg.norm(pred - Q, axis=1),
+        "rmse_all_m": robust_rmse,
+        "mode": f"posyaw_robust_{robust_kernel}",
+        "selected_mask": np.ones(P.shape[0], dtype=bool),
+        "inlier_count": int(P.shape[0]),
+        "rejected_count": 0,
+        "rejection_ratio": 0.0,
+        "outlier_threshold_m": float(info["delta_m"]),
+        "robust_available": True,
+        "standard_rmse_all_m": float(standard["rmse_all_m"]),
+        "standard_rmse_on_inliers_m": float(standard["rmse_all_m"]),
+        "robust_rmse_inliers_m": float(robust_rmse),
+        "robust_rmse_all_m": float(robust_rmse),
+        "kernel": robust_kernel,
+        **info,
+        "yaw_deg": float(np.degrees(np.arctan2(Rw[1, 0], Rw[0, 0]))),
+    }
+
+
+def _solve_world_alignment_robust_kernel(
+    P: np.ndarray,
+    Q: np.ndarray,
+    *,
+    robust_delta_m: float | None = None,
+    robust_max_iterations: int = 3,
+    robust_kernel: str = "huber",
+) -> dict[str, object]:
+    """Weighted SE(3) alignment using Huber IRLS without hard rejection."""
+    P = np.asarray(P, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    standard = _solve_world_alignment_standard(P, Q)
+    Rw, tw, info = solve_world_alignment_robust(
+        P,
+        Q,
+        robust_kernel=robust_kernel,
+        robust_delta_m=robust_delta_m,
+        robust_max_iterations=robust_max_iterations,
+        return_info=True,
+    )
+    pred = (np.asarray(Rw) @ P.T).T + np.asarray(tw)
+    robust_rmse = _alignment_rmse(pred, Q)
+    return {
+        "R": np.asarray(Rw, dtype=float),
+        "t": np.asarray(tw, dtype=float),
+        "pred": pred,
+        "residuals": np.linalg.norm(pred - Q, axis=1),
+        "rmse_all_m": robust_rmse,
+        "mode": f"robust_{robust_kernel}",
+        "selected_mask": np.ones(P.shape[0], dtype=bool),
+        "inlier_count": int(P.shape[0]),
+        "rejected_count": 0,
+        "rejection_ratio": 0.0,
+        "outlier_threshold_m": float(info["delta_m"]),
+        "robust_available": True,
+        "standard_rmse_all_m": float(standard["rmse_all_m"]),
+        "standard_rmse_on_inliers_m": float(standard["rmse_all_m"]),
+        "robust_rmse_inliers_m": float(robust_rmse),
+        "robust_rmse_all_m": float(robust_rmse),
+        "kernel": robust_kernel,
+        **info,
     }
 
 
@@ -401,25 +570,48 @@ def _select_motion_stable_prefix_window(
     min_prefix = max(int(min_prefix_len), int(np.ceil(float(min_prefix_ratio) * float(n))))
     start_scan = min(max(0, min_prefix - 1), max(0, trans_n - win))
     cut_transition = None
-    for start in range(start_scan, trans_n - win + 1):
-        stop = start + win
-        ref_win = ref_step[start:stop]
-        est_win = est_step[start:stop]
-        finite_win = finite[start:stop]
-        bad_fraction = float(np.mean(bad_transition[start:stop]))
-        if np.any(finite_win):
-            ref_med = float(np.median(ref_win[finite_win]))
-            est_med = float(np.median(est_win[finite_win]))
-        else:
-            ref_med = 0.0
-            est_med = float("inf")
-        window_limit = max(
-            float(max_window_step_m),
-            float(max_window_ratio) * max(ref_med, 1e-3),
+    scan_count = trans_n - win + 1
+    # Most benchmark trajectories are finite and modest in size.  A rolling
+    # view removes the Python loop while the size guard avoids materializing a
+    # very large temporary for full-rate trajectories.
+    vectorized = bool(np.all(finite) and scan_count * win <= 5_000_000)
+    if vectorized:
+        ref_medians = np.median(sliding_window_view(ref_step, win), axis=1)
+        est_medians = np.median(sliding_window_view(est_step, win), axis=1)
+        bad_fractions = np.mean(
+            sliding_window_view(bad_transition, win), axis=1
         )
-        if bad_fraction >= float(max_bad_fraction) or est_med > window_limit:
-            cut_transition = start
-            break
+        window_limits = np.maximum(
+            float(max_window_step_m),
+            float(max_window_ratio) * np.maximum(ref_medians, 1e-3),
+        )
+        candidates = np.flatnonzero(
+            (bad_fractions >= float(max_bad_fraction))
+            | (est_medians > window_limits)
+        )
+        candidates = candidates[candidates >= int(start_scan)]
+        if candidates.size:
+            cut_transition = int(candidates[0])
+    else:
+        for start in range(start_scan, scan_count):
+            stop = start + win
+            ref_win = ref_step[start:stop]
+            est_win = est_step[start:stop]
+            finite_win = finite[start:stop]
+            bad_fraction = float(np.mean(bad_transition[start:stop]))
+            if np.any(finite_win):
+                ref_med = float(np.median(ref_win[finite_win]))
+                est_med = float(np.median(est_win[finite_win]))
+            else:
+                ref_med = 0.0
+                est_med = float("inf")
+            window_limit = max(
+                float(max_window_step_m),
+                float(max_window_ratio) * max(ref_med, 1e-3),
+            )
+            if bad_fraction >= float(max_bad_fraction) or est_med > window_limit:
+                cut_transition = start
+                break
 
     if cut_transition is None:
         return mask_all, base_info
@@ -572,13 +764,38 @@ def _solve_extrinsic_world_candidate(
     pr_solve,
     qr_solve,
     global_align_mode: str = "se3",
+    robust_kernel: str = "none",
+    robust_kernel_delta_m: float | None = None,
+    robust_kernel_max_iterations: int = 3,
+    precomputed_stable_mask: np.ndarray | None = None,
+    precomputed_stable_info: dict[str, float] | None = None,
+    precomputed_motion_mask: np.ndarray | None = None,
+    precomputed_motion_info: dict[str, float] | None = None,
+    precomputed_qr_mats: np.ndarray | None = None,
+    precomputed_qr_solve_mats: np.ndarray | None = None,
 ):
-    Rr_mats = R.from_quat(qr_sync).as_matrix()
-    Rr_mats_solve = R.from_quat(qr_solve).as_matrix()
+    Rr_mats = (
+        np.asarray(precomputed_qr_mats, dtype=float)
+        if precomputed_qr_mats is not None
+        else R.from_quat(qr_sync).as_matrix()
+    )
+    Rr_mats_solve = (
+        np.asarray(precomputed_qr_solve_mats, dtype=float)
+        if precomputed_qr_solve_mats is not None
+        else R.from_quat(qr_solve).as_matrix()
+    )
     n_solve = int(np.asarray(pos_gt_solve).shape[0])
     full_mask = np.ones(n_solve, dtype=bool)
-    stable_mask, stable_info = _select_stable_alignment_window(pos_gt_solve, pr_solve)
-    motion_mask, motion_info = _select_motion_stable_prefix_window(pos_gt_solve, pr_solve)
+    if precomputed_stable_mask is None or precomputed_stable_info is None:
+        stable_mask, stable_info = _select_stable_alignment_window(pos_gt_solve, pr_solve)
+    else:
+        stable_mask = np.asarray(precomputed_stable_mask, dtype=bool).copy()
+        stable_info = dict(precomputed_stable_info)
+    if precomputed_motion_mask is None or precomputed_motion_info is None:
+        motion_mask, motion_info = _select_motion_stable_prefix_window(pos_gt_solve, pr_solve)
+    else:
+        motion_mask = np.asarray(precomputed_motion_mask, dtype=bool).copy()
+        motion_info = dict(precomputed_motion_info)
     anchor_mask = (
         stable_mask
         if float(stable_info.get("step3_stable_segment_used", 0.0)) == 1.0
@@ -602,12 +819,16 @@ def _solve_extrinsic_world_candidate(
         else:
             info["step3_stable_solve_ratio"] = float(limited_solve_count / max(1, n_solve))
 
-        t_variant = solve_extrinsic_translation(
+        t_variant, translation_kernel_info = solve_extrinsic_translation(
             pos_gt_solve[solve_mask],
             quat_gt_solve[solve_mask],
             pr_solve[solve_mask],
             qr_solve[solve_mask],
             R_calc,
+            robust_kernel=robust_kernel,
+            robust_delta_m=robust_kernel_delta_m,
+            robust_max_iterations=robust_kernel_max_iterations,
+            return_info=True,
         )
         extrinsic_offset = R_calc.T @ np.asarray(t_variant, dtype=float)
         pr_corr = np.asarray(pr_sync, dtype=float) - np.einsum(
@@ -619,7 +840,32 @@ def _solve_extrinsic_world_candidate(
             extrinsic_offset,
         )
 
-        if str(global_align_mode).lower() in {"posyaw", "epa_posyaw"}:
+        if str(robust_kernel).lower() in {"huber", "cauchy"} and str(global_align_mode).lower() in {
+            "posyaw",
+            "epa_posyaw",
+        }:
+            world_fit = _solve_world_alignment_posyaw_robust_kernel(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+                robust_delta_m=robust_kernel_delta_m,
+                robust_max_iterations=robust_kernel_max_iterations,
+                robust_kernel=str(robust_kernel).lower(),
+            )
+        elif str(robust_kernel).lower() in {"huber", "cauchy"}:
+            world_fit = _solve_world_alignment_robust_kernel(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+                robust_delta_m=robust_kernel_delta_m,
+                robust_max_iterations=robust_kernel_max_iterations,
+                robust_kernel=str(robust_kernel).lower(),
+            )
+        elif str(robust_kernel).lower() == "standard":
+            world_fit = _standard_world_fit_with_info(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+                posyaw=str(global_align_mode).lower() in {"posyaw", "epa_posyaw"},
+            )
+        elif str(global_align_mode).lower() in {"posyaw", "epa_posyaw"}:
             world_fit = _solve_world_alignment_posyaw_robust_trimmed(
                 pr_corr_solve[solve_mask],
                 pos_gt_solve[solve_mask],
@@ -668,6 +914,25 @@ def _solve_extrinsic_world_candidate(
             "step3_rejection_ratio": float(world_fit["rejection_ratio"]),
             "step3_outlier_threshold_m": float(world_fit["outlier_threshold_m"]),
             "step3_robust_available": bool(world_fit["robust_available"]),
+            "step3_kernel": str(world_fit.get("kernel", "none")),
+            "step3_kernel_iterations": int(world_fit.get("iterations", 0)),
+            "step3_kernel_delta_m": float(world_fit.get("delta_m", float("nan"))),
+            "step3_kernel_downweighted_count": int(
+                world_fit.get("downweighted_count", 0)
+            ),
+            "step3_kernel_effective_weight_fraction": float(
+                world_fit.get("effective_weight_fraction", 1.0)
+            ),
+            "step2_translation_kernel": str(translation_kernel_info.get("kernel", "none")),
+            "step2_translation_kernel_iterations": int(
+                translation_kernel_info.get("iterations", 0)
+            ),
+            "step2_translation_kernel_delta_m": float(
+                translation_kernel_info.get("delta_m", float("nan"))
+            ),
+            "step2_translation_kernel_downweighted_count": int(
+                translation_kernel_info.get("downweighted_count", 0)
+            ),
             **info,
         }
 
@@ -841,8 +1106,17 @@ def _solve_extrinsic_and_world_alignment(
     pr_solve,
     qr_solve,
     global_align_mode: str = "se3",
+    robust_kernel: str = "none",
+    robust_kernel_delta_m: float | None = None,
+    robust_kernel_max_iterations: int = 3,
 ):
     R_base = solve_extrinsic_rotation(quat_gt_solve, qr_solve)
+    # These masks depend only on the paired positions, not on the four
+    # extrinsic-rotation candidates; compute them once and reuse them.
+    stable_mask, stable_info = _select_stable_alignment_window(pos_gt_solve, pr_solve)
+    motion_mask, motion_info = _select_motion_stable_prefix_window(pos_gt_solve, pr_solve)
+    qr_mats = R.from_quat(qr_sync).as_matrix()
+    qr_solve_mats = R.from_quat(qr_solve).as_matrix()
     candidates = []
     for candidate_name, R_candidate in _extrinsic_rotation_candidates(R_base):
         candidates.append(
@@ -856,6 +1130,15 @@ def _solve_extrinsic_and_world_alignment(
                 pr_solve=pr_solve,
                 qr_solve=qr_solve,
                 global_align_mode=global_align_mode,
+                robust_kernel=robust_kernel,
+                robust_kernel_delta_m=robust_kernel_delta_m,
+                robust_kernel_max_iterations=robust_kernel_max_iterations,
+                precomputed_stable_mask=stable_mask,
+                precomputed_stable_info=stable_info,
+                precomputed_motion_mask=motion_mask,
+                precomputed_motion_info=motion_info,
+                precomputed_qr_mats=qr_mats,
+                precomputed_qr_solve_mats=qr_solve_mats,
             )
         )
     selected = _select_extrinsic_world_candidate(candidates)
@@ -910,7 +1193,14 @@ def _solve_extrinsic_and_world_alignment(
             "step3_alignment_mode_code": float(
                 1.0
                 if str(selected["step3_alignment_mode"])
-                in {"robust_trimmed", "posyaw_robust_trimmed"}
+                in {
+                    "robust_trimmed",
+                    "posyaw_robust_trimmed",
+                    "robust_huber",
+                    "posyaw_robust_huber",
+                    "robust_cauchy",
+                    "posyaw_robust_cauchy",
+                }
                 else 0.0
             ),
             "step3_standard_rmse_m": float(selected["step3_standard_rmse_m"]),
@@ -922,6 +1212,29 @@ def _solve_extrinsic_and_world_alignment(
             "step3_rejection_ratio": float(selected["step3_rejection_ratio"]),
             "step3_outlier_threshold_m": float(selected["step3_outlier_threshold_m"]),
             "step3_robust_available": float(bool(selected["step3_robust_available"])),
+            "step3_kernel": str(selected.get("step3_kernel", "none")),
+            "step3_kernel_iterations": float(selected.get("step3_kernel_iterations", 0)),
+            "step3_kernel_delta_m": float(
+                selected.get("step3_kernel_delta_m", float("nan"))
+            ),
+            "step3_kernel_downweighted_count": float(
+                selected.get("step3_kernel_downweighted_count", 0)
+            ),
+            "step3_kernel_effective_weight_fraction": float(
+                selected.get("step3_kernel_effective_weight_fraction", 1.0)
+            ),
+            "step2_translation_kernel": str(
+                selected.get("step2_translation_kernel", "none")
+            ),
+            "step2_translation_kernel_iterations": float(
+                selected.get("step2_translation_kernel_iterations", 0)
+            ),
+            "step2_translation_kernel_delta_m": float(
+                selected.get("step2_translation_kernel_delta_m", float("nan"))
+            ),
+            "step2_translation_kernel_downweighted_count": float(
+                selected.get("step2_translation_kernel_downweighted_count", 0)
+            ),
             "step3_stable_segment_used": float(selected["step3_stable_segment_used"]),
             "step3_stable_segment_count": float(selected["step3_stable_segment_count"]),
             "step3_stable_solve_count": float(selected["step3_stable_solve_count"]),

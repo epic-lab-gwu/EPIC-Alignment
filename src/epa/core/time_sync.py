@@ -1,13 +1,31 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.interpolate import interp1d
 from scipy.signal import correlate
 
 from .association import _associate_gt_est, _offset_match_diagnostics
 from .calibration import solve_world_alignment
 from .math_utils import rmse
 from .time_alignment import compute_psr, get_angular_velocity_norm, matching_time_indices
+
+
+def _linear_interp_extrapolate(x, y, query):
+    """Fast 1-D linear interpolation with scipy.interp1d-style extrapolation."""
+    x = np.asarray(x, dtype=float).reshape(-1)
+    y = np.asarray(y, dtype=float).reshape(-1)
+    query = np.asarray(query, dtype=float)
+    if x.size < 2 or y.size != x.size:
+        raise ValueError("Linear interpolation requires at least two paired samples.")
+    result = np.interp(query, x, y)
+    left_slope = (y[1] - y[0]) / (x[1] - x[0])
+    right_slope = (y[-1] - y[-2]) / (x[-1] - x[-2])
+    left = query < x[0]
+    right = query > x[-1]
+    if np.any(left):
+        result[left] = y[0] + (query[left] - x[0]) * left_slope
+    if np.any(right):
+        result[right] = y[-1] + (query[right] - x[-1]) * right_slope
+    return result
 
 
 def _offset_grid(min_offset_s: float, max_offset_s: float, step_s: float):
@@ -163,8 +181,8 @@ def _run_time_alignment(
             "Not enough valid resampled points after applying interpolation safety margins."
         )
 
-    sig_gt = interp1d(t_gt_mid, om_gt, kind="linear")(t_uniform)
-    sig_est = interp1d(t_est_mid, om_est, kind="linear")(t_uniform)
+    sig_gt = _linear_interp_extrapolate(t_gt_mid, om_gt, t_uniform)
+    sig_est = _linear_interp_extrapolate(t_est_mid, om_est, t_uniform)
     sig_gt -= np.mean(sig_gt)
     sig_est -= np.mean(sig_est)
     if (not np.all(np.isfinite(sig_gt))) or (not np.all(np.isfinite(sig_est))):
@@ -212,12 +230,9 @@ def _run_time_alignment(
         return float(offsets_s[zero_peak_idx]), zero_peak_idx
 
     def _omega_rmse_after_offset(offset_s: float) -> float:
-        sig_est_shifted_for_offset = interp1d(
-            t_uniform - float(offset_s),
-            sig_est,
-            kind="linear",
-            fill_value="extrapolate",
-        )(t_uniform)
+        sig_est_shifted_for_offset = _linear_interp_extrapolate(
+            t_uniform - float(offset_s), sig_est, t_uniform
+        )
         return rmse(sig_est_shifted_for_offset - sig_gt)
 
     match_diag = _count_matches_for_offset(calculated_offset)
@@ -314,12 +329,9 @@ def _run_time_alignment(
             print(step1_force_reason)
             print(f"Continuing with highest-confidence candidate offset: {calculated_offset:.4f} s")
 
-    sig_est_shifted = interp1d(
-        t_uniform - calculated_offset,
-        sig_est,
-        kind="linear",
-        fill_value="extrapolate",
-    )(t_uniform)
+    sig_est_shifted = _linear_interp_extrapolate(
+        t_uniform - calculated_offset, sig_est, t_uniform
+    )
 
     corr_norm_peak = corr[peak_idx] / (np.linalg.norm(sig_gt) * np.linalg.norm(sig_est) + 1e-12)
     psr = compute_psr(corr, peak_idx, guard_bins=max(1, int(0.02 / dt_resample)))

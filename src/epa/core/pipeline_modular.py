@@ -279,6 +279,9 @@ def run_pipeline_modular(args, script_dir: Path):
     requested_eval_align_alias = str(getattr(args, "eval_align", "none")).strip().lower()
     requested_eval_align_mode = _public_eval_align_mode(requested_eval_align_alias)
     step3_global_align_mode = "posyaw" if requested_eval_align_mode in {"posyaw", "epa_posyaw"} else "se3"
+    robust_kernel = str(getattr(args, "robust_kernel", "none") or "none").strip().lower()
+    robust_kernel_delta_m = getattr(args, "robust_kernel_delta_m", None)
+    robust_kernel_max_iterations = int(getattr(args, "robust_kernel_max_iterations", 3))
 
     print("\n--- STEP 2: SOLVING EXTRINSICS ---")
     solved = _solve_extrinsic_and_world_alignment(
@@ -289,6 +292,9 @@ def run_pipeline_modular(args, script_dir: Path):
         pr_solve=pr_solve,
         qr_solve=qr_solve,
         global_align_mode=step3_global_align_mode,
+        robust_kernel=robust_kernel,
+        robust_kernel_delta_m=robust_kernel_delta_m,
+        robust_kernel_max_iterations=robust_kernel_max_iterations,
     )
     R_calc = solved["R_calc"]
     t_calc = solved["t_calc"]
@@ -687,6 +693,11 @@ def run_pipeline_modular(args, script_dir: Path):
             "eval_align": requested_eval_align_mode,
             "eval_align_requested_alias": requested_eval_align_alias,
             "eval_align_effective": eval_align_mode,
+            "robust_kernel": robust_kernel,
+            "robust_kernel_delta_m": (
+                None if robust_kernel_delta_m is None else float(robust_kernel_delta_m)
+            ),
+            "robust_kernel_max_iterations": robust_kernel_max_iterations,
             "eval_n_to_align": eval_n_to_align,
             "eval_project_to_plane": eval_project_to_plane,
             "overlap_selection": overlap_info,
