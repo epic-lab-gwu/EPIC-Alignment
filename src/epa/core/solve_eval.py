@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.interpolate import interp1d
 
-from .time_alignment import interpolate_quat_linear, interpolate_quat_slerp
+from .time_alignment import (
+    interpolate_linear_extrapolate,
+    interpolate_quat_linear,
+    interpolate_quat_slerp,
+)
 
 
 def _downsample_by_max_hz(tvals, pos, quat, max_hz):
@@ -118,18 +121,15 @@ def _map_est_to_ref_nearest(
     if t_est_shift.size == 0:
         raise ValueError("Empty estimation timestamps for nearest mapping.")
 
-    idx = np.empty(t_ref.size, dtype=int)
-    j = np.searchsorted(t_est_shift, t_ref, side="left")
-    for i, k in enumerate(j):
-        if k <= 0:
-            idx[i] = 0
-            continue
-        if k >= t_est_shift.size:
-            idx[i] = t_est_shift.size - 1
-            continue
-        d0 = abs(t_ref[i] - t_est_shift[k - 1])
-        d1 = abs(t_ref[i] - t_est_shift[k])
-        idx[i] = (k - 1) if d0 <= d1 else k
+    insert_ids = np.searchsorted(t_est_shift, t_ref, side="left")
+    left_ids = np.clip(insert_ids - 1, 0, t_est_shift.size - 1)
+    right_ids = np.clip(insert_ids, 0, t_est_shift.size - 1)
+    left_diff = np.abs(t_ref - t_est_shift[left_ids])
+    right_diff = np.abs(t_ref - t_est_shift[right_ids])
+    choose_left = (insert_ids >= t_est_shift.size) | (
+        (insert_ids > 0) & (left_diff <= right_diff)
+    )
+    idx = np.where(choose_left, left_ids, right_ids)
 
     return pos_est[idx], quat_est[idx]
 
@@ -168,8 +168,7 @@ def _prepare_solve_eval_trajectories(
         downsample_hz,
     )
 
-    interp_p = interp1d(t_est_sync, pos_est, axis=0, fill_value="extrapolate")
-    pr_sync = interp_p(t_gt_out)
+    pr_sync = interpolate_linear_extrapolate(t_est_sync, pos_est, t_gt_out)
     if str(quat_interp) == "slerp":
         qr_sync = interpolate_quat_slerp(t_est_sync, quat_est, t_gt_out)
     else:

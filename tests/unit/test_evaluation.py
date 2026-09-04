@@ -5,6 +5,7 @@ import pytest
 from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import (
+    apply_input_coverage_to_success,
     build_rpe_pairs,
     compute_ape,
     compute_rpe,
@@ -12,9 +13,77 @@ from epa.core.evaluation import (
     compute_valid_segment_metrics,
     estimate_knee_threshold,
     normalize_pose_relation,
+    rpe_pairs_by_path,
+    rpe_pairs_by_time,
     resolve_drift_thresholds,
     resolve_success_threshold,
 )
+
+
+def test_complete_reference_sr_penalizes_truncated_but_locally_perfect_run() -> None:
+    success = {
+        "success_rate_distance": 1.0,
+        "success_rate_time": 1.0,
+        "raw_success_rate_distance": 1.0,
+        "raw_success_rate_time": 1.0,
+        "valid_distance_m": 10.0,
+        "total_distance_m": 10.0,
+        "valid_time_s": 20.0,
+        "total_time_s": 20.0,
+        "raw_valid_distance_m": 10.0,
+        "raw_valid_time_s": 20.0,
+        "sr_reliability_status": "ok",
+    }
+    coverage = {
+        "coverage_status": "failed",
+        "coverage_hard_reasons": ["path_coverage_critical"],
+        "coverage_soft_reasons": [],
+        "reference_path_length_m": 100.0,
+        "reference_duration_s": 80.0,
+        "path_coverage_ratio": 0.1,
+        "temporal_coverage_ratio": 0.25,
+    }
+
+    apply_input_coverage_to_success(success, coverage)
+
+    assert success["local_success_rate_distance"] == 1.0
+    assert success["local_success_rate_time"] == 1.0
+    assert success["complete_success_rate_distance"] == 0.1
+    assert success["complete_success_rate_time"] == 0.25
+    assert success["success_rate_distance"] == 0.1
+    assert success["success_rate_time"] == 0.25
+    assert success["success_rate_scope"] == "complete_reference"
+    assert success["sr_reliability_status"] == "failed"
+
+
+def test_complete_reference_sr_matches_local_sr_at_full_coverage() -> None:
+    success = {
+        "success_rate_distance": 0.8,
+        "success_rate_time": 0.75,
+        "raw_success_rate_distance": 0.9,
+        "raw_success_rate_time": 0.85,
+        "valid_distance_m": 8.0,
+        "total_distance_m": 10.0,
+        "valid_time_s": 15.0,
+        "total_time_s": 20.0,
+        "raw_valid_distance_m": 9.0,
+        "raw_valid_time_s": 17.0,
+        "sr_reliability_status": "ok",
+    }
+    coverage = {
+        "coverage_status": "ok",
+        "coverage_hard_reasons": [],
+        "coverage_soft_reasons": [],
+        "reference_path_length_m": 10.0,
+        "reference_duration_s": 20.0,
+        "path_coverage_ratio": 1.0,
+        "temporal_coverage_ratio": 1.0,
+    }
+
+    apply_input_coverage_to_success(success, coverage)
+
+    assert success["success_rate_distance"] == success["local_success_rate_distance"] == 0.8
+    assert success["success_rate_time"] == success["local_success_rate_time"] == 0.75
 
 
 def _identity_traj(n: int = 6) -> tuple[np.ndarray, np.ndarray]:
@@ -22,6 +91,46 @@ def _identity_traj(n: int = 6) -> tuple[np.ndarray, np.ndarray]:
     pos[:, 0] = np.arange(n, dtype=float)
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=float), (n, 1))
     return pos, quat
+
+
+def _legacy_rpe_pairs_by_path(poses, delta, tol=0.0):
+    positions = np.array([pose[:3, 3] for pose in poses])
+    distances = np.zeros(positions.shape[0], dtype=float)
+    if positions.shape[0] > 1:
+        distances[1:] = np.cumsum(np.linalg.norm(np.diff(positions, axis=0), axis=1))
+    pairs = []
+    for start in range(distances.size - 1):
+        offset = start + 1
+        distances_from_start = distances[offset:] - distances[start]
+        candidate = int(np.argmin(np.abs(distances_from_start - delta)))
+        if np.abs(distances_from_start[candidate] - delta) <= tol:
+            pairs.append((start, candidate + offset))
+    return pairs
+
+
+def _legacy_rpe_pairs_by_time(timestamps, delta, tol=0.0):
+    stamps = np.asarray(timestamps, dtype=float).reshape(-1)
+
+    def nearest_after(start_index: int, target: float) -> int | None:
+        insertion = int(np.searchsorted(stamps, target, side="left"))
+        candidates = [
+            index
+            for index in (insertion - 1, insertion, insertion + 1)
+            if start_index < index < stamps.size
+        ]
+        if not candidates:
+            return None
+        best = min(candidates, key=lambda index: abs(float(stamps[index]) - float(target)))
+        if abs(float(stamps[best]) - float(target)) > tol:
+            return None
+        return best
+
+    pairs = []
+    for start in range(stamps.size - 1):
+        end = nearest_after(start, float(stamps[start]) + float(delta))
+        if end is not None:
+            pairs.append((start, end))
+    return pairs
 
 
 def test_compute_ape_zero_for_identical_trajectories() -> None:
@@ -47,6 +156,36 @@ def test_build_rpe_pairs_rejects_non_integer_frame_delta() -> None:
 
     with pytest.raises(ValueError):
         build_rpe_pairs(poses, delta=1.5, delta_unit="f")
+
+
+@pytest.mark.parametrize("delta,tol", [(0.0, 0.0), (0.4, 0.05), (1.5, 0.2), (20.0, 0.5)])
+def test_rpe_pairs_by_path_vectorization_matches_legacy_scalar_oracle(
+    delta: float, tol: float
+) -> None:
+    rng = np.random.default_rng(20260907)
+    steps = rng.normal(size=(180, 3))
+    steps[20:25] = 0.0
+    positions = np.cumsum(steps * rng.uniform(0.0, 0.08, size=(180, 1)), axis=0)
+    poses = np.repeat(np.eye(4, dtype=float)[None, :, :], positions.shape[0], axis=0)
+    poses[:, :3, 3] = positions
+
+    expected = _legacy_rpe_pairs_by_path(poses, delta, tol=tol)
+    actual = rpe_pairs_by_path(poses, delta, tol=tol, all_pairs=True)
+
+    assert actual == expected
+
+
+@pytest.mark.parametrize("delta,tol", [(0.01, 0.0), (0.2, 0.01), (1.0, 0.1), (50.0, 1.0)])
+def test_rpe_pairs_by_time_vectorization_matches_legacy_scalar_oracle(
+    delta: float, tol: float
+) -> None:
+    rng = np.random.default_rng(20260909)
+    timestamps = np.cumsum(rng.uniform(0.005, 0.08, size=500))
+
+    expected = _legacy_rpe_pairs_by_time(timestamps, delta, tol=tol)
+    actual = rpe_pairs_by_time(timestamps, delta, tol=tol, all_pairs=True)
+
+    assert actual == expected
 
 
 def test_compute_rpe_seconds_unit_uses_time_pairs() -> None:

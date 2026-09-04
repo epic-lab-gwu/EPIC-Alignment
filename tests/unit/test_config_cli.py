@@ -46,6 +46,15 @@ def test_epa_cli_exposes_public_mode_and_maps_to_eval_align() -> None:
     assert args.eval_align == "sim3"
 
 
+@pytest.mark.parametrize("mode", ["se3", "se3r", "se3-original", "se3-orginal"])
+def test_epa_cli_accepts_new_and_original_se3_names(mode: str) -> None:
+    parser = build_parser()
+    args = _normalize_mode_args(parser, parser.parse_args(["--mode", mode]))
+
+    assert args.mode == mode
+    assert args.eval_align == mode
+
+
 def test_epa_cli_keeps_hidden_eval_align_for_compatibility() -> None:
     parser = build_parser()
     args = _normalize_mode_args(parser, parser.parse_args(["--eval-align", "epica_sim3_stable"]))

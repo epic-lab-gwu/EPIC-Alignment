@@ -97,6 +97,161 @@ def _segment_heading_angles_deg(pos_ref, pos_est):
     return np.degrees(np.arccos(cosang))
 
 
+def _trajectory_scale_metrics(pos_ref) -> dict:
+    """Return scale descriptors used by dataset-adaptive diagnostics."""
+    pref = np.asarray(pos_ref, dtype=float)
+    if pref.ndim != 2 or pref.shape[0] < 2 or pref.shape[1] != 3:
+        return {
+            "reference_path_length_m": float("nan"),
+            "reference_bbox_diag_m": float("nan"),
+            "reference_characteristic_scale_m": float("nan"),
+        }
+    path_length = float(cum_distance(pref)[-1])
+    bbox_diag = float(np.linalg.norm(np.max(pref, axis=0) - np.min(pref, axis=0)))
+    characteristic = float(max(bbox_diag, 0.1 * path_length, 1e-6))
+    return {
+        "reference_path_length_m": path_length,
+        "reference_bbox_diag_m": bbox_diag,
+        "reference_characteristic_scale_m": characteristic,
+    }
+
+
+def _timestamp_gap_metrics(tvals) -> dict:
+    tvals = np.asarray(tvals, dtype=float).reshape(-1)
+    finite = tvals[np.isfinite(tvals)]
+    if finite.size < 2:
+        return {
+            "sample_count": int(finite.size),
+            "duration_s": 0.0,
+            "median_dt_s": float("nan"),
+            "gap_threshold_s": float("nan"),
+            "internal_gap_duration_s": 0.0,
+            "internal_gap_ratio": 0.0,
+            "largest_gap_s": float("nan"),
+        }
+    finite = np.sort(finite)
+    dts = np.diff(finite)
+    positive = dts[np.isfinite(dts) & (dts > 1e-9)]
+    duration = float(finite[-1] - finite[0])
+    if positive.size == 0 or duration <= 0.0:
+        return {
+            "sample_count": int(finite.size),
+            "duration_s": max(0.0, duration),
+            "median_dt_s": float("nan"),
+            "gap_threshold_s": float("nan"),
+            "internal_gap_duration_s": 0.0,
+            "internal_gap_ratio": 0.0,
+            "largest_gap_s": float("nan"),
+        }
+    median_dt = float(np.median(positive))
+    gap_threshold = float(max(5.0 * median_dt, median_dt + 1e-6))
+    gap_mask = positive > gap_threshold
+    missing = float(np.sum(np.maximum(positive[gap_mask] - median_dt, 0.0)))
+    return {
+        "sample_count": int(finite.size),
+        "duration_s": duration,
+        "median_dt_s": median_dt,
+        "gap_threshold_s": gap_threshold,
+        "internal_gap_duration_s": missing,
+        "internal_gap_ratio": float(missing / max(duration, 1e-12)),
+        "largest_gap_s": float(np.max(positive)),
+    }
+
+
+def _compute_input_coverage_diagnostics(
+    *,
+    t_ref,
+    pos_ref,
+    t_est,
+    offset_est_s: float,
+    warning_ratio: float = 0.90,
+    critical_ratio: float = 0.50,
+    gap_warning_ratio: float = 0.05,
+    gap_critical_ratio: float = 0.25,
+) -> dict:
+    """Audit input support before overlap-only solve/evaluation cropping."""
+    tref = np.asarray(t_ref, dtype=float).reshape(-1)
+    pref = np.asarray(pos_ref, dtype=float)
+    test = np.asarray(t_est, dtype=float).reshape(-1) - float(offset_est_s)
+    if tref.size < 2 or test.size < 2 or pref.shape != (tref.size, 3):
+        raise ValueError("Coverage diagnostics require timestamped reference and estimate trajectories.")
+
+    ref_start, ref_end = float(np.min(tref)), float(np.max(tref))
+    est_start, est_end = float(np.min(test)), float(np.max(test))
+    ref_duration = max(0.0, ref_end - ref_start)
+    overlap_start = max(ref_start, est_start)
+    overlap_end = min(ref_end, est_end)
+    overlap_duration = max(0.0, overlap_end - overlap_start)
+    time_ratio = float(overlap_duration / max(ref_duration, 1e-12))
+
+    segment_distance = np.linalg.norm(np.diff(pref, axis=0), axis=1)
+    full_path = float(np.sum(segment_distance))
+    supported_segment = (
+        (tref[:-1] >= overlap_start)
+        & (tref[1:] <= overlap_end)
+        & np.isfinite(segment_distance)
+    )
+    supported_path = float(np.sum(segment_distance[supported_segment]))
+    path_ratio = float(supported_path / max(full_path, 1e-12)) if full_path > 0.0 else time_ratio
+
+    ref_gap = _timestamp_gap_metrics(tref)
+    est_gap = _timestamp_gap_metrics(test)
+    leading_missing = max(0.0, overlap_start - ref_start)
+    trailing_missing = max(0.0, ref_end - overlap_end)
+
+    critical_reasons = []
+    warning_reasons = []
+    if time_ratio < float(critical_ratio):
+        critical_reasons.append("temporal_coverage_critical")
+    elif time_ratio < float(warning_ratio):
+        warning_reasons.append("temporal_coverage_low")
+    if path_ratio < float(critical_ratio):
+        critical_reasons.append("path_coverage_critical")
+    elif path_ratio < float(warning_ratio):
+        warning_reasons.append("path_coverage_low")
+
+    for source, gap in (("reference", ref_gap), ("estimate", est_gap)):
+        ratio = float(gap["internal_gap_ratio"])
+        if ratio >= float(gap_critical_ratio):
+            critical_reasons.append(f"{source}_internal_gap_critical")
+        elif ratio >= float(gap_warning_ratio):
+            warning_reasons.append(f"{source}_internal_gap")
+
+    critical_reasons = list(dict.fromkeys(critical_reasons))
+    warning_reasons = [x for x in dict.fromkeys(warning_reasons) if x not in critical_reasons]
+    status = "failed" if critical_reasons else ("warning" if warning_reasons else "ok")
+    return {
+        "coverage_status": status,
+        "coverage_status_code": 2.0 if status == "failed" else (1.0 if status == "warning" else 0.0),
+        "coverage_hard_reasons": critical_reasons,
+        "coverage_soft_reasons": warning_reasons,
+        "reference_start_s": ref_start,
+        "reference_end_s": ref_end,
+        "estimate_start_aligned_s": est_start,
+        "estimate_end_aligned_s": est_end,
+        "reference_duration_s": ref_duration,
+        "supported_duration_s": overlap_duration,
+        "temporal_coverage_ratio": time_ratio,
+        "reference_path_length_m": full_path,
+        "supported_reference_path_m": supported_path,
+        "path_coverage_ratio": path_ratio,
+        "leading_missing_s": leading_missing,
+        "trailing_missing_s": trailing_missing,
+        "reference_median_dt_s": float(ref_gap["median_dt_s"]),
+        "estimate_median_dt_s": float(est_gap["median_dt_s"]),
+        "reference_internal_gap_duration_s": float(ref_gap["internal_gap_duration_s"]),
+        "reference_internal_gap_ratio": float(ref_gap["internal_gap_ratio"]),
+        "reference_largest_gap_s": float(ref_gap["largest_gap_s"]),
+        "estimate_internal_gap_duration_s": float(est_gap["internal_gap_duration_s"]),
+        "estimate_internal_gap_ratio": float(est_gap["internal_gap_ratio"]),
+        "estimate_largest_gap_s": float(est_gap["largest_gap_s"]),
+        "coverage_warning_ratio": float(warning_ratio),
+        "coverage_critical_ratio": float(critical_ratio),
+        "gap_warning_ratio": float(gap_warning_ratio),
+        "gap_critical_ratio": float(gap_critical_ratio),
+    }
+
+
 def _compute_alignment_quality(
     *,
     t_ref,
@@ -112,6 +267,13 @@ def _compute_alignment_quality(
     good_seg_cv: float,
     good_heading_p90_deg: float,
     partial_min_improve_pct: float,
+    threshold_mode: str = "adaptive",
+    good_rmse_ratio: float = 0.01,
+    partial_rmse_ratio: float = 0.05,
+    critical_rmse_ratio: float = 0.10,
+    good_rmse_floor_m: float = 0.05,
+    partial_rmse_floor_m: float = 0.25,
+    critical_rmse_floor_m: float = 1.0,
 ):
     err = np.linalg.norm(np.asarray(pos_step3, dtype=float) - np.asarray(pos_ref, dtype=float), axis=1)
     ranges = _segment_ranges_by_time(
@@ -135,19 +297,30 @@ def _compute_alignment_quality(
     heading_p90 = float(np.percentile(heading_deg, 90)) if heading_deg.size else float(np.nan)
     heading_median = float(np.median(heading_deg)) if heading_deg.size else float(np.nan)
 
+    scale_metrics = _trajectory_scale_metrics(pos_ref)
+    characteristic_scale = float(scale_metrics["reference_characteristic_scale_m"])
+    adaptive = str(threshold_mode).strip().lower() == "adaptive"
+    if adaptive and np.isfinite(characteristic_scale):
+        good_rmse_effective = max(float(good_rmse_floor_m), float(good_rmse_ratio) * characteristic_scale)
+        partial_rmse_effective = max(float(partial_rmse_floor_m), float(partial_rmse_ratio) * characteristic_scale)
+        critical_rmse_effective = max(float(critical_rmse_floor_m), float(critical_rmse_ratio) * characteristic_scale)
+    else:
+        good_rmse_effective = float(good_rmse_m)
+        partial_rmse_effective = float(partial_rmse_m)
+        critical_rmse_effective = max(float(partial_rmse_m), 10.0)
+
     improve_pct = float((raw_rmse_m - step3_rmse_m) / (raw_rmse_m + 1e-12) * 100.0)
     is_good = (
         np.isfinite(step3_rmse_m)
         and np.isfinite(seg_rmse_cv)
         and np.isfinite(heading_p90)
-        and step3_rmse_m <= good_rmse_m
+        and step3_rmse_m <= good_rmse_effective
         and seg_rmse_cv <= good_seg_cv
         and heading_p90 <= good_heading_p90_deg
     )
     is_partial = (
         np.isfinite(step3_rmse_m)
-        and np.isfinite(improve_pct)
-        and (step3_rmse_m <= partial_rmse_m or improve_pct >= partial_min_improve_pct)
+        and step3_rmse_m <= partial_rmse_effective
     )
     if is_good:
         label = "good_align"
@@ -163,12 +336,22 @@ def _compute_alignment_quality(
         "quality_label_code": float(label_code),
         "step3_rmse_m": float(step3_rmse_m),
         "raw_to_step3_improve_pct": float(improve_pct),
+        "recovery_sufficient_code": 1.0 if improve_pct >= float(partial_min_improve_pct) else 0.0,
+        "recovery_min_improve_pct": float(partial_min_improve_pct),
         "segment_count": float(seg_rmse.size),
         "segment_rmse_mean_m": float(seg_rmse_mean),
         "segment_rmse_std_m": float(seg_rmse_std),
         "segment_rmse_cv": float(seg_rmse_cv),
         "heading_median_deg": float(heading_median),
         "heading_p90_deg": float(heading_p90),
+        "threshold_mode_code": 1.0 if adaptive else 0.0,
+        "good_rmse_threshold_m": float(good_rmse_effective),
+        "partial_rmse_threshold_m": float(partial_rmse_effective),
+        "critical_rmse_threshold_m": float(critical_rmse_effective),
+        "good_rmse_ratio": float(good_rmse_ratio),
+        "partial_rmse_ratio": float(partial_rmse_ratio),
+        "critical_rmse_ratio": float(critical_rmse_ratio),
+        **scale_metrics,
         "_quality_label": label,
     }
 
@@ -502,6 +685,7 @@ def _build_user_alert(
     quality_label: str,
     rigid_label: str,
     rigid_reasons: str,
+    alignment_quality: dict | None = None,
 ):
     issues = []
     peak = float(time_metrics.get("xcorr_peak_normalized", np.nan))
@@ -512,12 +696,13 @@ def _build_user_alert(
     step1_forced_candidate = float(time_metrics.get("step1_forced_candidate_code", 0.0))
     step3_rmse = float(traj_metrics.get("ate_rmse_step3_m", np.nan))
     improve_pct = float(traj_metrics.get("ate_rmse_improve_raw_to_step3_pct", np.nan))
-    strong_final_alignment = (
-        np.isfinite(step3_rmse)
-        and np.isfinite(improve_pct)
-        and step3_rmse <= 0.3
-        and improve_pct >= 80.0
-    )
+    alignment_quality = alignment_quality if isinstance(alignment_quality, dict) else {}
+    good_rmse = float(alignment_quality.get("good_rmse_threshold_m", 0.5))
+    critical_rmse = float(alignment_quality.get("critical_rmse_threshold_m", 10.0))
+    ref_dt = float(time_metrics.get("reference_median_dt_s", np.nan))
+    est_dt = float(time_metrics.get("estimate_median_dt_s", np.nan))
+    finite_dts = [value for value in (ref_dt, est_dt) if np.isfinite(value) and value > 0.0]
+    meaningful_offset = max(0.02, 2.0 * max(finite_dts)) if finite_dts else 0.02
 
     if (np.isfinite(peak) and peak < 0.75) or (np.isfinite(psr) and psr < 6.0):
         issues.append("time_alignment_low_confidence")
@@ -525,26 +710,26 @@ def _build_user_alert(
         issues.append("time_alignment_forced_candidate")
     if np.isfinite(match_ratio) and match_ratio < 0.5:
         issues.append("time_overlap_low")
-    if np.isfinite(omega_gain) and omega_gain < 5.0 and np.isfinite(offset_est) and abs(offset_est) > 0.02:
+    if np.isfinite(omega_gain) and omega_gain < 5.0 and np.isfinite(offset_est) and abs(offset_est) > meaningful_offset:
         issues.append("time_alignment_weak_gain")
     if quality_label == "partial_align":
-        if not strong_final_alignment:
-            issues.append("alignment_partial")
+        issues.append("alignment_partial")
     elif quality_label == "poor_align":
         issues.append("alignment_poor")
     if rigid_label != "rigidly_alignable":
-        if not strong_final_alignment:
-            issues.append("rigid_diagnostic_flag")
+        issues.append("rigid_diagnostic_flag")
     rigid_reason_tokens = {tok.strip() for tok in str(rigid_reasons).split(",") if tok.strip()}
     if "scale_mismatch_severe" in rigid_reason_tokens:
         issues.append("scale_mismatch_severe")
-    if np.isfinite(step3_rmse) and step3_rmse > 10.0:
+    if np.isfinite(step3_rmse) and step3_rmse > critical_rmse:
         issues.append("step3_rmse_high")
-    if np.isfinite(improve_pct) and improve_pct < 10.0:
+    if (
+        np.isfinite(improve_pct)
+        and improve_pct < 10.0
+        and np.isfinite(step3_rmse)
+        and step3_rmse > good_rmse
+    ):
         issues.append("step3_improvement_small")
-
-    if strong_final_alignment:
-        issues = [x for x in issues if x in {"scale_mismatch_severe", "step3_rmse_high"}]
 
     critical = any(
         item in issues
@@ -593,9 +778,119 @@ def _build_user_alert(
     return {
         "alert_level_code": float(level_code),
         "alert_count": float(len(issues)),
+        "alert_good_rmse_threshold_m": float(good_rmse),
+        "alert_critical_rmse_threshold_m": float(critical_rmse),
+        "alert_meaningful_offset_threshold_s": float(meaningful_offset),
         "_alert_level": level,
         "_alert_message": message_en,
         "_alert_reasons": "; ".join(reasons_en),
+    }
+
+
+def _build_failure_diagnosis(
+    *,
+    user_alert_level: str,
+    input_coverage: dict,
+    alignment_quality: dict,
+    quality_label: str,
+    rigid_label: str,
+    rigid_reasons: str,
+    case_diagnostics: dict,
+    orientation: dict,
+    sr_reliability: dict,
+) -> dict:
+    """Combine independent diagnostic axes without suppressing their evidence."""
+    hard = []
+    soft = []
+    trajectory_hard = []
+    trajectory_soft = []
+    calibration_reasons = []
+
+    coverage_status = str(input_coverage.get("coverage_status", "ok"))
+    if coverage_status == "failed":
+        reasons = [str(x) for x in input_coverage.get("coverage_hard_reasons", [])]
+        hard.extend(reasons)
+        trajectory_hard.extend(reasons)
+    elif coverage_status == "warning":
+        reasons = [str(x) for x in input_coverage.get("coverage_soft_reasons", [])]
+        soft.extend(reasons)
+        trajectory_soft.extend(reasons)
+
+    step3_rmse = float(alignment_quality.get("step3_rmse_m", np.nan))
+    critical_rmse = float(alignment_quality.get("critical_rmse_threshold_m", np.nan))
+    if np.isfinite(step3_rmse) and np.isfinite(critical_rmse) and step3_rmse > critical_rmse:
+        hard.append("trajectory_error_critical")
+        trajectory_hard.append("trajectory_error_critical")
+    elif quality_label == "poor_align":
+        hard.append("alignment_poor")
+        trajectory_hard.append("alignment_poor")
+    elif quality_label == "partial_align":
+        soft.append("alignment_partial")
+        trajectory_soft.append("alignment_partial")
+
+    rigid_tokens = {token.strip() for token in str(rigid_reasons).split(",") if token.strip()}
+    if "scale_mismatch_severe" in rigid_tokens:
+        hard.append("scale_mismatch_severe")
+        trajectory_hard.append("scale_mismatch_severe")
+    elif rigid_label != "rigidly_alignable":
+        soft.append("rigid_model_mismatch")
+        trajectory_soft.append("rigid_model_mismatch")
+
+    orientation_status = str(orientation.get("orientation_status", "ok"))
+    if orientation_status == "critical":
+        hard.append("orientation_error_critical")
+        trajectory_hard.append("orientation_error_critical")
+    elif orientation_status == "warning":
+        soft.append("orientation_error_warning")
+        trajectory_soft.append("orientation_error_warning")
+
+    sr_status = str(sr_reliability.get("sr_reliability_status", "ok"))
+    if sr_status == "failed":
+        hard.append("sr_unreliable")
+    elif sr_status == "warning":
+        soft.append("sr_warning")
+
+    tags = [str(x) for x in case_diagnostics.get("diagnosis_tags", [])]
+    soft.extend(tags)
+    for tag in tags:
+        if tag.startswith("time_alignment"):
+            calibration_reasons.append(tag)
+        else:
+            trajectory_soft.append(tag)
+    if str(user_alert_level) == "critical":
+        hard.append("user_alert_critical")
+    elif str(user_alert_level) == "warning":
+        soft.append("user_alert_warning")
+
+    hard = list(dict.fromkeys(hard))
+    soft = [reason for reason in dict.fromkeys(soft) if reason not in hard]
+    trajectory_hard = list(dict.fromkeys(trajectory_hard))
+    trajectory_soft = [
+        reason for reason in dict.fromkeys(trajectory_soft) if reason not in trajectory_hard
+    ]
+    calibration_reasons = list(dict.fromkeys(calibration_reasons))
+    level = "critical" if hard else ("warning" if soft else "ok")
+    trajectory_level = (
+        "critical" if trajectory_hard else ("warning" if trajectory_soft else "ok")
+    )
+    return {
+        "failure_diagnosis_level": level,
+        "failure_diagnosis_level_code": 2.0 if level == "critical" else (1.0 if level == "warning" else 0.0),
+        "failure_diagnosis_hard_reasons": hard,
+        "failure_diagnosis_soft_reasons": soft,
+        "failure_diagnosis_reason_count": float(len(hard) + len(soft)),
+        "trajectory_quality": str(quality_label),
+        "trajectory_diagnosis_level": trajectory_level,
+        "trajectory_diagnosis_level_code": (
+            2.0 if trajectory_level == "critical" else (1.0 if trajectory_level == "warning" else 0.0)
+        ),
+        "trajectory_diagnosis_hard_reasons": trajectory_hard,
+        "trajectory_diagnosis_soft_reasons": trajectory_soft,
+        "calibration_confidence": "low" if calibration_reasons else "high",
+        "calibration_confidence_reasons": calibration_reasons,
+        "coverage_reliability": coverage_status,
+        "orientation_reliability": orientation_status,
+        "sr_reliability": sr_status,
     }
 
 

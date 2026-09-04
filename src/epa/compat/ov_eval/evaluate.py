@@ -16,6 +16,7 @@ from epa.core.evaluation import (
     compute_valid_segment_metrics,
     resolve_success_threshold,
 )
+from epa.core.diagnostics import _compute_input_coverage_diagnostics
 from epa.core.math_utils import compute_error_statistics
 from epa.core.solve_eval import _prepare_solve_eval_trajectories
 from epa.metric_cli_common import align_for_eval_with_info, project_to_plane
@@ -396,6 +397,12 @@ def _evaluate_pair_ov_style(
         float(np.sum(np.linalg.norm(np.diff(p_est, axis=0), axis=1))) if p_est.shape[0] > 1 else 0.0
     )
     ratio = len_est / (len_gt + 1e-12)
+    input_coverage = _compute_input_coverage_diagnostics(
+        t_ref=t_gt,
+        pos_ref=p_gt,
+        t_est=t_est,
+        offset_est_s=0.0,
+    )
 
     t_gt_m, p_gt_m, q_gt_m, p_est_m, q_est_m, timeline_info = _associate_or_resample_ov_style(
         t_est=t_est,
@@ -447,6 +454,7 @@ def _evaluate_pair_ov_style(
         "length_ratio": float(ratio),
         "length_gt": float(len_gt),
         "length_est": float(len_est),
+        "input_coverage": input_coverage,
         "gt_t": t_gt_m,
         "gt_pos": p_gt_m,
         "gt_quat": q_gt_m,
@@ -510,6 +518,12 @@ def _evaluate_pair_epa_step3(
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
             )
+    input_coverage = _compute_input_coverage_diagnostics(
+        t_ref=t_gt,
+        pos_ref=p_gt,
+        t_est=t_est,
+        offset_est_s=float(step1["calculated_offset"]),
+    )
     sparse_assoc_failed = False
     sparse_assoc_failure_reason = ""
     try:
@@ -588,9 +602,20 @@ def _evaluate_pair_epa_step3(
     eval_mode = str(eval_align_mode or "none").strip().lower()
     if eval_mode in {"epa_se3_eval", "epa_se3"}:
         eval_mode = "se3"
+    elif eval_mode in {"epa_se3r", "rotation_first_se3"}:
+        eval_mode = "se3"
+    elif eval_mode in {"se3_orginal", "se3-orginal", "se3_original"}:
+        eval_mode = "se3-original"
     elif eval_mode == "epa_step3":
         eval_mode = "none"
-    global_align_mode = "posyaw" if eval_mode in {"posyaw", "epa_posyaw"} else "se3"
+    if eval_mode in {"posyaw", "epa_posyaw"}:
+        global_align_mode = "posyaw"
+    elif eval_mode in {"se3", "se3r"}:
+        global_align_mode = "se3"
+    elif eval_mode == "se3-original":
+        global_align_mode = "se3-original"
+    else:
+        global_align_mode = "se3"
 
     solved = _solve_extrinsic_and_world_alignment(
         pr_sync=p_est_m,
@@ -608,9 +633,18 @@ def _evaluate_pair_epa_step3(
     est_pos = np.asarray(solved["pr_final"], dtype=float)
     est_quat = np.asarray(solved["q_step3"], dtype=float)
     eval_alignment: dict[str, object] = {
-        "align_mode": "posyaw_step3" if global_align_mode == "posyaw" else "none",
+        "align_mode": (
+            "posyaw_step3"
+            if global_align_mode == "posyaw"
+            else (
+                "se3_step3"
+                if global_align_mode == "se3"
+                else ("se3_original_step3" if global_align_mode == "se3-original" else "none")
+            )
+        ),
         "step3_global_align_mode": global_align_mode,
         "step3_alignment_mode": str(solved.get("step3_choice", {}).get("step3_alignment_mode", "")),
+        "step3_orientation_mode": str(solved.get("step3_choice", {}).get("orientation_mode", "")),
         "timeline_policy": timeline_policy,
         "dense_timeline_used": bool(use_dense_timeline),
         "auto_sparse_low_rate_estimate_used": bool(prefer_sparse_timeline),
@@ -619,7 +653,15 @@ def _evaluate_pair_epa_step3(
         "resampled_fallback_used": bool(use_resampled_fallback),
         **strict_decision,
     }
-    if eval_mode not in {"", "none", "posyaw", "epa_posyaw"}:
+    if eval_mode not in {
+        "",
+        "none",
+        "se3",
+        "se3r",
+        "se3-original",
+        "posyaw",
+        "epa_posyaw",
+    }:
         est_pos, est_quat, eval_alignment = align_for_eval_with_info(
             pos_ref=gt_pos,
             quat_ref=gt_quat,
@@ -652,6 +694,7 @@ def _evaluate_pair_epa_step3(
         "length_ratio": float(ratio),
         "length_gt": float(len_gt),
         "length_est": float(len_est),
+        "input_coverage": input_coverage,
         "gt_t": gt_t,
         "gt_pos": gt_pos,
         "gt_quat": gt_quat,
@@ -660,7 +703,15 @@ def _evaluate_pair_epa_step3(
         "eval_source": (
             "epa_posyaw"
             if eval_mode in {"posyaw", "epa_posyaw"}
-            else ("epa_step3" if eval_mode in {"", "none"} else "epa_eval_align")
+            else (
+                "epa_se3"
+                if eval_mode in {"se3", "se3r"}
+                else (
+                    "epa_se3_original"
+                    if eval_mode == "se3-original"
+                    else ("epa_step3" if eval_mode in {"", "none"} else "epa_eval_align")
+                )
+            )
         ),
         "eval_alignment": eval_alignment,
         "ate3_ori": dict(ape3["rotation_angle_deg"]),
@@ -685,13 +736,15 @@ def _evaluate_pair(
 ) -> dict:
     requested_align_alias = str(align_mode).lower()
     requested_align_mode = _public_align_mode(requested_align_alias)
-    if requested_align_mode in {"se3", "posyaw"}:
+    if requested_align_mode in {"se3", "se3-original", "posyaw"}:
         try:
             result = _evaluate_pair_epa_step3(
                 file_gt=file_gt,
                 file_est=file_est,
                 max_diff=float(max_diff),
-                eval_align_mode="posyaw" if requested_align_mode == "posyaw" else "none",
+                eval_align_mode=(
+                    "posyaw" if requested_align_mode == "posyaw" else requested_align_mode
+                ),
                 dt_resample=float(epa_dt_resample),
                 offset_min_match_ratio=float(epa_offset_min_match_ratio),
                 downsample_hz=float(epa_downsample_hz),
@@ -797,11 +850,20 @@ def _eval_quality_flags(eval_res: dict, success: dict, time_rpe: dict) -> dict[s
         warnings.append(sim3_warning or fallback)
     if orientation_unstable and orientation["orientation_warning"]:
         warnings.append(str(orientation["orientation_warning"]))
+    coverage_status = str(success.get("input_coverage_status", "ok"))
+    if coverage_status in {"warning", "failed"}:
+        warnings.append(
+            "Reference support is incomplete; complete-reference SR counts "
+            "the unsupported part as unsuccessful."
+        )
 
     return {
         **orientation,
         "sim3_reliable": sim3_reliable,
-        "eval_reliable": bool(sim3_reliable and not orientation_unstable),
+        "input_coverage_status": coverage_status,
+        "eval_reliable": bool(
+            sim3_reliable and not orientation_unstable and coverage_status != "failed"
+        ),
         "eval_warning": " ".join(warnings),
     }
 
@@ -825,17 +887,17 @@ def _compute_ov_eval_comparison_indices(
         return comparisons
     targets = distances + target_delta
     insert_ids = np.searchsorted(distances, targets, side="left")
-    for idx, insert_idx in enumerate(insert_ids):
-        best_error = max_diff
-        best_idx = -1
-        for end_idx in (int(insert_idx) - 1, int(insert_idx), int(insert_idx) + 1):
-            if end_idx < idx or end_idx < 0 or end_idx >= distances.size:
-                continue
-            err = abs(float(distances[end_idx]) - float(targets[idx]))
-            if err < best_error:
-                best_idx = int(end_idx)
-                best_error = err
-        comparisons[idx] = best_idx
+    candidates = insert_ids[:, None] + np.array([-1, 0, 1], dtype=int)
+    starts = np.arange(distances.size, dtype=int)[:, None]
+    valid = (candidates >= starts) & (candidates >= 0) & (candidates < distances.size)
+    safe_candidates = np.clip(candidates, 0, distances.size - 1)
+    errors = np.abs(distances[safe_candidates] - targets[:, None])
+    errors[~valid] = np.inf
+    best_columns = np.argmin(errors, axis=1)
+    rows = np.arange(distances.size, dtype=int)
+    best_errors = errors[rows, best_columns]
+    accepted = best_errors < max_diff
+    comparisons[accepted] = candidates[rows[accepted], best_columns[accepted]]
     return comparisons
 
 
@@ -887,54 +949,88 @@ def _compute_rpe_segments_ov_eval_style(
         elif valid_mask.size == max(0, gt_pos.shape[0] - 1):
             valid_edge_mask = valid_mask
 
+    if gt_pos.shape[0] == 0:
+        gt_rotations = np.empty((0, 3, 3), dtype=float)
+        est_rotations = np.empty((0, 3, 3), dtype=float)
+    else:
+        gt_rotations = R.from_quat(gt_quat).as_matrix()
+        est_rotations = R.from_quat(est_quat).as_matrix()
+
+    invalid_sample_prefix = None
+    invalid_edge_prefix = None
+    if valid_sample_mask is not None:
+        invalid_sample_prefix = np.concatenate(
+            ([0], np.cumsum(~valid_sample_mask, dtype=int))
+        )
+    if valid_edge_mask is not None:
+        invalid_edge_prefix = np.concatenate(([0], np.cumsum(~valid_edge_mask, dtype=int)))
+
     out: dict[float, dict[str, np.ndarray | dict[str, float] | int]] = {}
     for seg in segments_m:
         comparisons = _compute_ov_eval_comparison_indices(
             accum_distances, float(seg), max_dist_diff=0.5
         )
-        ori_vals: list[float] = []
-        pos_vals: list[float] = []
-        pair_ids: list[tuple[int, int]] = []
-        for id_start, id_end_raw in enumerate(comparisons):
-            id_end = int(id_end_raw)
-            if id_end == -1:
-                continue
-            if valid_sample_mask is not None and not bool(
-                np.all(valid_sample_mask[id_start : id_end + 1])
-            ):
-                continue
-            if valid_edge_mask is not None and not bool(np.all(valid_edge_mask[id_start:id_end])):
-                continue
+        starts = np.flatnonzero(comparisons >= 0)
+        ends = comparisons[starts]
+        keep = np.ones(starts.size, dtype=bool)
+        if invalid_sample_prefix is not None:
+            keep &= (
+                invalid_sample_prefix[ends + 1] - invalid_sample_prefix[starts]
+            ) == 0
+        if invalid_edge_prefix is not None:
+            keep &= (invalid_edge_prefix[ends] - invalid_edge_prefix[starts]) == 0
+        starts = starts[keep]
+        ends = ends[keep]
+        pair_ids = np.column_stack((starts, ends)).astype(int, copy=False)
 
-            T_c1 = _pose_matrix_ov_eval(est_pos[id_start], est_quat[id_start])
-            T_c2 = _pose_matrix_ov_eval(est_pos[id_end], est_quat[id_end])
-            T_m1 = _pose_matrix_ov_eval(gt_pos[id_start], gt_quat[id_start])
-            T_m2 = _pose_matrix_ov_eval(gt_pos[id_end], gt_quat[id_end])
+        if pair_ids.shape[0] == 0:
+            ori_arr = np.empty(0, dtype=float)
+            pos_arr = np.empty(0, dtype=float)
+        else:
+            est_rot_start = est_rotations[starts]
+            est_rot_end = est_rotations[ends]
+            gt_rot_start = gt_rotations[starts]
+            gt_rot_end = gt_rotations[ends]
 
-            T_c1_c2 = np.linalg.inv(T_c1) @ T_c2
-            T_m1_m2 = np.linalg.inv(T_m1) @ T_m2
-            T_error_in_c2 = np.linalg.inv(T_m1_m2) @ T_c1_c2
-            T_c2_rot = np.eye(4, dtype=float)
-            T_c2_rot[:3, :3] = T_c2[:3, :3]
-            T_c2_rot_inv = np.eye(4, dtype=float)
-            T_c2_rot_inv[:3, :3] = T_c2[:3, :3].T
-            T_error_in_w = T_c2_rot @ T_error_in_c2 @ T_c2_rot_inv
+            est_relative_rot = np.einsum(
+                "nij,njk->nik", np.swapaxes(est_rot_start, 1, 2), est_rot_end
+            )
+            gt_relative_rot = np.einsum(
+                "nij,njk->nik", np.swapaxes(gt_rot_start, 1, 2), gt_rot_end
+            )
+            est_relative_pos = np.einsum(
+                "nij,nj->ni",
+                np.swapaxes(est_rot_start, 1, 2),
+                est_pos[ends] - est_pos[starts],
+            )
+            gt_relative_pos = np.einsum(
+                "nij,nj->ni",
+                np.swapaxes(gt_rot_start, 1, 2),
+                gt_pos[ends] - gt_pos[starts],
+            )
 
-            pos_vals.append(float(np.linalg.norm(T_error_in_w[:3, 3])))
-            ori_vals.append(float(np.degrees(R.from_matrix(T_error_in_w[:3, :3]).magnitude())))
-            pair_ids.append((int(id_start), int(id_end)))
+            error_rot_c2 = np.einsum(
+                "nij,njk->nik", np.swapaxes(gt_relative_rot, 1, 2), est_relative_rot
+            )
+            error_pos_c2 = np.einsum(
+                "nij,nj->ni",
+                np.swapaxes(gt_relative_rot, 1, 2),
+                est_relative_pos - gt_relative_pos,
+            )
+            error_rot_world = np.einsum(
+                "nij,njk,nlk->nil", est_rot_end, error_rot_c2, est_rot_end
+            )
+            error_pos_world = np.einsum("nij,nj->ni", est_rot_end, error_pos_c2)
 
-        ori_arr = np.asarray(ori_vals, dtype=float)
-        pos_arr = np.asarray(pos_vals, dtype=float)
+            pos_arr = np.linalg.norm(error_pos_world, axis=1)
+            ori_arr = np.degrees(R.from_matrix(error_rot_world).magnitude())
         out[float(seg)] = {
             "ori_values": ori_arr,
             "pos_values": pos_arr,
             "ori_stats": _ov_eval_error_statistics(ori_arr),
             "pos_stats": _ov_eval_error_statistics(pos_arr),
             "pair_count": int(pos_arr.size),
-            "pair_ids": np.asarray(pair_ids, dtype=int).reshape(-1, 2)
-            if pair_ids
-            else np.empty((0, 2), dtype=int),
+            "pair_ids": pair_ids,
         }
     return out
 
@@ -1095,8 +1191,18 @@ def _fmt_sr_config(valid: dict, gt_t: np.ndarray, gt_pos: np.ndarray) -> str:
     gate_m = float(success.get("global_gate_m", np.nan))
     gate_mode = str(success.get("global_gate_mode", "unknown"))
     gt_t = np.asarray(gt_t, dtype=float).reshape(-1)
-    duration_s = float(gt_t[-1] - gt_t[0]) if gt_t.size > 1 else 0.0
-    path_m = float(success.get("global_gate_path_length_m", compute_path_length(gt_pos)))
+    duration_s = float(
+        success.get(
+            "complete_total_time_s",
+            gt_t[-1] - gt_t[0] if gt_t.size > 1 else 0.0,
+        )
+    )
+    path_m = float(
+        success.get(
+            "complete_total_distance_m",
+            success.get("global_gate_path_length_m", compute_path_length(gt_pos)),
+        )
+    )
     return (
         f"SR config: GT path={_fmt(path_m, 2)}m | time={_fmt(duration_s, 2)}s | "
         f"threshold={_fmt(threshold_m, 2)}m({threshold_mode}) | "

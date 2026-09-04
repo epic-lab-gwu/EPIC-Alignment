@@ -9,7 +9,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from epa.alignment.modes import resolve_metric_eval_align_mode
-from epa.core.calibration import solve_extrinsic_rotation
+from epa.core.calibration import solve_extrinsic_rotation, solve_rotation_first_alignment
 from epa.core.sim3 import solve_anchor_sim3, solve_epa_sim3, solve_epa_sim3_v1, solve_epa_sim3_v2, solve_epica_sim3_variant
 from epa.io.trajectory import load_estimation_trajectory, load_reference_trajectory
 from epa.core.math_utils import normalize_quat_array
@@ -372,15 +372,7 @@ def align_for_eval_with_info(
     align_indices: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     requested_mode = str(mode).lower()
-    if requested_mode == "epa_se3_eval":
-        requested_mode = "epa_se3"
-    elif requested_mode == "epa_sim3":
-        requested_mode = "sim3"
-    mode = requested_mode
-    if mode == "epa_step3":
-        mode = "none"
-    elif mode == "epa_se3":
-        mode = "se3"
+    mode = resolve_metric_eval_align_mode(requested_mode, default="none")
     info: dict[str, object] = {
         "align_mode": mode,
         "n_to_align": int(n_to_align),
@@ -412,13 +404,35 @@ def align_for_eval_with_info(
     pest = np.asarray(pos_est[idx], dtype=float)
     q_est = np.asarray(quat_est, dtype=float)
 
-    if mode == "se3":
+    if mode == "se3-original":
         _, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=False)
         pos_new = (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
         info["align_scale"] = 1.0
         info["align_rotation_matrix"] = np.asarray(R_eval, dtype=float).tolist()
         info["align_translation"] = np.asarray(t_eval, dtype=float).reshape(3).tolist()
+        info["se3_original_solver"] = "position_only_umeyama"
+        return pos_new, q_new, info
+
+    if mode in {"se3", "se3r"}:
+        R_eval, t_eval = solve_rotation_first_alignment(
+            pest,
+            pref,
+            np.asarray(quat_est[idx], dtype=float),
+            np.asarray(quat_ref[idx], dtype=float),
+        )
+        pos_new = (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
+        q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
+        info.update(
+            {
+                "align_scale": 1.0,
+                "align_rotation_matrix": np.asarray(R_eval, dtype=float).tolist(),
+                "align_translation": np.asarray(t_eval, dtype=float).reshape(3).tolist(),
+                "se3_solver": "orientation_chordal_mean_then_translation_mean",
+                # Retained for consumers of the former public se3r mode.
+                "se3r_solver": "orientation_chordal_mean_then_translation_mean",
+            }
+        )
         return pos_new, q_new, info
 
     if mode in {"posyaw", "epa_posyaw"}:
@@ -668,17 +682,16 @@ def project_to_plane(
         raise ValueError(f"Unsupported projection plane: {plane}")
 
     mats = R.from_quat(quat).as_matrix()
-    out_quat = np.zeros_like(quat)
-    for i in range(mats.shape[0]):
-        v = mats[i] @ e1
-        v = v - float(np.dot(v, normal)) * normal
-        nv = np.linalg.norm(v)
-        if nv < 1e-12:
-            v = e1.copy()
-            nv = 1.0
-        v = v / nv
-        ang = np.arctan2(np.dot(v, e2), np.dot(v, e1))
-        out_quat[i] = R.from_rotvec(ang * normal).as_quat()
+    projected = mats @ e1
+    projected -= np.outer(projected @ normal, normal)
+    norms = np.linalg.norm(projected, axis=1)
+    degenerate = norms < 1e-12
+    if np.any(degenerate):
+        projected[degenerate] = e1
+        norms[degenerate] = 1.0
+    projected /= norms[:, None]
+    angles = np.arctan2(projected @ e2, projected @ e1)
+    out_quat = R.from_rotvec(angles[:, None] * normal).as_quat()
 
     return pos, normalize_quat_array(out_quat)
 

@@ -135,6 +135,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--quality-threshold-mode",
+        choices=["adaptive", "fixed"],
+        default="adaptive",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("--quality-good-rmse-ratio", type=float, default=0.01, help=argparse.SUPPRESS)
+    parser.add_argument("--quality-partial-rmse-ratio", type=float, default=0.05, help=argparse.SUPPRESS)
+    parser.add_argument("--quality-critical-rmse-ratio", type=float, default=0.10, help=argparse.SUPPRESS)
+    parser.add_argument("--quality-good-rmse-floor-m", type=float, default=0.05, help=argparse.SUPPRESS)
+    parser.add_argument("--quality-partial-rmse-floor-m", type=float, default=0.25, help=argparse.SUPPRESS)
+    parser.add_argument("--quality-critical-rmse-floor-m", type=float, default=1.0, help=argparse.SUPPRESS)
+    parser.add_argument(
         "--rigid-check-max-path-ratio",
         type=float,
         default=3.0,
@@ -313,10 +325,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=PUBLIC_ALIGN_MODES,
+        choices=(*PUBLIC_ALIGN_MODES, "se3r", "se3-orginal"),
         default="",
-        metavar="{se3,posyaw,sim3}",
-        help="Public alignment mode used for evaluation and reports.",
+        metavar="{se3,se3-original,posyaw,sim3}",
+        help=(
+            "Public alignment mode used for evaluation and reports. se3 uses "
+            "orientation-first rotation; se3-original retains position-only Umeyama."
+        ),
     )
     parser.add_argument(
         "--eval-align",

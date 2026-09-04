@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,25 @@ from epa.core.math_utils import normalize_quat_array
 
 
 def load_ov_txt(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    # Standard TUM/OpenVINS text files are regular whitespace-separated numeric
+    # tables.  Let NumPy parse that common case in C, while retaining the
+    # permissive line parser below for comma-separated or ragged legacy files.
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message="loadtxt: input contained no data")
+            rows = np.loadtxt(
+                path,
+                dtype=float,
+                comments="#",
+                usecols=range(8),
+                ndmin=2,
+            )
+    except (OSError, ValueError):
+        rows = np.empty((0, 8), dtype=float)
+    else:
+        if rows.shape[0] > 0:
+            return rows[:, 0], rows[:, 1:4], normalize_quat_array(rows[:, 4:8])
+
     times: list[float] = []
     pos: list[list[float]] = []
     quat: list[list[float]] = []
