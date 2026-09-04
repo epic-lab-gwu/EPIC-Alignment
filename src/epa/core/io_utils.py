@@ -578,8 +578,10 @@ def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, la
         return
     raw_dist = _fmt_report_value(float(success.get("raw_success_rate_distance", np.nan)) * 100.0)
     local_dist = _fmt_report_value(float(success.get("local_success_rate_distance", success.get("success_rate_distance", np.nan))) * 100.0)
+    complete_dist = _fmt_report_value(float(success.get("complete_success_rate_distance", success.get("success_rate_distance", np.nan))) * 100.0)
     raw_time = _fmt_report_value(float(success.get("raw_success_rate_time", np.nan)) * 100.0)
     local_time = _fmt_report_value(float(success.get("local_success_rate_time", success.get("success_rate_time", np.nan))) * 100.0)
+    complete_time = _fmt_report_value(float(success.get("complete_success_rate_time", success.get("success_rate_time", np.nan))) * 100.0)
     status = str(success.get("sr_reliability_status", "ok") or "ok")
     explanation = str(success.get("sr_warning_explanation", "") or "No SR reliability issue was detected.")
     hard = success.get("sr_reliability_hard_reasons", [])
@@ -596,6 +598,7 @@ def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, la
                 f"- 状态：`{status}`",
                 f"- SR distance raw / local：`{raw_dist}%` / `{local_dist}%`",
                 f"- SR time raw / local：`{raw_time}%` / `{local_time}%`",
+                f"- 完整轨迹 SR distance / time：`{complete_dist}%` / `{complete_time}%`",
                 f"- Sim3 是否可能掩盖失败：`{str(may_mask).lower()}`",
                 f"- 说明：{explanation}",
             ]
@@ -612,6 +615,7 @@ def _append_sr_reliability_report(lines: list[str], *, metrics_payload: dict, la
                 f"- Status: `{status}`",
                 f"- SR distance raw / local: `{raw_dist}%` / `{local_dist}%`",
                 f"- SR time raw / local: `{raw_time}%` / `{local_time}%`",
+                f"- Complete-reference SR distance / time: `{complete_dist}%` / `{complete_time}%`",
                 f"- Sim3 may mask failure: `{str(may_mask).lower()}`",
                 f"- Explanation: {explanation}",
             ]
@@ -1029,7 +1033,8 @@ def _trajectory_from_csv_columns(columns, data, path, label):
     t = data[t_col]
     pos = np.column_stack([data[px_col], data[py_col], data[pz_col]])
     quat = normalize_quat_array(np.column_stack([data[qx_col], data[qy_col], data[qz_col], data[qw_col]]))
-    return _sanitize_timed_trajectory(t, pos, quat, path)
+    timestamp_unit = "ns" if str(t_col).strip() == "#timestamp" else "s"
+    return _sanitize_timed_trajectory(t, pos, quat, path, timestamp_unit=timestamp_unit)
 
 
 def load_estimation_csv(path):
@@ -1037,7 +1042,7 @@ def load_estimation_csv(path):
     return _trajectory_from_csv_columns(columns, data, path, label="Estimation CSV")
 
 
-def _sanitize_timed_trajectory(t, pos, quat, path):
+def _sanitize_timed_trajectory(t, pos, quat, path, *, timestamp_unit="auto"):
     t = np.asarray(t, dtype=float).reshape(-1)
     pos = np.asarray(pos, dtype=float)
     quat = normalize_quat_array(np.asarray(quat, dtype=float))
@@ -1064,7 +1069,7 @@ def _sanitize_timed_trajectory(t, pos, quat, path):
     quat = quat[keep]
     if t.size < 2:
         raise ValueError(f"Trajectory has fewer than 2 unique timestamps: {path}")
-    t = normalize_time_to_seconds(t, zero_start=False)
+    t = normalize_time_to_seconds(t, zero_start=False, unit=timestamp_unit)
     return t, pos, quat
 
 
@@ -1078,7 +1083,8 @@ def load_estimation_tum(path):
     t = arr[:, 0]
     pos = arr[:, 1:4]
     quat = normalize_quat_array(arr[:, 4:8])
-    return _sanitize_timed_trajectory(t, pos, quat, path)
+    # TUM timestamps are defined in seconds, including low-rate trajectories.
+    return _sanitize_timed_trajectory(t, pos, quat, path, timestamp_unit="s")
 
 
 def load_estimation_kitti(path):
@@ -1102,7 +1108,7 @@ def load_estimation_kitti(path):
 
     pos = np.column_stack([arr[:, 3], arr[:, 7], arr[:, 11]])
     quat = normalize_quat_array(R.from_matrix(mats).as_quat())
-    t = normalize_time_to_seconds(np.arange(n, dtype=float))
+    t = normalize_time_to_seconds(np.arange(n, dtype=float), unit="s")
     return t, pos, quat
 
 
@@ -1297,7 +1303,7 @@ def load_bag_trajectory(path, topic, bag_format="auto"):
             )
         raise ValueError(f"No trajectory messages found for topic: {bag_topic}")
 
-    t = normalize_time_to_seconds(np.asarray(stamps, dtype=float), zero_start=False)
+    t = normalize_time_to_seconds(np.asarray(stamps, dtype=float), zero_start=False, unit="s")
     pos = np.asarray(xyz, dtype=float)
     q = normalize_quat_array(np.asarray(quat, dtype=float))
     return t, pos, q

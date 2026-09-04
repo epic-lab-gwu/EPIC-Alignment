@@ -800,7 +800,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--align",
         action="store_true",
-        help="Align each non-reference trajectory to the reference using Umeyama (SE3).",
+        help=(
+            "Align each non-reference trajectory using rotation-first SE(3); "
+            "use --eval-align se3-original for legacy position-only Umeyama."
+        ),
     )
     p.add_argument(
         "--correct-scale",

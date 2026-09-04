@@ -22,10 +22,210 @@ from epa.ov_eval_compat import (
     run_error_comparison,
     run_error_dataset,
 )
+from epa.compat.ov_eval.evaluate import _compute_ov_eval_comparison_indices
+from epa.compat.ov_eval.commands import _eval_warning_prefix
+from epa.core.math_utils import normalize_quat_array
+from epa.metric_cli_common import project_to_plane
+
+
+def test_eval_warning_prefix_distinguishes_soft_warning_from_rejection() -> None:
+    assert _eval_warning_prefix({"eval_reliable": True}) == "WARNING"
+    assert _eval_warning_prefix({"eval_reliable": False}) == "UNRELIABLE"
+
+
+def _legacy_ov_eval_comparison_indices(
+    accum_distances: np.ndarray,
+    distance: float,
+    max_dist_diff: float = 0.5,
+) -> np.ndarray:
+    distances = np.asarray(accum_distances, dtype=float).reshape(-1)
+    comparisons = np.full(distances.size, -1, dtype=int)
+    targets = distances + float(distance)
+    insert_ids = np.searchsorted(distances, targets, side="left")
+    for index, insert_index in enumerate(insert_ids):
+        best_error = float(max_dist_diff)
+        best_index = -1
+        for end_index in (int(insert_index) - 1, int(insert_index), int(insert_index) + 1):
+            if end_index < index or end_index < 0 or end_index >= distances.size:
+                continue
+            error = abs(float(distances[end_index]) - float(targets[index]))
+            if error < best_error:
+                best_index = end_index
+                best_error = error
+        comparisons[index] = best_index
+    return comparisons
+
+
+def _legacy_project_to_plane(
+    pos_xyz: np.ndarray,
+    quat_xyzw: np.ndarray,
+    plane: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    plane = str(plane).lower()
+    pos = np.asarray(pos_xyz, dtype=float).copy()
+    quat = np.asarray(quat_xyzw, dtype=float).copy()
+    if plane == "none":
+        return pos, quat
+
+    if plane == "xy":
+        normal = np.array([0.0, 0.0, 1.0], dtype=float)
+        e1 = np.array([1.0, 0.0, 0.0], dtype=float)
+        e2 = np.array([0.0, 1.0, 0.0], dtype=float)
+        pos[:, 2] = 0.0
+    elif plane == "xz":
+        normal = np.array([0.0, 1.0, 0.0], dtype=float)
+        e1 = np.array([1.0, 0.0, 0.0], dtype=float)
+        e2 = np.array([0.0, 0.0, 1.0], dtype=float)
+        pos[:, 1] = 0.0
+    elif plane == "yz":
+        normal = np.array([1.0, 0.0, 0.0], dtype=float)
+        e1 = np.array([0.0, 1.0, 0.0], dtype=float)
+        e2 = np.array([0.0, 0.0, 1.0], dtype=float)
+        pos[:, 0] = 0.0
+    else:
+        raise ValueError(f"Unsupported projection plane: {plane}")
+
+    matrices = R.from_quat(quat).as_matrix()
+    out_quat = np.zeros_like(quat)
+    for index in range(matrices.shape[0]):
+        vector = matrices[index] @ e1
+        vector = vector - float(np.dot(vector, normal)) * normal
+        norm = np.linalg.norm(vector)
+        if norm < 1e-12:
+            vector = e1.copy()
+            norm = 1.0
+        vector = vector / norm
+        angle = np.arctan2(np.dot(vector, e2), np.dot(vector, e1))
+        out_quat[index] = R.from_rotvec(angle * normal).as_quat()
+    return pos, normalize_quat_array(out_quat)
+
+
+def _legacy_rpe_segment_values(
+    gt_pos: np.ndarray,
+    gt_quat: np.ndarray,
+    est_pos: np.ndarray,
+    est_quat: np.ndarray,
+    segments_m: list[float],
+    valid_segment_mask: np.ndarray | None,
+) -> dict[float, tuple[np.ndarray, np.ndarray, np.ndarray]]:
+    """Scalar pre-vectorization oracle for numerical equivalence tests."""
+    accum_distances = np.zeros(gt_pos.shape[0], dtype=float)
+    if gt_pos.shape[0] > 1:
+        accum_distances[1:] = np.cumsum(np.linalg.norm(np.diff(gt_pos, axis=0), axis=1))
+
+    valid_sample_mask = None
+    valid_edge_mask = None
+    if valid_segment_mask is not None:
+        valid_mask = np.asarray(valid_segment_mask, dtype=bool).reshape(-1)
+        if valid_mask.size == gt_pos.shape[0]:
+            valid_sample_mask = valid_mask
+        elif valid_mask.size == max(0, gt_pos.shape[0] - 1):
+            valid_edge_mask = valid_mask
+
+    rotations_gt = R.from_quat(gt_quat).as_matrix()
+    rotations_est = R.from_quat(est_quat).as_matrix()
+    out = {}
+    for seg in segments_m:
+        comparisons = _compute_ov_eval_comparison_indices(
+            accum_distances, float(seg), max_dist_diff=0.5
+        )
+        ori_values = []
+        pos_values = []
+        pair_ids = []
+        for start, end_raw in enumerate(comparisons):
+            end = int(end_raw)
+            if end == -1:
+                continue
+            if valid_sample_mask is not None and not bool(
+                np.all(valid_sample_mask[start : end + 1])
+            ):
+                continue
+            if valid_edge_mask is not None and not bool(np.all(valid_edge_mask[start:end])):
+                continue
+
+            transforms = []
+            for pos, rot in (
+                (est_pos[start], rotations_est[start]),
+                (est_pos[end], rotations_est[end]),
+                (gt_pos[start], rotations_gt[start]),
+                (gt_pos[end], rotations_gt[end]),
+            ):
+                transform = np.eye(4, dtype=float)
+                transform[:3, :3] = rot
+                transform[:3, 3] = pos
+                transforms.append(transform)
+            transform_c1, transform_c2, transform_m1, transform_m2 = transforms
+
+            relative_est = np.linalg.inv(transform_c1) @ transform_c2
+            relative_gt = np.linalg.inv(transform_m1) @ transform_m2
+            error_c2 = np.linalg.inv(relative_gt) @ relative_est
+            c2_rotation = np.eye(4, dtype=float)
+            c2_rotation[:3, :3] = transform_c2[:3, :3]
+            c2_rotation_inv = np.eye(4, dtype=float)
+            c2_rotation_inv[:3, :3] = transform_c2[:3, :3].T
+            error_world = c2_rotation @ error_c2 @ c2_rotation_inv
+
+            pos_values.append(float(np.linalg.norm(error_world[:3, 3])))
+            ori_values.append(
+                float(np.degrees(R.from_matrix(error_world[:3, :3]).magnitude()))
+            )
+            pair_ids.append((start, end))
+
+        out[float(seg)] = (
+            np.asarray(ori_values, dtype=float),
+            np.asarray(pos_values, dtype=float),
+            np.asarray(pair_ids, dtype=int).reshape(-1, 2),
+        )
+    return out
 
 
 def test_package_version_matches_release() -> None:
     assert epa.__version__ == "0.1.18"
+
+
+@pytest.mark.parametrize("max_dist_diff", [0.0, 0.1, 0.5, 1.0, np.nan])
+def test_ov_eval_comparison_indices_vectorization_matches_legacy_scalar_oracle(
+    max_dist_diff: float,
+) -> None:
+    rng = np.random.default_rng(20260904)
+    steps = rng.choice([0.0, 0.05, 0.1, 0.25], size=256)
+    distances = np.cumsum(steps)
+
+    for segment in [0.0, 0.1, 0.5, 1.75, 100.0]:
+        expected = _legacy_ov_eval_comparison_indices(
+            distances, segment, max_dist_diff=max_dist_diff
+        )
+        actual = _compute_ov_eval_comparison_indices(
+            distances, segment, max_dist_diff=max_dist_diff
+        )
+        np.testing.assert_array_equal(actual, expected)
+
+
+def test_ov_eval_comparison_indices_preserves_strict_tolerance_boundary() -> None:
+    distances = np.array([0.0, 1.0, 2.0], dtype=float)
+
+    actual = _compute_ov_eval_comparison_indices(distances, 0.5, max_dist_diff=0.5)
+
+    np.testing.assert_array_equal(actual, np.array([-1, -1, -1]))
+
+
+@pytest.mark.parametrize("plane", ["xy", "xz", "yz"])
+def test_project_to_plane_vectorization_matches_legacy_scalar_oracle(plane: str) -> None:
+    rng = np.random.default_rng(20260903)
+    positions = rng.normal(size=(128, 3))
+    quaternions = R.random(128, random_state=rng).as_quat()
+    degenerate_quaternion = {
+        "xy": R.from_euler("y", -90.0, degrees=True).as_quat(),
+        "xz": R.from_euler("z", 90.0, degrees=True).as_quat(),
+        "yz": R.from_euler("z", -90.0, degrees=True).as_quat(),
+    }[plane]
+    quaternions[0] = degenerate_quaternion
+
+    expected_pos, expected_quat = _legacy_project_to_plane(positions, quaternions, plane)
+    actual_pos, actual_quat = project_to_plane(positions, quaternions, plane)
+
+    np.testing.assert_array_equal(actual_pos, expected_pos)
+    np.testing.assert_allclose(actual_quat, expected_quat, rtol=1e-13, atol=1e-13)
 
 
 def test_format_source_counts_is_deterministic() -> None:
@@ -122,6 +322,83 @@ def test_valid_rpe_segments_filter_by_valid_edge_mask() -> None:
     np.testing.assert_allclose(float(valid[4.0]["pos_stats"]["rmse"]), 0.0)
 
 
+@pytest.mark.parametrize("mask_kind", ["none", "sample", "edge"])
+def test_ov_eval_rpe_vectorization_matches_legacy_scalar_oracle(mask_kind: str) -> None:
+    rng = np.random.default_rng(20260902)
+    sample_count = 96
+    gt_steps = rng.normal(size=(sample_count, 3))
+    gt_steps /= np.linalg.norm(gt_steps, axis=1, keepdims=True)
+    gt_steps *= rng.uniform(0.08, 0.22, size=(sample_count, 1))
+    gt_pos = np.cumsum(gt_steps, axis=0)
+    est_pos = gt_pos + np.cumsum(rng.normal(scale=0.004, size=(sample_count, 3)), axis=0)
+
+    gt_rotvec = np.cumsum(rng.normal(scale=0.025, size=(sample_count, 3)), axis=0)
+    est_rotvec = gt_rotvec + rng.normal(scale=0.01, size=(sample_count, 3))
+    gt_quat = R.from_rotvec(gt_rotvec).as_quat()
+    est_quat = R.from_rotvec(est_rotvec).as_quat()
+
+    valid_mask = None
+    if mask_kind == "sample":
+        valid_mask = np.ones(sample_count, dtype=bool)
+        valid_mask[[7, 8, 31, 70]] = False
+    elif mask_kind == "edge":
+        valid_mask = np.ones(sample_count - 1, dtype=bool)
+        valid_mask[[5, 29, 30, 68]] = False
+
+    segments = [0.5, 1.5, 3.0]
+    expected = _legacy_rpe_segment_values(
+        gt_pos,
+        gt_quat,
+        est_pos,
+        est_quat,
+        segments,
+        valid_mask,
+    )
+    actual = _compute_rpe_segments(
+        gt_pos=gt_pos,
+        gt_quat=gt_quat,
+        est_pos=est_pos,
+        est_quat=est_quat,
+        segments_m=segments,
+    ) if valid_mask is None else _compute_valid_rpe_segments(
+        gt_pos=gt_pos,
+        gt_quat=gt_quat,
+        est_pos=est_pos,
+        est_quat=est_quat,
+        valid_segment_mask=valid_mask,
+        segments_m=segments,
+    )
+
+    for segment in segments:
+        expected_ori, expected_pos, expected_pairs = expected[segment]
+        np.testing.assert_array_equal(actual[segment]["pair_ids"], expected_pairs)
+        np.testing.assert_allclose(
+            actual[segment]["ori_values"], expected_ori, rtol=1e-12, atol=1e-12
+        )
+        np.testing.assert_allclose(
+            actual[segment]["pos_values"], expected_pos, rtol=1e-12, atol=1e-12
+        )
+        assert int(actual[segment]["pair_count"]) == expected_pairs.shape[0]
+
+
+def test_ov_eval_rpe_segments_accept_empty_trajectories() -> None:
+    positions = np.empty((0, 3), dtype=float)
+    quaternions = np.empty((0, 4), dtype=float)
+
+    out = _compute_rpe_segments(
+        gt_pos=positions,
+        gt_quat=quaternions,
+        est_pos=positions,
+        est_quat=quaternions,
+        segments_m=[8.0],
+    )
+
+    assert int(out[8.0]["pair_count"]) == 0
+    assert np.asarray(out[8.0]["pair_ids"]).shape == (0, 2)
+    assert np.asarray(out[8.0]["ori_values"]).size == 0
+    assert np.asarray(out[8.0]["pos_values"]).size == 0
+
+
 def _write_tum(path: Path, t: np.ndarray, pos: np.ndarray, quat: np.ndarray) -> None:
     rows = [
         f"{float(ts):.9f} {float(p[0]):.9f} {float(p[1]):.9f} {float(p[2]):.9f} "
@@ -196,6 +473,9 @@ def test_evaluate_pair_epa_step3_uses_strict_timeline_when_estimate_matches_well
 
     assert int(result["matched"]) == int(t_est.size)
     assert result["eval_source"] == "epa_step3"
+    assert str(result["eval_alignment"]["step3_alignment_mode"]).startswith(
+        "rotation_first"
+    )
     assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
     assert int(result["eval_alignment"]["sparse_matched"]) == int(t_est.size)
     assert result["eval_alignment"]["strict_association_timeline_used"] is True
@@ -337,6 +617,10 @@ def test_evaluate_pair_epa_step3_keeps_partial_estimate_on_strict_timeline(
     assert result["eval_alignment"]["strict_association_timeline_used"] is True
     assert float(result["ate3_ori"]["rmse"]) < 1e-6
     assert float(result["ate3_pos"]["rmse"]) < 1e-6
+    coverage = result["input_coverage"]
+    assert coverage["coverage_status"] == "failed"
+    assert float(coverage["temporal_coverage_ratio"]) < 0.26
+    assert float(coverage["path_coverage_ratio"]) < 0.30
 
 
 def test_timeline_decision_marks_estimate_gap_without_forcing_dense() -> None:
@@ -782,7 +1066,44 @@ def test_evaluate_pair_epa_step3_step1_fallback_is_quiet_by_default(
 
     captured = capsys.readouterr()
     assert "--- STEP 1 FALLBACK ---" not in captured.out
-    assert result["eval_source"] == "epa_step3"
+    assert result["eval_source"] == "epa_se3"
+    assert str(result["eval_alignment"]["step3_alignment_mode"]).startswith(
+        "rotation_first"
+    )
+
+
+def test_evaluate_pair_legacy_se3r_alias_uses_new_se3_alignment(tmp_path: Path) -> None:
+    n = 400
+    t = np.arange(n, dtype=float) * 0.05
+    yaw = np.linspace(0.0, np.deg2rad(100.0), n)
+    pos_gt = np.column_stack(
+        [
+            2.0 * np.cos(0.2 * t) + 0.4 * t,
+            1.5 * np.sin(0.2 * t),
+            0.2 * np.sin(0.05 * t),
+        ]
+    )
+    quat_gt = R.from_euler("z", yaw).as_quat()
+    gt_path = tmp_path / "gt.tum"
+    est_path = tmp_path / "est.tum"
+    _write_tum(gt_path, t, pos_gt, quat_gt)
+    _write_tum(est_path, t, pos_gt, quat_gt)
+
+    result = _evaluate_pair(
+        file_gt=gt_path,
+        file_est=est_path,
+        align_mode="se3r",
+        max_diff=0.02,
+    )
+
+    assert result["requested_align_mode"] == "se3"
+    assert result["requested_align_alias"] == "se3r"
+    assert result["eval_source"] == "epa_se3"
+    assert str(result["eval_alignment"]["step3_alignment_mode"]).startswith(
+        "rotation_first"
+    )
+    assert float(result["ate3_ori"]["rmse"]) < 1e-6
+    assert float(result["ate3_pos"]["rmse"]) < 1e-6
 
 
 def test_error_comparison_aggregates_mixed_sources_and_valid_metrics(

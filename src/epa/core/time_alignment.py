@@ -1,8 +1,36 @@
 import numpy as np
-from scipy.interpolate import interp1d
 from scipy.spatial.transform import Rotation as R, Slerp
 
 from .math_utils import normalize_quat_array
+
+
+def interpolate_linear_extrapolate(t_src, values, t_query):
+    """Match scipy interp1d's axis-0 linear/extrapolation arithmetic."""
+    x = np.asarray(t_src, dtype=float).reshape(-1)
+    y = np.asarray(values, dtype=float)
+    query = np.asarray(t_query, dtype=float).reshape(-1)
+    if x.size < 2 or y.shape[0] != x.size:
+        raise ValueError("Linear interpolation requires at least two paired samples.")
+
+    # Preserve scipy's legacy sorting/duplicate behavior for irregular inputs,
+    # but keep its heavy interpolate module off ordinary monotonic trajectories.
+    if np.any(np.diff(x) <= 0.0):
+        from scipy.interpolate import interp1d
+
+        return np.asarray(
+            interp1d(x, y, axis=0, fill_value="extrapolate")(query),
+            dtype=float,
+        )
+
+    right = np.searchsorted(x, query).clip(1, x.size - 1).astype(int)
+    left = right - 1
+    x_left = x[left]
+    x_right = x[right]
+    denominator = x_right - x_left
+    weight_shape = (query.size,) + (1,) * (y.ndim - 1)
+    weight_right = ((query - x_left) / denominator).reshape(weight_shape)
+    weight_left = ((x_right - query) / denominator).reshape(weight_shape)
+    return weight_right * y[right] + weight_left * y[left]
 
 
 def get_angular_velocity_norm(t, quats):
@@ -72,8 +100,7 @@ def interpolate_quat_slerp(t_src, q_src, t_query):
 
 
 def interpolate_quat_linear(t_src, q_src, t_query):
-    interp_q = interp1d(t_src, q_src, axis=0, fill_value="extrapolate")
-    return normalize_quat_array(interp_q(t_query))
+    return normalize_quat_array(interpolate_linear_extrapolate(t_src, q_src, t_query))
 
 
 def matching_time_indices(stamps_1, stamps_2, max_diff=0.01, offset_2=0.0):
@@ -90,6 +117,37 @@ def matching_time_indices(stamps_1, stamps_2, max_diff=0.01, offset_2=0.0):
     idx_2 = []
     if s1.size == 0 or s2.size == 0:
         return idx_1, idx_2
+
+    if (
+        np.all(np.isfinite(s1))
+        and np.all(np.isfinite(s2))
+        and np.all(np.diff(s1) >= 0.0)
+        and np.all(np.diff(s2) >= 0.0)
+    ):
+        # Reproduce the loop's exact two candidates: the first estimate not
+        # below t-max_diff and its successor.  Directly accept the batch only
+        # when consuming a previous match cannot change any later candidate;
+        # otherwise retain the sequential fallback below.
+        starts = np.searchsorted(s2, s1 - max_diff, side="left")
+        active_count = int(np.searchsorted(starts, s2.size, side="left"))
+        if active_count > 0:
+            ref_ids = np.arange(active_count, dtype=int)
+            first = starts[:active_count]
+            second = np.minimum(first + 1, s2.size - 1)
+            first_diff = np.abs(s2[first] - s1[:active_count])
+            second_diff = np.abs(s2[second] - s1[:active_count])
+            use_second = second_diff < first_diff
+            best = np.where(use_second, second, first)
+            best_diff = np.where(use_second, second_diff, first_diff)
+            valid = best_diff <= max_diff
+            matched_ref = ref_ids[valid]
+            matched_est = best[valid]
+            matched_starts = first[valid]
+            conflict_free = matched_est.size <= 1 or np.all(
+                matched_starts[1:] > matched_est[:-1]
+            )
+            if conflict_free:
+                return matched_ref.tolist(), matched_est.astype(int, copy=False).tolist()
 
     j = 0
     for i, t in enumerate(s1):

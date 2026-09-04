@@ -4,6 +4,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from ..alignment.modes import public_align_mode, resolve_metric_eval_align_mode
+from .evaluation import apply_input_coverage_to_success
 from ..metric_cli_common import cum_distance
 
 
@@ -113,8 +114,8 @@ def _print_sim3_ov_eval_terminal_metrics(
     threshold_mode = str(threshold.get("mode", "") if isinstance(threshold, dict) else "")
     if not threshold_mode:
         threshold_mode = str(success.get("threshold_mode", "unknown") if isinstance(success, dict) else "unknown")
-    total_distance_m = _finite_float(success.get("total_distance_m") if isinstance(success, dict) else np.nan)
-    duration_s = _finite_float(success.get("total_time_s") if isinstance(success, dict) else np.nan)
+    total_distance_m = _finite_float(success.get("complete_total_distance_m") if isinstance(success, dict) else np.nan)
+    duration_s = _finite_float(success.get("complete_total_time_s") if isinstance(success, dict) else np.nan)
     if not np.isfinite(total_distance_m):
         total_distance_m = _finite_float(cum_distance(pos_ref)[-1] if np.asarray(pos_ref).shape[0] > 0 else np.nan)
     if not np.isfinite(duration_s):
@@ -134,11 +135,23 @@ def _print_sim3_ov_eval_terminal_metrics(
         f"| gate={gate_desc}m"
     )
     print(
-        f"SR@{_fmt_ov_eval_terminal(threshold_m, 1)}m - distance = "
-        f"{_fmt_ov_eval_terminal(_finite_float(success.get('success_rate_distance')) * 100.0, 2)}% "
-        f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('success_rate_time')) * 100.0, 2)}% "
+        f"Coverage - path = {_fmt_ov_eval_terminal(_finite_float(success.get('path_coverage_ratio')) * 100.0, 2)}% "
+        f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('temporal_coverage_ratio')) * 100.0, 2)}% "
+        f"| status = {success.get('input_coverage_status', 'ok')}"
+    )
+    print(
+        f"SR local@{_fmt_ov_eval_terminal(threshold_m, 1)}m - distance = "
+        f"{_fmt_ov_eval_terminal(_finite_float(success.get('local_success_rate_distance')) * 100.0, 2)}% "
+        f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('local_success_rate_time')) * 100.0, 2)}% "
         f"| valid_dist = {_fmt_ov_eval_terminal(success.get('valid_distance_m'))}/"
-        f"{_fmt_ov_eval_terminal(success.get('total_distance_m'))}m"
+        f"{_fmt_ov_eval_terminal(success.get('local_total_distance_m'))}m"
+    )
+    print(
+        f"SR complete@{_fmt_ov_eval_terminal(threshold_m, 1)}m - distance = "
+        f"{_fmt_ov_eval_terminal(_finite_float(success.get('complete_success_rate_distance')) * 100.0, 2)}% "
+        f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('complete_success_rate_time')) * 100.0, 2)}% "
+        f"| valid_dist = {_fmt_ov_eval_terminal(success.get('valid_distance_m'))}/"
+        f"{_fmt_ov_eval_terminal(success.get('complete_total_distance_m'))}m"
     )
 
     scale = _finite_float(eval_alignment.get("sim3_scale", eval_alignment.get("align_scale", np.nan)))
@@ -192,7 +205,7 @@ def _print_sim3_ov_eval_terminal_metrics(
     print(r"\hline")
     print(r"\end{tabular}")
     print(
-        "% units: rotation=deg, position=m, SR=local drift-valid success rate; "
+        "% units: rotation=deg, position=m, SR=complete-reference drift-valid success rate; "
         f"SR time={_fmt_ov_eval_terminal(sr_time_pct, 2)}\\%, "
         f"scale={_fmt_ov_eval_terminal(scale, 6)}"
     )
@@ -230,8 +243,11 @@ def _compute_orientation_diagnostics(pose_metrics: dict, stage: str = "step3") -
     sr_distance = _finite_float(success.get("success_rate_distance"))
 
     min_sr = 0.99
+    ape_warning_threshold = 10.0
     ape_threshold = 45.0
+    rpe_warning_threshold = 10.0
     rpe_threshold = 30.0
+    rpe_time_warning_threshold = 10.0
     rpe_time_threshold = 30.0
     high_translation_sr = bool(np.isfinite(sr_distance) and sr_distance >= min_sr)
     rotation_bad = bool(
@@ -239,24 +255,38 @@ def _compute_orientation_diagnostics(pose_metrics: dict, stage: str = "step3") -
         or (np.isfinite(rpe_rot_rmse) and rpe_rot_rmse >= rpe_threshold)
         or (np.isfinite(rpe_time_rot_rmse) and rpe_time_rot_rmse >= rpe_time_threshold)
     )
-    unstable = high_translation_sr and rotation_bad
+    rotation_warning = bool(
+        (np.isfinite(ape_rot_rmse) and ape_rot_rmse >= ape_warning_threshold)
+        or (np.isfinite(rpe_rot_rmse) and rpe_rot_rmse >= rpe_warning_threshold)
+        or (np.isfinite(rpe_time_rot_rmse) and rpe_time_rot_rmse >= rpe_time_warning_threshold)
+    )
+    status = "critical" if rotation_bad else ("warning" if rotation_warning else "ok")
+    inconsistent = high_translation_sr and rotation_bad
+    unstable = rotation_bad
     warning = ""
-    if unstable:
+    if inconsistent:
         warning = (
             "Translation SR is high but rotation error is unstable; "
             "SR is unchanged because it is translation-only."
         )
+    elif rotation_warning:
+        warning = "Rotation error exceeds the orientation reliability threshold."
 
     return {
         "orientation_unstable": bool(unstable),
+        "orientation_status": status,
+        "orientation_inconsistent_with_translation_sr": bool(inconsistent),
         "orientation_warning": warning,
         "orientation_stage": stage,
         "orientation_min_sr_for_warning": min_sr,
         "orientation_ape_rmse_deg": ape_rot_rmse,
+        "orientation_ape_rmse_warning_deg": ape_warning_threshold,
         "orientation_ape_rmse_threshold_deg": ape_threshold,
         "orientation_rpe_rmse_deg": rpe_rot_rmse,
+        "orientation_rpe_rmse_warning_deg": rpe_warning_threshold,
         "orientation_rpe_rmse_threshold_deg": rpe_threshold,
         "orientation_rpe_time_1s_rmse_deg": rpe_time_rot_rmse,
+        "orientation_rpe_time_1s_rmse_warning_deg": rpe_time_warning_threshold,
         "orientation_rpe_time_1s_rmse_threshold_deg": rpe_time_threshold,
         "orientation_translation_sr_distance": sr_distance,
     }
@@ -295,6 +325,12 @@ def _interactive_view_metric_summary(
         "case_status": str(success.get("case_status", "")),
         "sr_distance": finite_or_none(success.get("success_rate_distance")),
         "sr_time": finite_or_none(success.get("success_rate_time")),
+        "local_sr_distance": finite_or_none(success.get("local_success_rate_distance")),
+        "local_sr_time": finite_or_none(success.get("local_success_rate_time")),
+        "complete_sr_distance": finite_or_none(success.get("complete_success_rate_distance")),
+        "complete_sr_time": finite_or_none(success.get("complete_success_rate_time")),
+        "path_coverage_ratio": finite_or_none(success.get("path_coverage_ratio")),
+        "temporal_coverage_ratio": finite_or_none(success.get("temporal_coverage_ratio")),
         "raw_sr_distance": finite_or_none(success.get("raw_success_rate_distance")),
         "raw_sr_time": finite_or_none(success.get("raw_success_rate_time")),
         "sr_reliability_status": str(success.get("sr_reliability_status", "")),
@@ -457,10 +493,12 @@ def _annotate_sr_reliability(
     orientation: dict,
     ape_relation: str,
     rpe_relation: str,
+    input_coverage: dict | None = None,
 ) -> dict:
     success = pose_metrics.get("valid_segment", {}).get(stage, {}).get("success", {})
     if not isinstance(success, dict):
         return {}
+    apply_input_coverage_to_success(success, input_coverage, set_primary=True)
     eval_info = pose_metrics.get("eval_alignment", {}).get(stage, {})
     ape_trans_rmse_m = _finite_float(
         pose_metrics.get("ape", {}).get(stage, {}).get(ape_relation, {}).get("rmse")
@@ -484,10 +522,20 @@ def _annotate_sr_reliability(
     hard_reasons: list[str] = []
     soft_reasons: list[str] = []
 
+    input_coverage = input_coverage if isinstance(input_coverage, dict) else {}
+    coverage_status = str(input_coverage.get("coverage_status", "ok"))
+    if coverage_status == "failed":
+        hard_reasons.append("input_coverage_failed")
+    elif coverage_status == "warning":
+        soft_reasons.append("input_coverage_warning")
+
     if bool(success.get("global_gate_failed", False)):
         hard_reasons.append("global_gate_failed")
-    if bool(orientation.get("orientation_unstable", False)):
+    orientation_status = str(orientation.get("orientation_status", ""))
+    if orientation_status == "critical" or bool(orientation.get("orientation_unstable", False)):
         hard_reasons.append("orientation_unstable")
+    elif orientation_status == "warning":
+        soft_reasons.append("orientation_warning")
     if not bool(sim3_audit.get("sim3_eval_reliable", True)):
         hard_reasons.append("sim3_unreliable")
     if bool(sim3_audit.get("sim3_may_mask_failure", False)):
@@ -502,7 +550,10 @@ def _annotate_sr_reliability(
 
     explanation_map = {
         "global_gate_failed": "Global trajectory gate failed; local valid segments may not represent the whole run.",
+        "input_coverage_failed": "The estimate does not cover enough of the complete reference trajectory.",
+        "input_coverage_warning": "Reference support is incomplete; report temporal and path coverage with the metrics.",
         "orientation_unstable": "Translation SR is high while orientation is unstable; translation-only SR can be misleading.",
+        "orientation_warning": "Rotation error is elevated even if translation-only SR remains high.",
         "sim3_unreliable": "Sim3 reliability audit failed; Sim3-aligned SR should not be trusted.",
         "sim3_may_mask_failure": "Sim3 may be masking a real trajectory failure by absorbing error through scale/alignment.",
         "sim3_warning": "Sim3 has a warning; inspect replay before treating SR as conclusive.",
@@ -520,4 +571,3 @@ def _annotate_sr_reliability(
     }
     success.update(update)
     return update
-

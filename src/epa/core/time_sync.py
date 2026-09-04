@@ -1,12 +1,44 @@
 from __future__ import annotations
 
 import numpy as np
-from scipy.signal import correlate
 
 from .association import _associate_gt_est, _offset_match_diagnostics
 from .calibration import solve_world_alignment
 from .math_utils import rmse
 from .time_alignment import compute_psr, get_angular_velocity_norm, matching_time_indices
+
+
+def _next_fast_len_235(size: int) -> int:
+    """Return the smallest 2/3/5-smooth FFT length at least ``size``."""
+    target = max(1, int(size))
+    best = 1 << (target - 1).bit_length()
+    factor_2 = 1
+    while factor_2 < best:
+        factor_3 = factor_2
+        while factor_3 < best:
+            factor_5 = factor_3
+            while factor_5 < target:
+                factor_5 *= 5
+            best = min(best, factor_5)
+            factor_3 *= 3
+        factor_2 *= 2
+    return best
+
+
+def _correlate_full(lhs, rhs):
+    """Return the full real-valued cross-correlation without scipy.signal."""
+    x = np.asarray(lhs, dtype=float).reshape(-1)
+    y = np.asarray(rhs, dtype=float).reshape(-1)
+    if x.size == 0 or y.size == 0:
+        raise ValueError("Cross-correlation inputs must be non-empty.")
+
+    output_size = int(x.size + y.size - 1)
+    if min(x.size, y.size) <= 64:
+        return np.correlate(x, y, mode="full")
+
+    fft_size = _next_fast_len_235(output_size)
+    spectrum = np.fft.rfft(x, fft_size) * np.fft.rfft(y[::-1], fft_size)
+    return np.fft.irfft(spectrum, fft_size)[:output_size]
 
 
 def _linear_interp_extrapolate(x, y, query):
@@ -190,7 +222,7 @@ def _run_time_alignment(
             "Step-1 signals contain non-finite values. Check timestamps for duplicates/non-monotonic samples."
         )
 
-    corr = correlate(sig_est, sig_gt, mode="full")
+    corr = _correlate_full(sig_est, sig_gt)
     if not np.all(np.isfinite(corr)):
         raise ValueError(
             "Cross-correlation contains non-finite values (possible invalid timestamp deltas or signal values)."

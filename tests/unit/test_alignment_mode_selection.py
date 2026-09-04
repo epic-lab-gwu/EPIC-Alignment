@@ -17,12 +17,51 @@ from epa.core.trajectory_alignment import (
     _solve_extrinsic_world_candidate,
     _solve_world_alignment_posyaw_robust_trimmed,
 )
+from epa.core.solve_eval import _map_est_to_ref_nearest
+
+
+def _legacy_match_nearest_timestamps(
+    stamps_ref,
+    stamps_est,
+    *,
+    max_diff_s: float,
+    offset_est_s: float,
+):
+    ref = np.asarray(stamps_ref, dtype=float).reshape(-1)
+    est = np.asarray(stamps_est, dtype=float).reshape(-1) + float(offset_est_s)
+    ids_ref = []
+    ids_est = []
+    for index, timestamp in enumerate(ref):
+        differences = np.abs(est - timestamp)
+        nearest = int(np.argmin(differences))
+        if float(differences[nearest]) <= float(max_diff_s):
+            ids_ref.append(index)
+            ids_est.append(nearest)
+    return np.asarray(ids_ref, dtype=int), np.asarray(ids_est, dtype=int)
+
+
+def _legacy_map_est_to_ref_nearest(t_ref, t_est, pos_est, quat_est, offset_est_s):
+    ref = np.asarray(t_ref, dtype=float).reshape(-1)
+    est_shifted = np.asarray(t_est, dtype=float).reshape(-1) - float(offset_est_s)
+    indices = np.empty(ref.size, dtype=int)
+    insertions = np.searchsorted(est_shifted, ref, side="left")
+    for index, insertion in enumerate(insertions):
+        if insertion <= 0:
+            indices[index] = 0
+        elif insertion >= est_shifted.size:
+            indices[index] = est_shifted.size - 1
+        else:
+            left_error = abs(ref[index] - est_shifted[insertion - 1])
+            right_error = abs(ref[index] - est_shifted[insertion])
+            indices[index] = insertion - 1 if left_error <= right_error else insertion
+    return np.asarray(pos_est)[indices], np.asarray(quat_est)[indices]
 
 
 def test_interactive_eval_views_only_include_requested_alignment() -> None:
     assert _default_interactive_view("none") == "step3"
     assert _interactive_eval_view_specs("none") == ()
     assert _interactive_eval_view_specs("epa_step3") == ()
+    assert _interactive_eval_view_specs("se3-original") == ()
 
     assert _default_interactive_view("sim3") == "sim3"
     assert _interactive_eval_view_specs("sim3") == (("sim3", "sim3", "sim3"),)
@@ -154,6 +193,58 @@ def test_match_nearest_timestamps_allows_repeated_est_indices() -> None:
     assert np.array_equal(ids_est, np.array([0, 0, 1, 1], dtype=int))
 
 
+def test_match_nearest_timestamps_vectorization_matches_legacy_scalar_oracle() -> None:
+    rng = np.random.default_rng(20260905)
+    ref = np.sort(rng.uniform(-1.0, 12.0, size=900))
+    est = np.sort(rng.uniform(0.0, 10.0, size=350))
+    est[40:45] = est[40]
+
+    for offset in [-0.17, 0.0, 0.23]:
+        for max_diff in [0.0, 0.01, 0.05, 0.5]:
+            expected = _legacy_match_nearest_timestamps(
+                ref, est, max_diff_s=max_diff, offset_est_s=offset
+            )
+            actual = _match_nearest_timestamps(
+                ref, est, max_diff_s=max_diff, offset_est_s=offset
+            )
+            np.testing.assert_array_equal(actual[0], expected[0])
+            np.testing.assert_array_equal(actual[1], expected[1])
+
+
+def test_match_nearest_timestamps_preserves_first_index_on_ties() -> None:
+    ref = np.array([0.5, 1.0], dtype=float)
+    est = np.array([0.0, 1.0, 1.0], dtype=float)
+
+    ids_ref, ids_est = _match_nearest_timestamps(
+        ref, est, max_diff_s=0.5, offset_est_s=0.0
+    )
+
+    np.testing.assert_array_equal(ids_ref, np.array([0, 1]))
+    np.testing.assert_array_equal(ids_est, np.array([0, 1]))
+
+
+def test_map_est_to_ref_nearest_vectorization_matches_legacy_scalar_oracle() -> None:
+    rng = np.random.default_rng(20260906)
+    ref = np.sort(rng.uniform(-2.0, 12.0, size=700))
+    est = np.sort(rng.uniform(0.0, 10.0, size=260))
+    positions = rng.normal(size=(est.size, 3))
+    quaternions = R.random(est.size, random_state=rng).as_quat()
+
+    for offset in [-0.2, 0.0, 0.35]:
+        expected = _legacy_map_est_to_ref_nearest(
+            ref, est, positions, quaternions, offset
+        )
+        actual = _map_est_to_ref_nearest(
+            t_ref=ref,
+            t_est=est,
+            pos_est=positions,
+            quat_est=quaternions,
+            offset_est_s=offset,
+        )
+        np.testing.assert_array_equal(actual[0], expected[0])
+        np.testing.assert_array_equal(actual[1], expected[1])
+
+
 def test_associate_gt_est_uses_shorter_side_cardinality() -> None:
     t_ref = np.array([0.00, 0.01, 0.02, 0.03, 0.04], dtype=float)
     t_est = np.array([0.00, 0.02], dtype=float)
@@ -281,6 +372,7 @@ def test_step3_robust_trimmed_alignment_ignores_drift_for_transform_only() -> No
         quat_gt_solve=quat,
         pr_solve=pr,
         qr_solve=quat,
+        global_align_mode="se3-original",
     )
 
     assert out["step3_alignment_mode"] == "robust_trimmed"
@@ -310,6 +402,7 @@ def test_step3_uses_stable_prefix_when_trajectory_jumps() -> None:
         quat_gt_solve=quat,
         pr_solve=pr,
         qr_solve=quat,
+        global_align_mode="se3-original",
     )
 
     assert np.isfinite(out["step3_candidate_stable_sr_proxy"])

@@ -31,6 +31,32 @@ def test_load_estimation_tum(tmp_path: Path) -> None:
     np.testing.assert_allclose(quat[:, 3], np.array([1.0, 1.0]))
 
 
+@pytest.mark.parametrize("dt_s", [2.0, 5.0])
+def test_load_estimation_tum_preserves_low_frequency_seconds(tmp_path: Path, dt_s: float) -> None:
+    traj_path = tmp_path / "low_rate.tum"
+    traj_path.write_text(
+        f"0 0 0 0 0 0 0 1\n{dt_s} 1 0 0 0 0 0 1\n{2 * dt_s} 2 0 0 0 0 0 1\n",
+        encoding="utf-8",
+    )
+
+    t, _, _ = load_estimation_tum(traj_path)
+
+    np.testing.assert_allclose(t, np.array([0.0, dt_s, 2 * dt_s]))
+
+
+def test_load_generic_csv_preserves_low_frequency_seconds(tmp_path: Path) -> None:
+    csv_path = tmp_path / "low_rate.csv"
+    csv_path.write_text(
+        "timestamp,x,y,z,qx,qy,qz,qw\n"
+        "100,0,0,0,0,0,0,1\n105,1,0,0,0,0,0,1\n110,2,0,0,0,0,0,1\n",
+        encoding="utf-8",
+    )
+
+    t, _, _ = load_estimation_trajectory(csv_path, est_format="csv")
+
+    np.testing.assert_allclose(t, np.array([100.0, 105.0, 110.0]))
+
+
 def test_load_estimation_tum_accepts_comma_delimited_text(tmp_path: Path) -> None:
     traj_path = tmp_path / "traj.txt"
     traj_path.write_text(

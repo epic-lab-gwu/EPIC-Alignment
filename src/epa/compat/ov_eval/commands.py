@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from epa.core.evaluation import apply_input_coverage_to_success
 from epa.core.math_utils import compute_error_statistics
 from epa.ov_io import load_ov_csv as _load_ov_eval_csv
 from epa.ov_io import load_pose_file as _load_pose_file
@@ -15,9 +16,6 @@ from epa.ov_report import (
     source_counts as _format_source_counts,
     source_details as _format_source_details,
 )
-from epa.traj_tool import build_parser as build_traj_parser
-from epa.traj_tool import run as run_traj
-
 from .evaluate import (
     _compute_rpe_segments,
     _compute_time_rpe_1s,
@@ -39,6 +37,11 @@ def _epa_eval_kwargs_current(args: argparse.Namespace) -> dict[str, object]:
     import epa.ov_eval_compat as compat
 
     return compat._epa_eval_kwargs(args)
+
+
+def _eval_warning_prefix(quality: dict[str, object]) -> str:
+    """Distinguish a soft warning from a rejected evaluation."""
+    return "WARNING" if bool(quality.get("eval_reliable", False)) else "UNRELIABLE"
 
 
 def run_format_converter(args: argparse.Namespace) -> int:
@@ -164,6 +167,9 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         drift_ape_slope_mps=drift_ape_slope_mps,
         drift_ape_jump_m=drift_ape_jump_m,
     )
+    apply_input_coverage_to_success(
+        valid["success"], eval_res.get("input_coverage"), set_primary=True
+    )
 
     print("======================================")
     print("Relative Pose Error")
@@ -201,10 +207,21 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         )
     )
     print(
-        f"SR@{_fmt(resolved_threshold_m, 1)}m - distance = "
-        f"{_fmt(float(success['success_rate_distance']) * 100.0, 2)}% "
-        f"| time = {_fmt(float(success['success_rate_time']) * 100.0, 2)}% "
-        f"| valid_dist = {_fmt(success['valid_distance_m'])}/{_fmt(success['total_distance_m'])}m"
+        f"Coverage - path = {_fmt(float(success['path_coverage_ratio']) * 100.0, 2)}% "
+        f"| time = {_fmt(float(success['temporal_coverage_ratio']) * 100.0, 2)}% "
+        f"| status = {success['input_coverage_status']}"
+    )
+    print(
+        f"SR local@{_fmt(resolved_threshold_m, 1)}m - distance = "
+        f"{_fmt(float(success['local_success_rate_distance']) * 100.0, 2)}% "
+        f"| time = {_fmt(float(success['local_success_rate_time']) * 100.0, 2)}% "
+        f"| valid_dist = {_fmt(success['valid_distance_m'])}/{_fmt(success['local_total_distance_m'])}m"
+    )
+    print(
+        f"SR complete@{_fmt(resolved_threshold_m, 1)}m - distance = "
+        f"{_fmt(float(success['complete_success_rate_distance']) * 100.0, 2)}% "
+        f"| time = {_fmt(float(success['complete_success_rate_time']) * 100.0, 2)}% "
+        f"| valid_dist = {_fmt(success['valid_distance_m'])}/{_fmt(success['complete_total_distance_m'])}m"
     )
     if isinstance(eval_alignment, dict) and str(eval_alignment.get("align_mode", "")) == "sim3":
         reliable = bool(eval_alignment.get("sim3_reliable", True))
@@ -218,7 +235,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
             print(f"Sim3 fallback used = true | reason = {reason}")
     print(f"Eval reliable = {str(bool(quality['eval_reliable'])).lower()}")
     if quality["eval_warning"]:
-        print(f"[UNRELIABLE] {quality['eval_warning']}")
+        print(f"[{_eval_warning_prefix(quality)}] {quality['eval_warning']}")
     print("======================================")
     print(f"Aligned pairs: {int(eval_res['matched'])}")
     print(f"Eval source = {str(eval_res.get('eval_source', 'unknown'))}")
@@ -232,6 +249,11 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
                 "rpe_time_1s_rmse_m": float(time_pos_stats["rmse"]),
                 "sr_distance_pct": float(success["success_rate_distance"]) * 100.0,
                 "sr_time_pct": float(success["success_rate_time"]) * 100.0,
+                "sr_local_distance_pct": float(success["local_success_rate_distance"]) * 100.0,
+                "sr_local_time_pct": float(success["local_success_rate_time"]) * 100.0,
+                "path_coverage_pct": float(success["path_coverage_ratio"]) * 100.0,
+                "temporal_coverage_pct": float(success["temporal_coverage_ratio"]) * 100.0,
+                "input_coverage_status": str(success["input_coverage_status"]),
                 "eval_reliable": bool(quality["eval_reliable"]),
                 "sim3_fallback_used": bool(eval_alignment.get("sim3_robust_fallback_used", False))
                 if isinstance(eval_alignment, dict)
@@ -374,6 +396,9 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 drift_rpe_1s_m=drift_rpe_1s_m,
                 drift_ape_slope_mps=drift_ape_slope_mps,
                 drift_ape_jump_m=drift_ape_jump_m,
+            )
+            apply_input_coverage_to_success(
+                valid["success"], ev.get("input_coverage"), set_primary=True
             )
             quality = _eval_quality_flags(ev, valid["success"], time_rpe)
             if not bool(quality["eval_reliable"]):
@@ -621,6 +646,9 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     drift_ape_slope_mps=drift_ape_slope_mps,
                     drift_ape_jump_m=drift_ape_jump_m,
                 )
+                apply_input_coverage_to_success(
+                    valid["success"], ev.get("input_coverage"), set_primary=True
+                )
                 quality = _eval_quality_flags(ev, valid["success"], time_rpe)
                 if not bool(quality["eval_reliable"]):
                     detail = f"{run_file.name}:{quality['eval_warning']}"
@@ -786,6 +814,11 @@ def run_error_comparison(args: argparse.Namespace) -> int:
 
 
 def run_plot_trajectories(args: argparse.Namespace) -> int:
+    # Plotting imports matplotlib and the complete trajectory CLI.  Keep that
+    # startup cost off metric-only compatibility commands.
+    from epa.traj_tool import build_parser as build_traj_parser
+    from epa.traj_tool import run as run_traj
+
     align_mode = str(args.align_mode).lower()
     if align_mode not in _VALID_ALIGN_MODES:
         raise ValueError(f"Invalid align_mode '{args.align_mode}'")
@@ -801,10 +834,11 @@ def run_plot_trajectories(args: argparse.Namespace) -> int:
         "--plot",
     ]
 
-    if align_mode in {
-        "se3",
-        "epa_se3",
-        "epa_se3_eval",
+    if align_mode in {"se3", "se3r", "epa_se3", "epa_se3r", "epa_se3_eval", "rotation_first_se3"}:
+        traj_argv.extend(["--eval-align", "se3"])
+    elif align_mode in {"se3-original", "se3_original", "se3-orginal", "se3_orginal", "position_first_se3", "umeyama_se3"}:
+        traj_argv.extend(["--eval-align", "se3-original"])
+    elif align_mode in {
         "se3single",
         "posyaw",
         "posyawsingle",

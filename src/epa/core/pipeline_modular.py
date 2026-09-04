@@ -11,6 +11,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 from scipy.spatial.transform import Rotation as R
 
 from .evaluation import (
+    apply_input_coverage_to_success,
     normalize_pose_relation,
     print_metric_block,
 )
@@ -47,6 +48,8 @@ from .pipeline_metrics import (
     _run_alignment_diagnostics,
 )
 from .diagnostics import (
+    _build_failure_diagnosis,
+    _compute_input_coverage_diagnostics,
     _diagnosis_tags_from_metrics,
     _compute_piecewise_alignment as _compute_piecewise_alignment,
 )
@@ -166,6 +169,13 @@ def run_pipeline_modular(args, script_dir: Path):
     quality_good_segment_cv = float(getattr(args, "quality_good_segment_cv", 0.4))
     quality_good_heading_p90_deg = float(getattr(args, "quality_good_heading_p90_deg", 60.0))
     quality_partial_min_improve_pct = float(getattr(args, "quality_partial_min_improve_pct", 20.0))
+    quality_threshold_mode = str(getattr(args, "quality_threshold_mode", "adaptive"))
+    quality_good_rmse_ratio = float(getattr(args, "quality_good_rmse_ratio", 0.01))
+    quality_partial_rmse_ratio = float(getattr(args, "quality_partial_rmse_ratio", 0.05))
+    quality_critical_rmse_ratio = float(getattr(args, "quality_critical_rmse_ratio", 0.10))
+    quality_good_rmse_floor_m = float(getattr(args, "quality_good_rmse_floor_m", 0.05))
+    quality_partial_rmse_floor_m = float(getattr(args, "quality_partial_rmse_floor_m", 0.25))
+    quality_critical_rmse_floor_m = float(getattr(args, "quality_critical_rmse_floor_m", 1.0))
     quality_min_segment_samples = int(getattr(args, "quality_min_segment_samples", 80))
     t_gt, pos_gt, quat_gt = _apply_time_window(
         t_gt, pos_gt, quat_gt, t_start=t_start, t_end=t_end
@@ -174,6 +184,9 @@ def run_pipeline_modular(args, script_dir: Path):
     t_est, pos_est, quat_est = _apply_time_window(
         t_est, pos_est, quat_est, t_start=t_start, t_end=t_end
     )
+    t_gt_input = np.asarray(t_gt, dtype=float).copy()
+    pos_gt_input = np.asarray(pos_gt, dtype=float).copy()
+    t_est_input = np.asarray(t_est, dtype=float).copy()
 
     print("--- STEP 1: TIME ALIGNMENT ---")
     dt_resample = float(getattr(args, "dt_resample", 0.001))
@@ -193,6 +206,10 @@ def run_pipeline_modular(args, script_dir: Path):
     )
     calculated_offset = float(step1["calculated_offset"])
     time_metrics = step1["time_metrics"]
+    for prefix, timestamps in (("reference", t_gt_input), ("estimate", t_est_input)):
+        diffs = np.diff(np.asarray(timestamps, dtype=float))
+        diffs = diffs[np.isfinite(diffs) & (diffs > 1e-9)]
+        time_metrics[f"{prefix}_median_dt_s"] = float(np.median(diffs)) if diffs.size else float("nan")
     step1_forced_candidate = bool(step1["step1_forced_candidate"])
     step1_force_reason = str(step1["step1_force_reason"])
     t_uniform = step1["t_uniform"]
@@ -233,6 +250,13 @@ def run_pipeline_modular(args, script_dir: Path):
             calculated_offset=calculated_offset,
             title_offset=title_offset,
         )
+
+    input_coverage = _compute_input_coverage_diagnostics(
+        t_ref=t_gt_input,
+        pos_ref=pos_gt_input,
+        t_est=t_est_input,
+        offset_est_s=calculated_offset,
+    )
 
     downsample_hz = 0.0 if bool(getattr(args, "no_downsample", False)) else float(getattr(args, "downsample_hz", 100.0))
     solve_eval = _prepare_solve_eval_trajectories(
@@ -278,7 +302,12 @@ def run_pipeline_modular(args, script_dir: Path):
 
     requested_eval_align_alias = str(getattr(args, "eval_align", "none")).strip().lower()
     requested_eval_align_mode = _public_eval_align_mode(requested_eval_align_alias)
-    step3_global_align_mode = "posyaw" if requested_eval_align_mode in {"posyaw", "epa_posyaw"} else "se3"
+    if requested_eval_align_mode in {"posyaw", "epa_posyaw"}:
+        step3_global_align_mode = "posyaw"
+    elif requested_eval_align_mode == "se3-original":
+        step3_global_align_mode = "se3-original"
+    else:
+        step3_global_align_mode = "se3"
     robust_kernel = str(getattr(args, "robust_kernel", "none") or "none").strip().lower()
     robust_kernel_delta_m = getattr(args, "robust_kernel_delta_m", None)
     robust_kernel_max_iterations = int(getattr(args, "robust_kernel_max_iterations", 3))
@@ -423,6 +452,13 @@ def run_pipeline_modular(args, script_dir: Path):
         quality_good_segment_cv=quality_good_segment_cv,
         quality_good_heading_p90_deg=quality_good_heading_p90_deg,
         quality_partial_min_improve_pct=quality_partial_min_improve_pct,
+        quality_threshold_mode=quality_threshold_mode,
+        quality_good_rmse_ratio=quality_good_rmse_ratio,
+        quality_partial_rmse_ratio=quality_partial_rmse_ratio,
+        quality_critical_rmse_ratio=quality_critical_rmse_ratio,
+        quality_good_rmse_floor_m=quality_good_rmse_floor_m,
+        quality_partial_rmse_floor_m=quality_partial_rmse_floor_m,
+        quality_critical_rmse_floor_m=quality_critical_rmse_floor_m,
         rigid_check_max_path_ratio=rigid_check_max_path_ratio,
         rigid_check_max_bbox_ratio=rigid_check_max_bbox_ratio,
         rigid_check_max_global_local_ratio=rigid_check_max_global_local_ratio,
@@ -477,7 +513,15 @@ def run_pipeline_modular(args, script_dir: Path):
         "step3": {"pos": pr_final, "quat": q_step3},
     }
     eval_align_mode = requested_eval_align_mode
-    if requested_eval_align_mode in {"se3", "posyaw", "epa_posyaw"}:
+    if requested_eval_align_mode in {
+        "se3",
+        "se3-original",
+        "se3r",
+        "epa_se3r",
+        "rotation_first_se3",
+        "posyaw",
+        "epa_posyaw",
+    }:
         eval_align_mode = "none"
     eval_n_to_align = int(getattr(args, "eval_n_to_align", -1))
     eval_align_indices_by_stage = None
@@ -526,6 +570,11 @@ def run_pipeline_modular(args, script_dir: Path):
         t_start=getattr(args, "t_start", None),
         t_end=getattr(args, "t_end", None),
     )
+    for stage_valid in pose_metrics.get("valid_segment", {}).values():
+        if isinstance(stage_valid, dict) and isinstance(stage_valid.get("success"), dict):
+            apply_input_coverage_to_success(
+                stage_valid["success"], input_coverage, set_primary=True
+            )
     ape_pose_relation = normalize_pose_relation("ape", getattr(args, "ape_pose_relation", "trans_part"))
     rpe_pose_relation = normalize_pose_relation("rpe", getattr(args, "rpe_pose_relation", "trans_part"))
     orientation_diagnostics = _compute_orientation_diagnostics(pose_metrics, stage="step3")
@@ -535,6 +584,7 @@ def run_pipeline_modular(args, script_dir: Path):
         orientation=orientation_diagnostics,
         ape_relation=ape_pose_relation,
         rpe_relation=rpe_pose_relation,
+        input_coverage=input_coverage,
     )
     case_diagnostics = _diagnosis_tags_from_metrics(
         success=pose_metrics["valid_segment"]["step3"]["success"],
@@ -545,13 +595,29 @@ def run_pipeline_modular(args, script_dir: Path):
         rigid_alignability=rigid_alignability_for_diagnosis,
         orientation=orientation_diagnostics,
     )
+    failure_diagnosis = _build_failure_diagnosis(
+        user_alert_level=alert_level,
+        input_coverage=input_coverage,
+        alignment_quality=alignment_quality,
+        quality_label=quality_label,
+        rigid_label=rigid_alignability_label,
+        rigid_reasons=rigid_alignability_reasons,
+        case_diagnostics=case_diagnostics,
+        orientation=orientation_diagnostics,
+        sr_reliability=sr_reliability,
+    )
 
     stage_order = ["raw", "step2", "step3"]
-    terminal_eval_source = (
-        "epa_posyaw"
-        if requested_eval_align_mode in {"posyaw", "epa_posyaw"}
-        else ("epa_step3" if str(eval_align_mode).lower() in {"", "none"} else "epa_eval_align")
-    )
+    if requested_eval_align_mode in {"posyaw", "epa_posyaw"}:
+        terminal_eval_source = "epa_posyaw"
+    elif requested_eval_align_mode == "se3-original":
+        terminal_eval_source = "epa_se3_original"
+    elif requested_eval_align_mode == "se3":
+        terminal_eval_source = "epa_se3"
+    else:
+        terminal_eval_source = (
+            "epa_step3" if str(eval_align_mode).lower() in {"", "none"} else "epa_eval_align"
+        )
 
     sim3_terminal_style = str(requested_eval_align_mode).lower() in {
         "sim3",
@@ -589,6 +655,7 @@ def run_pipeline_modular(args, script_dir: Path):
             valid_ape_t = pose_metrics["valid_segment"][stage_name]["ape"][ape_pose_relation]["rmse"]
             valid_rpe_t = pose_metrics["valid_segment"][stage_name]["rpe"][rpe_pose_relation]["rmse"]
             sr_dist_pct = float(success["success_rate_distance"]) * 100.0
+            local_sr_dist_pct = float(success["local_success_rate_distance"]) * 100.0
             success_threshold_m = float(success["threshold"]["threshold_m"])
             print(
                 f"{stage_name}: "
@@ -598,7 +665,8 @@ def run_pipeline_modular(args, script_dir: Path):
                 f"RPE_rot_rmse={rpe_r:.6f} deg, "
                 f"RPE_time_1s_trans_rmse={rpe_time_t:.6f}, "
                 f"RPE_time_1s_rot_rmse={rpe_time_r:.6f} deg, "
-                f"SR_valid_dist={sr_dist_pct:.2f}%, "
+                f"SR_complete_dist={sr_dist_pct:.2f}%, "
+                f"SR_local_dist={local_sr_dist_pct:.2f}%, "
                 f"valid_APE_{ape_pose_relation}_rmse={valid_ape_t:.6f}, "
                 f"valid_RPE_{rpe_pose_relation}_rmse={valid_rpe_t:.6f}"
             )
@@ -660,6 +728,8 @@ def run_pipeline_modular(args, script_dir: Path):
         "rigid_alignability": rigid_alignability,
         "piecewise_diagnostics": piecewise_diag,
         "case_diagnostics": case_diagnostics,
+        "failure_diagnosis": failure_diagnosis,
+        "input_coverage": input_coverage,
         "sr_reliability": sr_reliability,
         "orientation_diagnostics": orientation_diagnostics,
         "pose_metrics": pose_metrics,
@@ -710,6 +780,7 @@ def run_pipeline_modular(args, script_dir: Path):
             "user_alert_reasons": alert_reasons,
             "orientation_unstable": bool(orientation_diagnostics["orientation_unstable"]),
             "orientation_warning": str(orientation_diagnostics["orientation_warning"]),
+            "orientation_status": str(orientation_diagnostics["orientation_status"]),
             "orientation_ape_rmse_deg": float(orientation_diagnostics["orientation_ape_rmse_deg"]),
             "orientation_rpe_rmse_deg": float(orientation_diagnostics["orientation_rpe_rmse_deg"]),
             "orientation_rpe_time_1s_rmse_deg": float(
@@ -718,6 +789,29 @@ def run_pipeline_modular(args, script_dir: Path):
             "diagnosis_primary": str(case_diagnostics["diagnosis_primary"]),
             "diagnosis_summary": str(case_diagnostics["diagnosis_summary"]),
             "diagnosis_tags": ",".join(str(x) for x in case_diagnostics["diagnosis_tags"]),
+            "failure_diagnosis_level": str(failure_diagnosis["failure_diagnosis_level"]),
+            "failure_diagnosis_hard_reasons": ",".join(
+                str(x) for x in failure_diagnosis["failure_diagnosis_hard_reasons"]
+            ),
+            "failure_diagnosis_soft_reasons": ",".join(
+                str(x) for x in failure_diagnosis["failure_diagnosis_soft_reasons"]
+            ),
+            "trajectory_diagnosis_level": str(
+                failure_diagnosis["trajectory_diagnosis_level"]
+            ),
+            "trajectory_diagnosis_hard_reasons": ",".join(
+                str(x) for x in failure_diagnosis["trajectory_diagnosis_hard_reasons"]
+            ),
+            "trajectory_diagnosis_soft_reasons": ",".join(
+                str(x) for x in failure_diagnosis["trajectory_diagnosis_soft_reasons"]
+            ),
+            "calibration_confidence": str(failure_diagnosis["calibration_confidence"]),
+            "calibration_confidence_reasons": ",".join(
+                str(x) for x in failure_diagnosis["calibration_confidence_reasons"]
+            ),
+            "coverage_status": str(input_coverage["coverage_status"]),
+            "temporal_coverage_ratio": float(input_coverage["temporal_coverage_ratio"]),
+            "path_coverage_ratio": float(input_coverage["path_coverage_ratio"]),
             "rigid_check_max_path_ratio": float(rigid_check_max_path_ratio),
             "rigid_check_max_bbox_ratio": float(rigid_check_max_bbox_ratio),
             "rigid_check_max_global_local_ratio": float(rigid_check_max_global_local_ratio),
@@ -781,6 +875,7 @@ def run_pipeline_modular(args, script_dir: Path):
         orientation=orientation_diagnostics,
         ape_relation=ape_pose_relation,
         rpe_relation=rpe_pose_relation,
+        input_coverage=input_coverage,
     )
     interactive_trajectory_views: dict[str, dict] = {}
     interactive_view_metrics: dict[str, dict] = {
@@ -846,6 +941,7 @@ def run_pipeline_modular(args, script_dir: Path):
                 orientation=orientation_diagnostics,
                 ape_relation=ape_pose_relation,
                 rpe_relation=rpe_pose_relation,
+                input_coverage=input_coverage,
             )
             view_info = view_pose_metrics.get("eval_alignment", {}).get("step3", {})
             try:

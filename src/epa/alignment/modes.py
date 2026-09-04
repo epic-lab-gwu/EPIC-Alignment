@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-PUBLIC_ALIGN_MODES: tuple[str, ...] = ("se3", "posyaw", "sim3")
+PUBLIC_ALIGN_MODES: tuple[str, ...] = ("se3", "se3-original", "posyaw", "sim3")
 
 SE3_ALIGN_ALIASES: frozenset[str] = frozenset(
     {
@@ -8,6 +8,25 @@ SE3_ALIGN_ALIASES: frozenset[str] = frozenset(
         "epa_step3",
         "epa_se3",
         "epa_se3_eval",
+    }
+)
+SE3R_ALIGN_ALIASES: frozenset[str] = frozenset(
+    {
+        "se3r",
+        "epa_se3r",
+        "rotation_first_se3",
+    }
+)
+SE3_ORIGINAL_ALIGN_ALIASES: frozenset[str] = frozenset(
+    {
+        "se3-original",
+        "se3_original",
+        # Accept the originally requested spelling without making it canonical.
+        "se3-orginal",
+        "se3_orginal",
+        "position_first_se3",
+        "umeyama_se3",
+        "epa_se3_original",
     }
 )
 POSYAW_ALIGN_ALIASES: frozenset[str] = frozenset({"posyaw", "epa_posyaw"})
@@ -31,6 +50,8 @@ LEGACY_ORIGIN_ALIGN_MODES: frozenset[str] = frozenset({"se3single", "posyawsingl
 COMPAT_ALIGN_MODES: tuple[str, ...] = tuple(
     sorted(
         SE3_ALIGN_ALIASES
+        | SE3R_ALIGN_ALIASES
+        | SE3_ORIGINAL_ALIGN_ALIASES
         | POSYAW_ALIGN_ALIASES
         | SIM3_ALIGN_ALIASES
         | SPECIAL_EVAL_ALIGN_MODES
@@ -44,7 +65,7 @@ def _clean_mode(raw_mode: str | None) -> str:
 
 
 def public_align_mode(raw_mode: str | None, *, default: str = "se3", strict: bool = False) -> str:
-    """Return the public alignment mode: se3, posyaw, or sim3.
+    """Return the public alignment mode: se3, se3-original, posyaw, or sim3.
 
     Compatibility aliases are accepted here, but internal/debug modes are not
     exposed to callers that consume this public value.
@@ -57,6 +78,10 @@ def public_align_mode(raw_mode: str | None, *, default: str = "se3", strict: boo
         return default
     if mode in SE3_ALIGN_ALIASES:
         return "se3"
+    if mode in SE3R_ALIGN_ALIASES:
+        return "se3"
+    if mode in SE3_ORIGINAL_ALIGN_ALIASES:
+        return "se3-original"
     if mode in POSYAW_ALIGN_ALIASES:
         return "posyaw"
     if mode in SIM3_ALIGN_ALIASES:
@@ -89,6 +114,10 @@ def resolve_metric_eval_align_mode(
         return "se3" if bool(step3_as_se3) else "none"
     if mode in {"epa_se3", "epa_se3_eval"}:
         return "se3"
+    if mode in SE3R_ALIGN_ALIASES:
+        return "se3"
+    if mode in SE3_ORIGINAL_ALIGN_ALIASES:
+        return "se3-original"
     if mode == "epa_posyaw":
         return "posyaw"
     if mode == "epa_sim3":

@@ -11,15 +11,21 @@ from .calibration import (
     robust_scale,
     solve_extrinsic_rotation,
     solve_extrinsic_translation,
+    solve_rotation_first_alignment,
     solve_world_alignment,
     solve_world_alignment_robust,
 )
 from .evaluation import summarize_abs_errors
-from .math_utils import normalize_quat_array, rmse
+from .math_utils import (
+    normalize_quat_array,
+    quat_angle_error_rad,
+    quat_multiply_xyzw,
+    rmse,
+)
 
 
 def _rotation_error_rmse_deg(q_ref, q_est) -> float:
-    err = (R.from_quat(q_est).inv() * R.from_quat(q_ref)).magnitude()
+    err = quat_angle_error_rad(q_ref, q_est)
     return float(np.sqrt(np.mean(np.degrees(err) ** 2)))
 
 
@@ -75,6 +81,196 @@ def _solve_world_alignment_standard(P: np.ndarray, Q: np.ndarray) -> dict[str, o
     }
 
 
+def _solve_world_alignment_rotation_first_standard(
+    P: np.ndarray,
+    Q: np.ndarray,
+    qP: np.ndarray,
+    qQ: np.ndarray,
+) -> dict[str, object]:
+    Rw, tw = solve_rotation_first_alignment(P, Q, qP, qQ)
+    pred = (Rw @ np.asarray(P, dtype=float).T).T + tw
+    residuals = np.linalg.norm(pred - np.asarray(Q, dtype=float), axis=1)
+    return {
+        "R": Rw,
+        "t": tw,
+        "pred": pred,
+        "residuals": residuals,
+        "rmse_all_m": _alignment_rmse(pred, Q),
+    }
+
+
+def _solve_world_alignment_rotation_first_robust_kernel(
+    P: np.ndarray,
+    Q: np.ndarray,
+    qP: np.ndarray,
+    qQ: np.ndarray,
+    *,
+    robust_delta_m: float | None = None,
+    robust_max_iterations: int = 3,
+    robust_kernel: str = "huber",
+) -> dict[str, object]:
+    """Robust translation fit with the orientation-derived rotation fixed."""
+    P = np.asarray(P, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    standard = _solve_world_alignment_rotation_first_standard(P, Q, qP, qQ)
+    Rw = np.asarray(standard["R"], dtype=float)
+    tw = np.asarray(standard["t"], dtype=float)
+    residuals = np.asarray(standard["residuals"], dtype=float)
+    info = {
+        "iterations": 0,
+        "delta_m": float("nan"),
+        "scale_m": float("nan"),
+        "downweighted_count": 0,
+        "effective_weight_fraction": 1.0,
+    }
+    rotated = (Rw @ P.T).T
+    offsets = Q - rotated
+    for iteration in range(max(1, int(robust_max_iterations))):
+        scale = robust_scale(residuals, floor=1e-6)
+        delta = (
+            float(robust_delta_m)
+            if robust_delta_m is not None
+            else 1.345 * max(scale, 1e-3)
+        )
+        weights = robust_weights(residuals, delta, robust_kernel)
+        weight_sum = float(np.sum(weights))
+        if weight_sum <= 0.0:
+            break
+        updated_t = np.sum(offsets * weights[:, None], axis=0) / weight_sum
+        updated_pred = rotated + updated_t
+        updated_residuals = np.linalg.norm(updated_pred - Q, axis=1)
+        info.update(
+            {
+                "iterations": int(iteration + 1),
+                "delta_m": float(delta),
+                "scale_m": float(scale),
+                "downweighted_count": int(np.count_nonzero(weights < 0.999999)),
+                "effective_weight_fraction": float(np.mean(weights)),
+            }
+        )
+        translation_delta = np.linalg.norm(updated_t - tw)
+        tw, residuals = updated_t, updated_residuals
+        if translation_delta <= 1e-9 * (1.0 + np.linalg.norm(tw)):
+            break
+
+    pred = rotated + tw
+    robust_rmse = _alignment_rmse(pred, Q)
+    return {
+        "R": Rw,
+        "t": tw,
+        "pred": pred,
+        "residuals": np.linalg.norm(pred - Q, axis=1),
+        "rmse_all_m": robust_rmse,
+        "mode": f"rotation_first_robust_{robust_kernel}",
+        "selected_mask": np.ones(P.shape[0], dtype=bool),
+        "inlier_count": int(P.shape[0]),
+        "rejected_count": 0,
+        "rejection_ratio": 0.0,
+        "outlier_threshold_m": float(info["delta_m"]),
+        "robust_available": True,
+        "standard_rmse_all_m": float(standard["rmse_all_m"]),
+        "standard_rmse_on_inliers_m": float(standard["rmse_all_m"]),
+        "robust_rmse_inliers_m": float(robust_rmse),
+        "robust_rmse_all_m": float(robust_rmse),
+        "kernel": robust_kernel,
+        **info,
+    }
+
+
+def _solve_world_alignment_rotation_first_robust_trimmed(
+    P: np.ndarray,
+    Q: np.ndarray,
+    qP: np.ndarray,
+    qQ: np.ndarray,
+    *,
+    max_iterations: int = 3,
+    min_inlier_ratio: float = 0.35,
+    max_rejection_ratio: float = 0.65,
+) -> dict[str, object]:
+    """Trim position outliers while keeping the orientation rotation fixed."""
+    P = np.asarray(P, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    standard = _solve_world_alignment_rotation_first_standard(P, Q, qP, qQ)
+    Rw = np.asarray(standard["R"], dtype=float)
+    rotated = (Rw @ P.T).T
+    offsets = Q - rotated
+    n = int(P.shape[0])
+    min_inliers = max(6, int(np.ceil(float(min_inlier_ratio) * float(n))))
+    if n < min_inliers:
+        return {
+            **standard,
+            "mode": "rotation_first_standard",
+            "selected_mask": np.ones(n, dtype=bool),
+            "inlier_count": n,
+            "rejected_count": 0,
+            "rejection_ratio": 0.0,
+            "outlier_threshold_m": float("inf"),
+            "robust_available": False,
+            "standard_rmse_all_m": float(standard["rmse_all_m"]),
+            "standard_rmse_on_inliers_m": float(standard["rmse_all_m"]),
+            "robust_rmse_inliers_m": float(standard["rmse_all_m"]),
+            "robust_rmse_all_m": float(standard["rmse_all_m"]),
+        }
+
+    mask = np.ones(n, dtype=bool)
+    threshold = float("inf")
+    for _ in range(int(max_iterations)):
+        tw = np.mean(offsets[mask], axis=0)
+        pred_all = rotated + tw
+        residuals = np.linalg.norm(pred_all - Q, axis=1)
+        threshold = _robust_threshold(
+            residuals,
+            min_inliers=min_inliers,
+            max_rejection_ratio=float(max_rejection_ratio),
+        )
+        new_mask = residuals <= threshold
+        if int(np.count_nonzero(new_mask)) < min_inliers:
+            keep = np.argsort(residuals)[:min_inliers]
+            new_mask = np.zeros(n, dtype=bool)
+            new_mask[keep] = True
+            threshold = float(np.max(residuals[keep]))
+        if np.array_equal(new_mask, mask):
+            break
+        mask = new_mask
+
+    robust_t = np.mean(offsets[mask], axis=0)
+    robust_pred = rotated + robust_t
+    robust_residuals = np.linalg.norm(robust_pred - Q, axis=1)
+    standard_pred = np.asarray(standard["pred"], dtype=float)
+    standard_residuals = np.asarray(standard["residuals"], dtype=float)
+    standard_inlier_rmse = _alignment_rmse(standard_pred[mask], Q[mask])
+    robust_inlier_rmse = _alignment_rmse(robust_pred[mask], Q[mask])
+    robust_all_rmse = _alignment_rmse(robust_pred, Q)
+    rejected = int(n - np.count_nonzero(mask))
+    improvement = standard_inlier_rmse - robust_inlier_rmse
+    enough_outliers = rejected >= max(3, int(np.ceil(0.05 * n)))
+    better_on_inliers = robust_inlier_rmse <= standard_inlier_rmse * 0.90 or improvement >= 0.05
+    use_robust = bool(enough_outliers and better_on_inliers)
+    selected_mask = mask if use_robust else np.ones(n, dtype=bool)
+    selected_t = robust_t if use_robust else np.asarray(standard["t"], dtype=float)
+    selected_pred = robust_pred if use_robust else standard_pred
+    selected_residuals = robust_residuals if use_robust else standard_residuals
+
+    return {
+        "R": Rw,
+        "t": selected_t,
+        "pred": selected_pred,
+        "residuals": selected_residuals,
+        "rmse_all_m": robust_all_rmse if use_robust else float(standard["rmse_all_m"]),
+        "mode": "rotation_first_robust_trimmed" if use_robust else "rotation_first_standard",
+        "selected_mask": selected_mask,
+        "inlier_count": int(np.count_nonzero(selected_mask)),
+        "rejected_count": int(n - np.count_nonzero(selected_mask)),
+        "rejection_ratio": float((n - np.count_nonzero(selected_mask)) / max(1, n)),
+        "outlier_threshold_m": float(threshold if use_robust else float("inf")),
+        "robust_available": True,
+        "standard_rmse_all_m": float(standard["rmse_all_m"]),
+        "standard_rmse_on_inliers_m": float(standard_inlier_rmse),
+        "robust_rmse_inliers_m": float(robust_inlier_rmse),
+        "robust_rmse_all_m": float(robust_all_rmse),
+    }
+
+
 def _standard_world_fit_with_info(
     P: np.ndarray, Q: np.ndarray, *, posyaw: bool
 ) -> dict[str, object]:
@@ -89,6 +285,37 @@ def _standard_world_fit_with_info(
     return {
         **standard,
         "mode": "posyaw_standard" if posyaw else "standard",
+        "selected_mask": np.ones(n, dtype=bool),
+        "inlier_count": n,
+        "rejected_count": 0,
+        "rejection_ratio": 0.0,
+        "outlier_threshold_m": float("inf"),
+        "robust_available": False,
+        "standard_rmse_all_m": rmse,
+        "standard_rmse_on_inliers_m": rmse,
+        "robust_rmse_inliers_m": rmse,
+        "robust_rmse_all_m": rmse,
+        "kernel": "standard",
+        "iterations": 0,
+        "delta_m": float("nan"),
+        "scale_m": float("nan"),
+        "downweighted_count": 0,
+        "effective_weight_fraction": 1.0,
+    }
+
+
+def _standard_rotation_first_world_fit_with_info(
+    P: np.ndarray,
+    Q: np.ndarray,
+    qP: np.ndarray,
+    qQ: np.ndarray,
+) -> dict[str, object]:
+    standard = _solve_world_alignment_rotation_first_standard(P, Q, qP, qQ)
+    n = int(np.asarray(P).shape[0])
+    rmse = float(standard["rmse_all_m"])
+    return {
+        **standard,
+        "mode": "rotation_first_standard",
         "selected_mask": np.ones(n, dtype=bool),
         "inlier_count": n,
         "rejected_count": 0,
@@ -840,7 +1067,30 @@ def _solve_extrinsic_world_candidate(
             extrinsic_offset,
         )
 
-        if str(robust_kernel).lower() in {"huber", "cauchy"} and str(global_align_mode).lower() in {
+        global_mode = str(global_align_mode).lower()
+        rotation_first = global_mode in {
+            "se3",
+            "se3r",
+            "epa_se3",
+            "epa_se3r",
+            "rotation_first_se3",
+        }
+        if rotation_first:
+            R_step2_solve = np.einsum("nij,jk->nik", Rr_mats_solve, R_calc.T)
+            q_step2_solve = normalize_quat_array(R.from_matrix(R_step2_solve).as_quat())
+            qP = q_step2_solve[solve_mask]
+            qQ = np.asarray(quat_gt_solve, dtype=float)[solve_mask]
+        if str(robust_kernel).lower() in {"huber", "cauchy"} and rotation_first:
+            world_fit = _solve_world_alignment_rotation_first_robust_kernel(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+                qP,
+                qQ,
+                robust_delta_m=robust_kernel_delta_m,
+                robust_max_iterations=robust_kernel_max_iterations,
+                robust_kernel=str(robust_kernel).lower(),
+            )
+        elif str(robust_kernel).lower() in {"huber", "cauchy"} and global_mode in {
             "posyaw",
             "epa_posyaw",
         }:
@@ -859,13 +1109,27 @@ def _solve_extrinsic_world_candidate(
                 robust_max_iterations=robust_kernel_max_iterations,
                 robust_kernel=str(robust_kernel).lower(),
             )
+        elif str(robust_kernel).lower() == "standard" and rotation_first:
+            world_fit = _standard_rotation_first_world_fit_with_info(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+                qP,
+                qQ,
+            )
         elif str(robust_kernel).lower() == "standard":
             world_fit = _standard_world_fit_with_info(
                 pr_corr_solve[solve_mask],
                 pos_gt_solve[solve_mask],
-                posyaw=str(global_align_mode).lower() in {"posyaw", "epa_posyaw"},
+                posyaw=global_mode in {"posyaw", "epa_posyaw"},
             )
-        elif str(global_align_mode).lower() in {"posyaw", "epa_posyaw"}:
+        elif rotation_first:
+            world_fit = _solve_world_alignment_rotation_first_robust_trimmed(
+                pr_corr_solve[solve_mask],
+                pos_gt_solve[solve_mask],
+                qP,
+                qQ,
+            )
+        elif global_mode in {"posyaw", "epa_posyaw"}:
             world_fit = _solve_world_alignment_posyaw_robust_trimmed(
                 pr_corr_solve[solve_mask],
                 pos_gt_solve[solve_mask],
@@ -961,17 +1225,24 @@ def _solve_extrinsic_world_candidate(
 
     R_step2_mats = np.einsum("nij,jk->nik", Rr_mats, R_calc.T)
     q_step2 = normalize_quat_array(R.from_matrix(R_step2_mats).as_quat())
-    q_step3_from_step2 = normalize_quat_array(
-        (R.from_matrix(Rw_calc) * R.from_quat(q_step2)).as_quat()
-    )
-    q_step3_from_raw = normalize_quat_array(
-        (R.from_matrix(Rw_calc) * R.from_quat(qr_sync)).as_quat()
-    )
+    q_world = R.from_matrix(Rw_calc).as_quat()
+    q_step3_from_step2 = normalize_quat_array(quat_multiply_xyzw(q_world, q_step2))
+    q_step3_from_raw = normalize_quat_array(quat_multiply_xyzw(q_world, qr_sync))
     rot_rmse_from_step2 = _rotation_error_rmse_deg(quat_gt_solve, q_step3_from_step2[:n_solve])
     rot_rmse_from_raw = _rotation_error_rmse_deg(quat_gt_solve, q_step3_from_raw[:n_solve])
     if str(global_align_mode).lower() in {"posyaw", "epa_posyaw"}:
         q_step3 = q_step3_from_step2
         orientation_mode = "step2_posyaw"
+        rot_rmse_deg = rot_rmse_from_step2
+    elif str(global_align_mode).lower() in {
+        "se3",
+        "se3r",
+        "epa_se3",
+        "epa_se3r",
+        "rotation_first_se3",
+    }:
+        q_step3 = q_step3_from_step2
+        orientation_mode = "step2_rotation_first"
         rot_rmse_deg = rot_rmse_from_step2
     elif rot_rmse_from_raw < rot_rmse_from_step2:
         q_step3 = q_step3_from_raw
@@ -1254,13 +1525,22 @@ def _compute_extrinsic_residual_metrics(
     R_calc,
     t_calc,
 ):
-    Rv_rot = R.from_quat(quat_gt_solve)
-    Rr_rot = R.from_quat(qr_solve)
-    dA = Rv_rot[:-1].inv() * Rv_rot[1:]
-    dB = Rr_rot[:-1].inv() * Rr_rot[1:]
-    Rext_rot = R.from_matrix(R_calc)
-    dA_pred = Rext_rot * dB * Rext_rot.inv()
-    rot_res_deg = np.degrees((dA.inv() * dA_pred).magnitude())
+    qv = normalize_quat_array(np.asarray(quat_gt_solve, dtype=float))
+    qr = normalize_quat_array(np.asarray(qr_solve, dtype=float))
+    qv_inv = qv[:-1].copy()
+    qv_inv[:, :3] *= -1.0
+    qr_inv = qr[:-1].copy()
+    qr_inv[:, :3] *= -1.0
+    dA = quat_multiply_xyzw(qv_inv, qv[1:])
+    dB = quat_multiply_xyzw(qr_inv, qr[1:])
+    q_ext = R.from_matrix(R_calc).as_quat()
+    q_ext_inv = q_ext.copy()
+    q_ext_inv[:3] *= -1.0
+    dA_pred = quat_multiply_xyzw(
+        quat_multiply_xyzw(q_ext, dB),
+        q_ext_inv,
+    )
+    rot_res_deg = np.degrees(quat_angle_error_rad(dA, dA_pred))
 
     C_mat, d_vec, num_constraints = build_translation_system(
         pos_gt_solve, quat_gt_solve, pr_solve, qr_solve, R_calc

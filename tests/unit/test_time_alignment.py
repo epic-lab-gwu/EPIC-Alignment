@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from scipy.interpolate import interp1d
 from scipy.signal import correlate
 from scipy.spatial.transform import Rotation as R
@@ -8,11 +9,64 @@ from scipy.spatial.transform import Rotation as R
 from epa.core.time_alignment import (
     compute_psr,
     get_angular_velocity_norm,
+    interpolate_linear_extrapolate,
     interpolate_quat_linear,
     interpolate_quat_slerp,
     matching_time_indices,
 )
-from epa.core.time_sync import _run_time_alignment
+from epa.core.time_sync import _correlate_full, _next_fast_len_235, _run_time_alignment
+
+
+def _legacy_matching_time_indices(stamps_1, stamps_2, max_diff=0.01, offset_2=0.0):
+    s1 = np.asarray(stamps_1, dtype=float).reshape(-1)
+    s2 = np.asarray(stamps_2, dtype=float).reshape(-1) + float(offset_2)
+    idx_1 = []
+    idx_2 = []
+    j = 0
+    for i, timestamp in enumerate(s1):
+        while j < s2.size and s2[j] < timestamp - float(max_diff):
+            j += 1
+        if j >= s2.size:
+            break
+        best_j = -1
+        best_diff = np.inf
+        for candidate in (j, j + 1):
+            if candidate >= s2.size:
+                continue
+            difference = abs(s2[candidate] - timestamp)
+            if difference <= float(max_diff) and difference < best_diff:
+                best_j = int(candidate)
+                best_diff = float(difference)
+        if best_j >= 0:
+            idx_1.append(int(i))
+            idx_2.append(best_j)
+            j = best_j + 1
+    return idx_1, idx_2
+
+
+def test_vectorized_linear_interpolation_matches_scipy() -> None:
+    rng = np.random.default_rng(20260902)
+    t_src = np.cumsum(rng.uniform(0.01, 0.2, size=200))
+    values = rng.normal(size=(t_src.size, 4))
+    t_query = np.linspace(t_src[0] - 0.5, t_src[-1] + 0.5, 500)
+
+    expected = interp1d(t_src, values, axis=0, fill_value="extrapolate")(t_query)
+    actual = interpolate_linear_extrapolate(t_src, values, t_query)
+
+    # scipy 1.11 and 1.18 use algebraically equivalent linear-interpolation
+    # expressions with machine-precision rounding differences.
+    np.testing.assert_allclose(actual, expected, rtol=1e-14, atol=2e-15)
+
+
+def test_vectorized_linear_interpolation_preserves_duplicate_fallback() -> None:
+    t_src = np.array([0.0, 1.0, 1.0, 2.0])
+    values = np.array([[0.0], [1.0], [1.5], [4.0]])
+    t_query = np.array([-0.5, 0.5, 1.0, 1.5, 2.5])
+
+    expected = interp1d(t_src, values, axis=0, fill_value="extrapolate")(t_query)
+    actual = interpolate_linear_extrapolate(t_src, values, t_query)
+
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_matching_time_indices_respects_offset() -> None:
@@ -43,6 +97,35 @@ def test_matching_time_indices_enforces_one_to_one_usage() -> None:
 
     assert len(ids_ref) == 1
     assert ids_est == [0]
+
+
+def test_matching_time_indices_randomized_equivalence_to_legacy() -> None:
+    rng = np.random.default_rng(20260905)
+    for _ in range(300):
+        n_ref = int(rng.integers(1, 300))
+        n_est = int(rng.integers(1, 300))
+        stamps_ref = np.cumsum(rng.uniform(0.001, 0.2, size=n_ref))
+        stamps_est = np.cumsum(rng.uniform(0.001, 0.2, size=n_est))
+        if rng.random() < 0.2 and n_est > 2:
+            duplicate = int(rng.integers(1, n_est))
+            stamps_est[duplicate] = stamps_est[duplicate - 1]
+        max_diff = float(rng.uniform(0.001, 0.1))
+        offset = float(rng.uniform(-0.2, 0.2))
+
+        expected = _legacy_matching_time_indices(
+            stamps_ref,
+            stamps_est,
+            max_diff=max_diff,
+            offset_2=offset,
+        )
+        actual = matching_time_indices(
+            stamps_ref,
+            stamps_est,
+            max_diff=max_diff,
+            offset_2=offset,
+        )
+
+        assert actual == expected
 
 
 def test_compute_psr_returns_nan_for_short_signal() -> None:
@@ -169,3 +252,23 @@ def test_step1_true_large_offset_is_not_forced_to_zero() -> None:
 
     assert abs(float(out["calculated_offset"])) > 1.0
     assert float(out["time_metrics"]["offset_match_ratio_gate"]) >= 0.3
+
+
+@pytest.mark.parametrize("n_est,n_gt", [(7, 5), (65, 43), (1000, 800), (2048, 2048)])
+def test_numpy_fft_full_correlation_matches_scipy(n_est: int, n_gt: int) -> None:
+    rng = np.random.default_rng(20260902 + n_est + n_gt)
+    sig_est = rng.normal(size=n_est)
+    sig_gt = rng.normal(size=n_gt)
+
+    expected = correlate(sig_est, sig_gt, mode="full")
+    actual = _correlate_full(sig_est, sig_gt)
+
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    assert int(np.argmax(actual)) == int(np.argmax(expected))
+
+
+def test_next_fast_len_uses_smallest_235_smooth_size() -> None:
+    assert _next_fast_len_235(1) == 1
+    assert _next_fast_len_235(7) == 8
+    assert _next_fast_len_235(36_099) == 36_450
+    assert _next_fast_len_235(187_199) == 187_500

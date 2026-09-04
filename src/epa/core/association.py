@@ -14,15 +14,39 @@ def _match_nearest_timestamps(
 ):
     s_ref = np.asarray(stamps_ref, dtype=float).reshape(-1)
     s_est = np.asarray(stamps_est, dtype=float).reshape(-1) + float(offset_est_s)
-    idx_ref = []
-    idx_est = []
-    for i, t_ref in enumerate(s_ref):
-        diffs = np.abs(s_est - t_ref)
-        j = int(np.argmin(diffs))
-        if float(diffs[j]) <= float(max_diff_s):
-            idx_ref.append(int(i))
-            idx_est.append(int(j))
-    return np.asarray(idx_ref, dtype=int), np.asarray(idx_est, dtype=int)
+    if s_ref.size == 0:
+        return np.empty(0, dtype=int), np.empty(0, dtype=int)
+    if s_est.size == 0:
+        raise ValueError("attempt to get argmin of an empty sequence")
+
+    if not np.all(np.isfinite(s_est)) or np.any(np.diff(s_est) < 0.0):
+        idx_ref = []
+        idx_est = []
+        for i, t_ref in enumerate(s_ref):
+            diffs = np.abs(s_est - t_ref)
+            j = int(np.argmin(diffs))
+            if float(diffs[j]) <= float(max_diff_s):
+                idx_ref.append(int(i))
+                idx_est.append(int(j))
+        return np.asarray(idx_ref, dtype=int), np.asarray(idx_est, dtype=int)
+
+    insert_ids = np.searchsorted(s_est, s_ref, side="left")
+    left_ids = np.clip(insert_ids - 1, 0, s_est.size - 1)
+    right_ids = np.clip(insert_ids, 0, s_est.size - 1)
+    left_diff = np.abs(s_ref - s_est[left_ids])
+    right_diff = np.abs(s_ref - s_est[right_ids])
+    choose_left = (insert_ids >= s_est.size) | (
+        (insert_ids > 0) & (left_diff <= right_diff)
+    )
+    nearest_ids = np.where(choose_left, left_ids, right_ids)
+    first_duplicate_ids = np.searchsorted(s_est, s_est, side="left")
+    nearest_ids = first_duplicate_ids[nearest_ids]
+    nearest_diff = np.where(choose_left, left_diff, right_diff)
+    valid = nearest_diff <= float(max_diff_s)
+    return (
+        np.flatnonzero(valid).astype(int, copy=False),
+        nearest_ids[valid].astype(int, copy=False),
+    )
 
 
 def _associate_gt_est(

@@ -36,6 +36,13 @@ def _run_alignment_diagnostics(
     quality_good_segment_cv: float,
     quality_good_heading_p90_deg: float,
     quality_partial_min_improve_pct: float,
+    quality_threshold_mode: str,
+    quality_good_rmse_ratio: float,
+    quality_partial_rmse_ratio: float,
+    quality_critical_rmse_ratio: float,
+    quality_good_rmse_floor_m: float,
+    quality_partial_rmse_floor_m: float,
+    quality_critical_rmse_floor_m: float,
     rigid_check_max_path_ratio: float,
     rigid_check_max_bbox_ratio: float,
     rigid_check_max_global_local_ratio: float,
@@ -55,6 +62,13 @@ def _run_alignment_diagnostics(
         good_seg_cv=quality_good_segment_cv,
         good_heading_p90_deg=quality_good_heading_p90_deg,
         partial_min_improve_pct=quality_partial_min_improve_pct,
+        threshold_mode=quality_threshold_mode,
+        good_rmse_ratio=quality_good_rmse_ratio,
+        partial_rmse_ratio=quality_partial_rmse_ratio,
+        critical_rmse_ratio=quality_critical_rmse_ratio,
+        good_rmse_floor_m=quality_good_rmse_floor_m,
+        partial_rmse_floor_m=quality_partial_rmse_floor_m,
+        critical_rmse_floor_m=quality_critical_rmse_floor_m,
     )
     quality_label = str(alignment_quality.pop("_quality_label", "unknown"))
 
@@ -80,6 +94,7 @@ def _run_alignment_diagnostics(
         quality_label=quality_label,
         rigid_label=rigid_alignability_label,
         rigid_reasons=rigid_alignability_reasons,
+        alignment_quality=alignment_quality,
     )
     alert_level = str(user_alert.pop("_alert_level", "ok"))
     alert_message = str(user_alert.pop("_alert_message", ""))

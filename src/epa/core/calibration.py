@@ -168,6 +168,50 @@ def solve_world_alignment(P, Q):
     return Rw, cQ - Rw @ cP
 
 
+def solve_rotation_first_alignment(P, Q, qP, qQ, weights=None):
+    """Solve a rigid transform with rotation fixed by orientation pairs.
+
+    The returned transform maps source poses ``(P, qP)`` into reference poses
+    ``(Q, qQ)``.  Unlike position-only SE(3), position residuals cannot rotate
+    the trajectory; they determine translation only after the orientation mean.
+    """
+    P = np.asarray(P, dtype=float)
+    Q = np.asarray(Q, dtype=float)
+    qP = np.asarray(qP, dtype=float)
+    qQ = np.asarray(qQ, dtype=float)
+    if P.shape != Q.shape or P.ndim != 2 or P.shape[1] != 3:
+        raise ValueError("Rotation-first alignment requires paired Nx3 positions.")
+    if qP.shape != qQ.shape or qP.shape != (P.shape[0], 4):
+        raise ValueError("Rotation-first alignment requires paired Nx4 quaternions.")
+    if P.shape[0] < 2:
+        raise ValueError("Rotation-first alignment requires at least 2 pose pairs.")
+
+    mean_weights = None
+    if weights is not None:
+        mean_weights = np.asarray(weights, dtype=float).reshape(-1)
+        if mean_weights.size != P.shape[0]:
+            raise ValueError("Rotation-first weights must match the pose-pair count.")
+        valid = np.isfinite(mean_weights) & (mean_weights > 0.0)
+        if int(np.count_nonzero(valid)) < 2:
+            raise ValueError("Rotation-first alignment requires at least 2 positive weights.")
+        P = P[valid]
+        Q = Q[valid]
+        qP = qP[valid]
+        qQ = qQ[valid]
+        mean_weights = mean_weights[valid]
+
+    relative = R.from_quat(qQ) * R.from_quat(qP).inv()
+    Rw = relative.mean(weights=mean_weights).as_matrix()
+    offsets = Q - (Rw @ P.T).T
+    if mean_weights is None:
+        tw = np.mean(offsets, axis=0)
+    else:
+        tw = np.sum(offsets * mean_weights[:, None], axis=0) / float(
+            np.sum(mean_weights)
+        )
+    return np.asarray(Rw, dtype=float), np.asarray(tw, dtype=float)
+
+
 def solve_world_alignment_weighted(P, Q, weights):
     """Solve a weighted rigid alignment with the same convention as solve_world_alignment."""
     P = np.asarray(P, dtype=float)

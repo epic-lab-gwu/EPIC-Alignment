@@ -3,7 +3,7 @@ from __future__ import annotations
 from epa.alignment.modes import COMPAT_ALIGN_MODES
 
 _VALID_ALIGN_MODES = set(COMPAT_ALIGN_MODES)
-_LEGACY_ALIGN_MODES = {"se3", "se3single", "posyawsingle"}
+_LEGACY_ALIGN_MODES = {"se3-original", "se3single", "posyawsingle"}
 _DEFAULT_ASSOC_MAX_DIFF = 0.02
 _DEFAULT_EPA_DT_RESAMPLE = 0.001
 _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO = 0.3

@@ -55,13 +55,39 @@ def rpe_pairs_by_path(poses, delta, tol=0.0, all_pairs=False):
         distances = np.zeros(positions.shape[0], dtype=float)
         if positions.shape[0] > 1:
             distances[1:] = np.cumsum(np.linalg.norm(np.diff(positions, axis=0), axis=1))
-        for i in range(distances.size - 1):
-            offset = i + 1
-            distances_from_here = distances[offset:] - distances[i]
-            candidate_index = int(np.argmin(np.abs(distances_from_here - delta)))
-            if np.abs(distances_from_here[candidate_index] - delta) > tol:
-                continue
-            id_pairs.append((i, candidate_index + offset))
+        if distances.size < 2:
+            return []
+        if not np.isfinite(delta) or not np.isfinite(tol):
+            for i in range(distances.size - 1):
+                offset = i + 1
+                distances_from_here = distances[offset:] - distances[i]
+                candidate_index = int(np.argmin(np.abs(distances_from_here - delta)))
+                if np.abs(distances_from_here[candidate_index] - delta) > tol:
+                    continue
+                id_pairs.append((i, candidate_index + offset))
+            return id_pairs
+
+        starts = np.arange(distances.size - 1, dtype=int)
+        targets = distances[starts] + float(delta)
+        insert_ids = np.searchsorted(distances, targets, side="left")
+        right_ids = np.maximum(insert_ids, starts + 1)
+        left_ids = right_ids - 1
+        left_valid = left_ids >= starts + 1
+        right_valid = right_ids < distances.size
+        left_safe = np.clip(left_ids, 0, distances.size - 1)
+        right_safe = np.clip(right_ids, 0, distances.size - 1)
+        left_error = np.where(left_valid, np.abs(distances[left_safe] - targets), np.inf)
+        right_error = np.where(right_valid, np.abs(distances[right_safe] - targets), np.inf)
+        choose_left = left_error <= right_error
+        candidate_ids = np.where(choose_left, left_safe, right_safe)
+        candidate_error = np.where(choose_left, left_error, right_error)
+
+        first_duplicate_ids = np.searchsorted(
+            distances, distances[candidate_ids], side="left"
+        )
+        candidate_ids = np.maximum(first_duplicate_ids, starts + 1)
+        accepted = candidate_error <= float(tol)
+        return list(zip(starts[accepted].tolist(), candidate_ids[accepted].tolist()))
     else:
         ids = []
         previous_pose = poses[0]
@@ -133,6 +159,26 @@ def rpe_pairs_by_time(timestamps, delta, tol=0.0, all_pairs=False):
         return int(best)
 
     if all_pairs:
+        if np.isfinite(delta) and np.isfinite(tol):
+            starts = np.arange(stamps.size - 1, dtype=int)
+            targets = stamps[starts] + float(delta)
+            insert_ids = np.searchsorted(stamps, targets, side="left")
+            candidates = insert_ids[:, None] + np.array([-1, 0, 1], dtype=int)
+            valid = (candidates > starts[:, None]) & (candidates < stamps.size)
+            safe_candidates = np.clip(candidates, 0, stamps.size - 1)
+            errors = np.abs(stamps[safe_candidates] - targets[:, None])
+            errors[~valid] = np.inf
+            best_columns = np.argmin(errors, axis=1)
+            rows = np.arange(starts.size, dtype=int)
+            best_errors = errors[rows, best_columns]
+            accepted = best_errors <= tol
+            return list(
+                zip(
+                    starts[accepted].tolist(),
+                    candidates[rows[accepted], best_columns[accepted]].tolist(),
+                )
+            )
+
         id_pairs = []
         for i in range(stamps.size - 1):
             j = nearest_after(i, float(stamps[i]) + float(delta))
@@ -884,6 +930,106 @@ def compute_success_regions(timestamps, pos_ref, ape_translation_errors, thresho
     }
 
 
+def apply_input_coverage_to_success(
+    success: dict,
+    input_coverage: dict | None,
+    *,
+    set_primary: bool = True,
+) -> dict:
+    """Add complete-reference SR without discarding overlap-local SR.
+
+    ``compute_success_regions`` can only score the temporally supported overlap.
+    This helper treats unsupported portions of the complete reference as
+    unsuccessful, so a short but locally accurate estimate cannot be reported
+    as a 100% complete-run success.
+    """
+    if not isinstance(success, dict):
+        raise TypeError("success must be a dictionary")
+    coverage = input_coverage if isinstance(input_coverage, dict) else {}
+    if not coverage:
+        return success
+
+    def finite(value, default=np.nan) -> float:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        return out if np.isfinite(out) else float(default)
+
+    def ratio(numerator, denominator) -> float:
+        num = finite(numerator)
+        den = finite(denominator)
+        if not np.isfinite(num) or not np.isfinite(den) or den <= 0.0:
+            return float("nan")
+        return float(np.clip(num / den, 0.0, 1.0))
+
+    local_distance = finite(
+        success.get("local_success_rate_distance", success.get("success_rate_distance"))
+    )
+    local_time = finite(success.get("local_success_rate_time", success.get("success_rate_time")))
+    raw_local_distance = finite(
+        success.get("raw_local_success_rate_distance", success.get("raw_success_rate_distance"))
+    )
+    raw_local_time = finite(
+        success.get("raw_local_success_rate_time", success.get("raw_success_rate_time"))
+    )
+    local_total_distance = finite(success.get("local_total_distance_m", success.get("total_distance_m")))
+    local_total_time = finite(success.get("local_total_time_s", success.get("total_time_s")))
+    complete_total_distance = finite(coverage.get("reference_path_length_m"))
+    complete_total_time = finite(coverage.get("reference_duration_s"))
+
+    complete_distance = ratio(success.get("valid_distance_m"), complete_total_distance)
+    complete_time = ratio(success.get("valid_time_s"), complete_total_time)
+    raw_complete_distance = ratio(success.get("raw_valid_distance_m"), complete_total_distance)
+    raw_complete_time = ratio(success.get("raw_valid_time_s"), complete_total_time)
+
+    success.update(
+        {
+            "success_rate_scope": "complete_reference" if set_primary else "overlap_local",
+            "local_success_rate_distance": local_distance,
+            "local_success_rate_time": local_time,
+            "raw_local_success_rate_distance": raw_local_distance,
+            "raw_local_success_rate_time": raw_local_time,
+            "complete_success_rate_distance": complete_distance,
+            "complete_success_rate_time": complete_time,
+            "raw_complete_success_rate_distance": raw_complete_distance,
+            "raw_complete_success_rate_time": raw_complete_time,
+            "local_total_distance_m": local_total_distance,
+            "local_total_time_s": local_total_time,
+            "complete_total_distance_m": complete_total_distance,
+            "complete_total_time_s": complete_total_time,
+            "temporal_coverage_ratio": finite(coverage.get("temporal_coverage_ratio")),
+            "path_coverage_ratio": finite(coverage.get("path_coverage_ratio")),
+            "input_coverage_status": str(coverage.get("coverage_status", "ok")),
+            "input_coverage_hard_reasons": list(coverage.get("coverage_hard_reasons", [])),
+            "input_coverage_soft_reasons": list(coverage.get("coverage_soft_reasons", [])),
+        }
+    )
+    if set_primary:
+        success["success_rate_distance"] = complete_distance
+        success["success_rate_time"] = complete_time
+        success["raw_success_rate_distance"] = raw_complete_distance
+        success["raw_success_rate_time"] = raw_complete_time
+
+    coverage_status = str(coverage.get("coverage_status", "ok"))
+    previous_status = str(success.get("sr_reliability_status", "ok"))
+    rank = {"ok": 0, "warning": 1, "failed": 2}
+    success["sr_reliability_status"] = max(
+        (previous_status, coverage_status), key=lambda item: rank.get(item, 0)
+    )
+    if coverage_status in {"warning", "failed"}:
+        note = (
+            "Reference support is incomplete; complete-reference SR counts "
+            "the unsupported part as unsuccessful."
+        )
+        previous_note = str(success.get("sr_warning_explanation", "") or "")
+        if note not in previous_note:
+            success["sr_warning_explanation"] = " ".join(
+                part for part in (previous_note, note) if part
+            )
+    return success
+
+
 def compute_valid_segment_metrics(
     *,
     timestamps,
@@ -982,6 +1128,11 @@ def compute_valid_segment_metrics(
     success["raw_valid_time_s"] = raw_regions.get("valid_time_s", 0.0)
     success["local_success_rate_distance"] = success.get("success_rate_distance", np.nan)
     success["local_success_rate_time"] = success.get("success_rate_time", np.nan)
+    success["raw_local_success_rate_distance"] = success.get("raw_success_rate_distance", np.nan)
+    success["raw_local_success_rate_time"] = success.get("raw_success_rate_time", np.nan)
+    success["local_total_distance_m"] = success.get("total_distance_m", 0.0)
+    success["local_total_time_s"] = success.get("total_time_s", 0.0)
+    success["success_rate_scope"] = "overlap_local"
     success["sr_reliability_status"] = "ok"
     success["sr_warning_explanation"] = ""
     if threshold_info is not None:
