@@ -6,7 +6,6 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 from .calibration import (
     build_translation_system,
-    huber_weights,
     robust_weights,
     robust_scale,
     solve_extrinsic_rotation,

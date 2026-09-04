@@ -126,7 +126,6 @@ def _timeline_decision_for_strict_association(
         finite_steps = matched_step[np.isfinite(matched_step)]
         if finite_steps.size > 0:
             nominal_step_m = float(np.nanmedian(finite_steps))
-        finite_dt = matched_dt[np.isfinite(matched_dt) & (matched_dt > 0.0)]
         speeds = matched_step / np.maximum(matched_dt, 1e-12)
         finite_speeds = speeds[np.isfinite(speeds)]
         if finite_speeds.size > 0:
