@@ -5,10 +5,11 @@ from scipy.spatial.transform import Rotation as R
 from numpy.lib.stride_tricks import sliding_window_view
 
 from .calibration import (
+    InsufficientRotationExcitationError,
     build_translation_system,
     robust_weights,
     robust_scale,
-    solve_extrinsic_rotation,
+    solve_extrinsic_rotation_multibaseline,
     solve_extrinsic_translation,
     solve_rotation_first_alignment,
     solve_world_alignment,
@@ -993,12 +994,15 @@ def _solve_extrinsic_world_candidate(
     robust_kernel: str = "none",
     robust_kernel_delta_m: float | None = None,
     robust_kernel_max_iterations: int = 3,
+    disable_extrinsic_calibration: bool = False,
     precomputed_stable_mask: np.ndarray | None = None,
     precomputed_stable_info: dict[str, float] | None = None,
     precomputed_motion_mask: np.ndarray | None = None,
     precomputed_motion_info: dict[str, float] | None = None,
     precomputed_qr_mats: np.ndarray | None = None,
     precomputed_qr_solve_mats: np.ndarray | None = None,
+    precomputed_extrinsic_pair_indices: np.ndarray | None = None,
+    precomputed_extrinsic_pair_mask: np.ndarray | None = None,
 ):
     Rr_mats = (
         np.asarray(precomputed_qr_mats, dtype=float)
@@ -1045,17 +1049,50 @@ def _solve_extrinsic_world_candidate(
         else:
             info["step3_stable_solve_ratio"] = float(limited_solve_count / max(1, n_solve))
 
-        t_variant, translation_kernel_info = solve_extrinsic_translation(
-            pos_gt_solve[solve_mask],
-            quat_gt_solve[solve_mask],
-            pr_solve[solve_mask],
-            qr_solve[solve_mask],
-            R_calc,
-            robust_kernel=robust_kernel,
-            robust_delta_m=robust_kernel_delta_m,
-            robust_max_iterations=robust_kernel_max_iterations,
-            return_info=True,
-        )
+        translation_kwargs: dict[str, np.ndarray] = {}
+        if bool(disable_extrinsic_calibration):
+            t_variant = np.zeros(3, dtype=float)
+            translation_kernel_info = {
+                "kernel": "disabled",
+                "iterations": 0,
+                "delta_m": float("nan"),
+                "downweighted_count": 0,
+                "constraint_count": 0,
+            }
+        elif precomputed_extrinsic_pair_indices is not None:
+            pair_indices = np.asarray(
+                precomputed_extrinsic_pair_indices, dtype=int
+            ).reshape(-1, 2)
+            pair_mask = solve_mask[pair_indices[:, 0]] & solve_mask[pair_indices[:, 1]]
+            if precomputed_extrinsic_pair_mask is not None:
+                rotation_pair_mask = np.asarray(
+                    precomputed_extrinsic_pair_mask, dtype=bool
+                ).reshape(-1)
+                if rotation_pair_mask.size != pair_mask.size:
+                    raise ValueError(
+                        "Extrinsic pair mask must match the calibration pose pairs."
+                    )
+                pair_mask &= rotation_pair_mask
+            translation_kwargs = {
+                "pair_indices": pair_indices,
+                "pair_mask": pair_mask,
+            }
+        else:
+            translation_kwargs = {"transition_mask": solve_mask[:-1] & solve_mask[1:]}
+
+        if not bool(disable_extrinsic_calibration):
+            t_variant, translation_kernel_info = solve_extrinsic_translation(
+                pos_gt_solve,
+                quat_gt_solve,
+                pr_solve,
+                qr_solve,
+                R_calc,
+                robust_kernel=robust_kernel,
+                robust_delta_m=robust_kernel_delta_m,
+                robust_max_iterations=robust_kernel_max_iterations,
+                **translation_kwargs,
+                return_info=True,
+            )
         extrinsic_offset = R_calc.T @ np.asarray(t_variant, dtype=float)
         pr_corr = np.asarray(pr_sync, dtype=float) - np.einsum(
             "nij,j->ni", Rr_mats, extrinsic_offset
@@ -1196,6 +1233,10 @@ def _solve_extrinsic_world_candidate(
             "step2_translation_kernel_downweighted_count": int(
                 translation_kernel_info.get("downweighted_count", 0)
             ),
+            "step2_translation_constraint_count": int(
+                translation_kernel_info.get("constraint_count", 0)
+            ),
+            "extrinsic_calibration_disabled": bool(disable_extrinsic_calibration),
             **info,
         }
 
@@ -1326,6 +1367,9 @@ def _solve_extrinsic_world_candidate(
             selected_variant["step3_stable_segment_start_index"]
         ),
         "step3_stable_segment_end_index": float(selected_variant["step3_stable_segment_end_index"]),
+        "step2_translation_constraint_count": int(
+            selected_variant["step2_translation_constraint_count"]
+        ),
     }
 
 
@@ -1367,6 +1411,34 @@ def _select_extrinsic_world_candidate(candidates: list[dict]) -> dict:
     )
 
 
+def _select_extrinsic_with_identity(candidates: list[dict], identity: dict) -> dict:
+    """Do not trade worse full-support position RMSE for cleaner orientations.
+
+    Each candidate's identity_comparison_rmse_m must use the SAME untrimmed
+    solve poses, including poses outside a candidate's selected fit window.
+    Only numerical tolerances are allowed; ties prefer identity unless the
+    calibrated candidate improves orientation.
+    """
+    baseline = float(identity["identity_comparison_rmse_m"])
+    if not np.isfinite(baseline):
+        return identity
+    tolerance = max(1e-9, abs(baseline) * 1e-9)
+    eligible = []
+    for candidate in candidates:
+        error = float(candidate["identity_comparison_rmse_m"])
+        rotation_error = float(candidate["rotation_ape_rmse_deg"])
+        if not np.isfinite(error) or not np.isfinite(rotation_error):
+            continue
+        if error > baseline + tolerance:
+            continue
+        if (
+            error < baseline - tolerance
+            or rotation_error < float(identity["rotation_ape_rmse_deg"]) - 1e-9
+        ):
+            eligible.append(candidate)
+    return _select_extrinsic_world_candidate(eligible) if eligible else identity
+
+
 def _solve_extrinsic_and_world_alignment(
     *,
     pr_sync,
@@ -1379,16 +1451,74 @@ def _solve_extrinsic_and_world_alignment(
     robust_kernel: str = "none",
     robust_kernel_delta_m: float | None = None,
     robust_kernel_max_iterations: int = 3,
+    calibration_timestamps_s: np.ndarray | None = None,
+    calibration_source_timestamps_s: np.ndarray | None = None,
+    disable_extrinsic_calibration: bool = False,
+    compare_identity_candidate: bool = True,
 ):
-    R_base = solve_extrinsic_rotation(quat_gt_solve, qr_solve)
-    # These masks depend only on the paired positions, not on the four
+    R_base = np.eye(3, dtype=float)
+    extrinsic_pair_indices = None
+    extrinsic_pair_mask = None
+    calibration_failure = ""
+    extrinsic_rotation_info = {
+        "transition_count": 0,
+        "pair_count": 0,
+        "candidate_pair_count": 0,
+        "accepted_count": 0,
+        "rejected_nonfinite_count": 0,
+        "rejected_low_excitation_count": 0,
+        "rejected_angle_count": 0,
+        "rejected_residual_count": 0,
+        "invalid_interpolated_sample_count": 0,
+        "invalid_rotation_sample_count": 0,
+        "reset_boundary_count": 0,
+        "segment_count": 0,
+        "gap_threshold_s": float("nan"),
+        "orientation_noise_deg": float("nan"),
+        "min_rotation_deg": float("nan"),
+        "influence_cap_deg": float("nan"),
+        "residual_threshold_deg": float("nan"),
+        "robust_iterations": 0,
+        "observable": False,
+        "information_ratio": 0.0,
+        "min_information_ratio": 0.1,
+        "reference_information_ratio": 0.0,
+        "estimate_information_ratio": 0.0,
+        "matched_information_ratio": 0.0,
+    }
+    if not bool(disable_extrinsic_calibration):
+        try:
+            R_base, extrinsic_pair_indices, extrinsic_pair_mask, extrinsic_rotation_info = (
+                solve_extrinsic_rotation_multibaseline(
+                    quat_gt_solve,
+                    qr_solve,
+                    timestamps_s=calibration_timestamps_s,
+                    source_timestamps_s=calibration_source_timestamps_s,
+                )
+            )
+        except InsufficientRotationExcitationError as exc:
+            # Do not swallow malformed input or unrelated solver failures.
+            # Insufficient motion does not prevent identity world alignment.
+            calibration_failure = str(exc)
+    observable = bool(extrinsic_rotation_info["observable"])
+    constrained = bool(extrinsic_rotation_info.get("constraint_success", False))
+    # These masks depend only on the paired positions, not on the
     # extrinsic-rotation candidates; compute them once and reuse them.
     stable_mask, stable_info = _select_stable_alignment_window(pos_gt_solve, pr_solve)
     motion_mask, motion_info = _select_motion_stable_prefix_window(pos_gt_solve, pr_solve)
     qr_mats = R.from_quat(qr_sync).as_matrix()
     qr_solve_mats = R.from_quat(qr_solve).as_matrix()
     candidates = []
-    for candidate_name, R_candidate in _extrinsic_rotation_candidates(R_base):
+    rotation_candidates = []
+    if not bool(disable_extrinsic_calibration):
+        if observable:
+            rotation_candidates = _extrinsic_rotation_candidates(R_base)
+        elif constrained:
+            # Axis-flipped alternatives do not preserve the log-space constraint.
+            rotation_candidates = [("constrained", R_base)]
+    # Genuine identity extrinsics: no lever-arm fit, not just R=I with fitted t.
+    rotation_candidates.append(("identity", np.eye(3, dtype=float)))
+    for candidate_name, R_candidate in rotation_candidates:
         candidates.append(
             _solve_extrinsic_world_candidate(
                 name=candidate_name,
@@ -1403,19 +1533,50 @@ def _solve_extrinsic_and_world_alignment(
                 robust_kernel=robust_kernel,
                 robust_kernel_delta_m=robust_kernel_delta_m,
                 robust_kernel_max_iterations=robust_kernel_max_iterations,
+                disable_extrinsic_calibration=candidate_name == "identity",
                 precomputed_stable_mask=stable_mask,
                 precomputed_stable_info=stable_info,
                 precomputed_motion_mask=motion_mask,
                 precomputed_motion_info=motion_info,
                 precomputed_qr_mats=qr_mats,
                 precomputed_qr_solve_mats=qr_solve_mats,
+                precomputed_extrinsic_pair_indices=extrinsic_pair_indices,
+                precomputed_extrinsic_pair_mask=extrinsic_pair_mask,
             )
         )
-    selected = _select_extrinsic_world_candidate(candidates)
+    for candidate in candidates:
+        predicted = (
+            np.asarray(candidate["Rw_calc"]) @ np.asarray(candidate["pr_corrected_solve"]).T
+        ).T + np.asarray(candidate["tw_calc"])
+        candidate["identity_comparison_rmse_m"] = _alignment_rmse(predicted, pos_gt_solve)
+    identity = candidates[-1]
+    calibrated_candidates = candidates[:-1]
+    selected = (
+        _select_extrinsic_with_identity(calibrated_candidates, identity)
+        if compare_identity_candidate or not calibrated_candidates
+        else _select_extrinsic_world_candidate(calibrated_candidates)
+    )
+    identity_selected = selected is identity
+    if bool(disable_extrinsic_calibration):
+        selection_reason = "disabled"
+    elif calibration_failure:
+        selection_reason = "insufficient_rotation_excitation"
+    elif not observable and not constrained:
+        selection_reason = "unobservable_rotation"
+    elif identity_selected:
+        selection_reason = "identity_preferred"
+    elif constrained:
+        selection_reason = "constrained_candidate_accepted"
+    else:
+        selection_reason = "calibrated_candidate_accepted"
     ambiguity_detected = (
-        str(selected["candidate_name"]) != "base"
-        or float(candidates[0]["rotation_ape_rmse_deg"])
-        > float(selected["rotation_ape_rmse_deg"]) + 5.0
+        not bool(disable_extrinsic_calibration)
+        and not identity_selected
+        and (
+            str(selected["candidate_name"]) not in {"base", "constrained"}
+            or float(candidates[0]["rotation_ape_rmse_deg"])
+            > float(selected["rotation_ape_rmse_deg"]) + 5.0
+        )
     )
 
     return {
@@ -1443,6 +1604,93 @@ def _solve_extrinsic_and_world_alignment(
             "orientation_candidate_trans_rmse_m": float(selected["step3_rmse_selected_m"]),
             "orientation_candidate_rel_rot_median_deg": float(selected["rot_res_median_deg"]),
             "orientation_ambiguity_detected": float(bool(ambiguity_detected)),
+            "extrinsic_calibration_disabled": float(
+                bool(disable_extrinsic_calibration)
+            ),
+            "extrinsic_identity_selected": float(identity_selected),
+            "extrinsic_identity_comparison_enabled": float(compare_identity_candidate),
+            "extrinsic_rotation_constraint_information_source": extrinsic_rotation_info.get(
+                "constraint_information_source", ""
+            ),
+            **{
+                f"extrinsic_rotation_{key}": float(extrinsic_rotation_info.get(key, 0.0))
+                for key in (
+                    "constraint_applied", "constraint_success", "constraint_dimension",
+                    "constraint_nfev", "unconstrained_angle_deg", "constrained_angle_deg",
+                )
+            },
+            "extrinsic_selection_reason": selection_reason,
+            "extrinsic_calibration_failure": calibration_failure,
+            "extrinsic_identity_position_rmse_m": float(identity["identity_comparison_rmse_m"]),
+            "extrinsic_selected_position_rmse_m": float(selected["identity_comparison_rmse_m"]),
+            "extrinsic_best_calibrated_position_rmse_m": min(
+                (float(c["identity_comparison_rmse_m"]) for c in calibrated_candidates),
+                default=float("nan"),
+            ),
+            "extrinsic_rotation_candidate_angle_deg": float(
+                np.degrees(R.from_matrix(R_base).magnitude())
+            ),
+            "extrinsic_rotation_observability_checked": float(not bool(disable_extrinsic_calibration)),
+            "extrinsic_rotation_observable": float(observable),
+            **{
+                f"extrinsic_rotation_{key}": float(extrinsic_rotation_info[key])
+                for key in (
+                    "information_ratio", "min_information_ratio", "reference_information_ratio",
+                    "estimate_information_ratio", "matched_information_ratio",
+                )
+            },
+            "extrinsic_rotation_transition_count": float(
+                extrinsic_rotation_info["transition_count"]
+            ),
+            "extrinsic_rotation_pair_count": float(extrinsic_rotation_info["pair_count"]),
+            "extrinsic_rotation_candidate_pair_count": float(
+                extrinsic_rotation_info["candidate_pair_count"]
+            ),
+            "extrinsic_rotation_accepted_count": float(
+                extrinsic_rotation_info["accepted_count"]
+            ),
+            "extrinsic_rotation_rejected_nonfinite_count": float(
+                extrinsic_rotation_info["rejected_nonfinite_count"]
+            ),
+            "extrinsic_rotation_rejected_low_excitation_count": float(
+                extrinsic_rotation_info["rejected_low_excitation_count"]
+            ),
+            "extrinsic_rotation_rejected_angle_count": float(
+                extrinsic_rotation_info["rejected_angle_count"]
+            ),
+            "extrinsic_rotation_rejected_residual_count": float(
+                extrinsic_rotation_info["rejected_residual_count"]
+            ),
+            "extrinsic_rotation_invalid_interpolated_sample_count": float(
+                extrinsic_rotation_info["invalid_interpolated_sample_count"]
+            ),
+            "extrinsic_rotation_invalid_sample_count": float(
+                extrinsic_rotation_info["invalid_rotation_sample_count"]
+            ),
+            "extrinsic_rotation_reset_boundary_count": float(
+                extrinsic_rotation_info["reset_boundary_count"]
+            ),
+            "extrinsic_rotation_segment_count": float(
+                extrinsic_rotation_info["segment_count"]
+            ),
+            "extrinsic_rotation_gap_threshold_s": float(
+                extrinsic_rotation_info["gap_threshold_s"]
+            ),
+            "extrinsic_rotation_noise_deg": float(
+                extrinsic_rotation_info["orientation_noise_deg"]
+            ),
+            "extrinsic_rotation_min_rotation_deg": float(
+                extrinsic_rotation_info["min_rotation_deg"]
+            ),
+            "extrinsic_rotation_influence_cap_deg": float(
+                extrinsic_rotation_info["influence_cap_deg"]
+            ),
+            "extrinsic_rotation_residual_threshold_deg": float(
+                extrinsic_rotation_info["residual_threshold_deg"]
+            ),
+            "extrinsic_rotation_robust_iterations": float(
+                extrinsic_rotation_info["robust_iterations"]
+            ),
             "step3_solve_variant": str(selected["step3_solve_variant"]),
             "step3_solve_variant_code": float(selected["step3_solve_variant_code"]),
             "step3_candidate_full_sr_proxy": float(selected["step3_candidate_full_sr_proxy"]),
@@ -1504,6 +1752,9 @@ def _solve_extrinsic_and_world_alignment(
             ),
             "step2_translation_kernel_downweighted_count": float(
                 selected.get("step2_translation_kernel_downweighted_count", 0)
+            ),
+            "step2_translation_constraint_count": float(
+                selected.get("step2_translation_constraint_count", 0)
             ),
             "step3_stable_segment_used": float(selected["step3_stable_segment_used"]),
             "step3_stable_segment_count": float(selected["step3_stable_segment_count"]),

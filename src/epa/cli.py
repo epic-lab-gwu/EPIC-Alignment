@@ -87,6 +87,29 @@ def build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
+        "--disable-time-offset-calibration",
+        "--disable-time-offset",
+        action="store_true",
+        help="Keep the input timestamps unchanged and use a zero time offset.",
+    )
+    parser.add_argument(
+        "--disable-extrinsic-calibration",
+        "--disable-extrinsic",
+        action="store_true",
+        help="Use identity rotation and zero translation for the sensor extrinsics.",
+    )
+    parser.add_argument(
+        "--disable-identity-safeguard",
+        action="store_true",
+        help="Disable the shared extrinsic solver's identity-candidate comparison (enabled by default).",
+    )
+    parser.add_argument(
+        "--disable-calibration",
+        "--disable-all-calibration",
+        action="store_true",
+        help="Disable both time-offset and extrinsic calibration.",
+    )
+    parser.add_argument(
         "--quality-segment-duration-s",
         type=float,
         default=10.0,

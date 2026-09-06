@@ -163,6 +163,35 @@ def test_public_sim3_handles_body_frame_extrinsic_rotation() -> None:
     assert ape["rotation_angle_deg"]["rmse"] < 1e-9
 
 
+def test_public_sim3_can_disable_extrinsic_rotation_candidate() -> None:
+    n = 160
+    t = np.linspace(0.0, 12.0, n)
+    pos_ref = np.column_stack(
+        [0.6 * t, np.sin(0.4 * t), 0.2 * np.cos(0.7 * t)]
+    )
+    quat_ref = R.from_euler(
+        "zyx",
+        np.column_stack([0.4 * t, 0.2 * np.sin(t), 0.1 * np.cos(t)]),
+    ).as_quat()
+    r_body = R.from_euler("xyz", [12.0, -18.0, 32.0], degrees=True)
+    quat_est = (R.from_quat(quat_ref) * r_body).as_quat()
+
+    _, quat_new, info = align_for_eval_with_info(
+        pos_ref=pos_ref,
+        quat_ref=quat_ref,
+        pos_est=pos_ref,
+        quat_est=quat_est,
+        mode="sim3",
+        t_ref=t,
+        disable_extrinsic_calibration=True,
+    )
+    ape = compute_ape(pos_ref, quat_ref, pos_ref, quat_new)
+
+    assert info["extrinsic_calibration_disabled"] is True
+    assert info["sim3_extrinsic_rotation_correction_used"] is False
+    assert ape["rotation_angle_deg"]["rmse"] > 20.0
+
+
 def test_epa_posyaw_aligns_xy_yaw_without_roll_pitch_or_scale() -> None:
     n = 80
     t = np.linspace(0.0, 10.0, n)

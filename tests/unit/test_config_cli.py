@@ -5,6 +5,7 @@ import pytest
 
 from epa.config_cli import GLOBAL_CONFIG_ENV, parse_args_with_config, resolve_scoped_config
 from epa.cli import _normalize_inputs, _normalize_mode_args, build_parser
+from epa.compat.ov_eval.parsers import _build_error_singlerun_parser
 
 
 def test_parse_args_with_config_supports_required_fields(tmp_path) -> None:
@@ -38,12 +39,59 @@ def test_epa_cli_debug_flag_defaults_off() -> None:
     assert debug_args.debug is True
 
 
+@pytest.mark.parametrize(
+    ("option", "destination"),
+    [
+        ("--disable-time-offset-calibration", "disable_time_offset_calibration"),
+        ("--disable-extrinsic-calibration", "disable_extrinsic_calibration"),
+        ("--disable-calibration", "disable_calibration"),
+        ("--disable-identity-safeguard", "disable_identity_safeguard"),
+    ],
+)
+def test_epa_cli_exposes_calibration_disable_options(option: str, destination: str) -> None:
+    args = build_parser().parse_args([option])
+
+    assert getattr(args, destination) is True
+
+
+@pytest.mark.parametrize(
+    ("option", "destination"),
+    [
+        ("--epa-disable-time-offset", "epa_disable_time_offset_calibration"),
+        ("--epa-disable-extrinsic", "epa_disable_extrinsic_calibration"),
+        ("--epa-disable-calibration", "epa_disable_calibration"),
+        ("--epa-disable-identity-safeguard", "epa_disable_identity_safeguard"),
+    ],
+)
+def test_ov_cli_exposes_calibration_disable_options(option: str, destination: str) -> None:
+    parser = _build_error_singlerun_parser()
+    args = parser.parse_args(["se3", "gt.txt", "est.txt", option])
+
+    assert getattr(args, destination) is True
+
+
 def test_epa_cli_exposes_public_mode_and_maps_to_eval_align() -> None:
     parser = build_parser()
     args = _normalize_mode_args(parser, parser.parse_args(["--mode", "sim3"]))
 
     assert args.mode == "sim3"
     assert args.eval_align == "sim3"
+
+
+def test_identity_safeguard_defaults_on_in_main_cli():
+    assert build_parser().parse_args([]).disable_identity_safeguard is False
+
+
+@pytest.mark.parametrize("command", ["singlerun", "dataset", "comparison"])
+def test_identity_safeguard_option_in_all_ov_commands(command):
+    from epa.compat.ov_eval import parsers
+    from epa.compat.ov_eval.evaluate import _epa_eval_kwargs
+    parser = getattr(parsers, f"_build_error_{command}_parser")()
+    argv = ["se3", "gt", "est"]
+    default = parser.parse_args(argv)
+    disabled = parser.parse_args(argv + ["--epa-disable-identity-safeguard"])
+    assert _epa_eval_kwargs(default)["epa_disable_identity_safeguard"] is False
+    assert _epa_eval_kwargs(disabled)["epa_disable_identity_safeguard"] is True
 
 
 @pytest.mark.parametrize("mode", ["se3", "se3r", "se3-original", "se3-orginal"])

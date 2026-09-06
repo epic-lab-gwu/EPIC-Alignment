@@ -254,6 +254,27 @@ def test_step1_true_large_offset_is_not_forced_to_zero() -> None:
     assert float(out["time_metrics"]["offset_match_ratio_gate"]) >= 0.3
 
 
+def test_step1_disable_time_offset_calibration_forces_zero() -> None:
+    t_gt = np.arange(0.0, 30.0, 0.05)
+    yaw = 0.3 * np.sin(0.7 * t_gt) + 0.02 * t_gt * t_gt
+    quat = R.from_euler("z", yaw).as_quat()
+
+    out = _run_time_alignment(
+        t_gt=t_gt,
+        quat_gt=quat,
+        t_est=t_gt + 5.0,
+        quat_est=quat,
+        dt_resample=0.01,
+        offset_search_window_s=0.0,
+        offset_min_match_ratio=0.3,
+        evo_match_max_diff_s=0.02,
+        disable_time_offset_calibration=True,
+    )
+
+    assert float(out["calculated_offset"]) == 0.0
+    assert float(out["time_metrics"]["time_offset_calibration_disabled"]) == 1.0
+
+
 @pytest.mark.parametrize("n_est,n_gt", [(7, 5), (65, 43), (1000, 800), (2048, 2048)])
 def test_numpy_fft_full_correlation_matches_scipy(n_est: int, n_gt: int) -> None:
     rng = np.random.default_rng(20260902 + n_est + n_gt)

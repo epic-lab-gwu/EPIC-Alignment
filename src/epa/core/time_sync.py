@@ -183,6 +183,7 @@ def _run_time_alignment(
     offset_min_match_ratio: float,
     evo_match_max_diff_s: float,
     artificial_offset_s: float | None = None,
+    disable_time_offset_calibration: bool = False,
 ):
     t_gt_mid, om_gt = get_angular_velocity_norm(t_gt, quat_gt)
     t_est_mid, om_est = get_angular_velocity_norm(t_est, quat_est)
@@ -361,6 +362,18 @@ def _run_time_alignment(
             print(step1_force_reason)
             print(f"Continuing with highest-confidence candidate offset: {calculated_offset:.4f} s")
 
+    if bool(disable_time_offset_calibration):
+        calculated_offset = zero_offset
+        peak_idx = int(np.argmin(np.abs(offsets_s)))
+        match_ratio_global = float(zero_diag["ratio_global"])
+        match_ratio_overlap = float(zero_diag["ratio_overlap"])
+        match_ratio_gate = float(zero_diag["ratio_gate"])
+        overlap_pair_cap = int(zero_diag["pair_cap_overlap"])
+        overlap_gate_min_pairs = int(zero_diag["overlap_gate_min_pairs"])
+        fallback_used = 0.0
+        step1_forced_candidate = False
+        step1_force_reason = ""
+
     sig_est_shifted = _linear_interp_extrapolate(
         t_uniform - calculated_offset, sig_est, t_uniform
     )
@@ -395,6 +408,9 @@ def _run_time_alignment(
         "zero_omega_rmse_after": float(omega_rmse_after_zero),
         "near_zero_improve_ratio": float(small_offset_improve_ratio),
         "near_zero_preferred_code": 1.0 if near_zero_preferred else 0.0,
+        "time_offset_calibration_disabled": float(
+            bool(disable_time_offset_calibration)
+        ),
     }
 
     evo_t_offset_used_s = -calculated_offset
