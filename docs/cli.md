@@ -133,6 +133,10 @@ are not generated for constrained fits because they can violate the constraint.
 This is an identity-centered prior: genuine extrinsics in weak directions are
 suppressed, and drift may still bias the supported components.
 
+Only the fitted rotation (or its constrained estimate) and identity extrinsics
+are considered. No artificial 180-degree axis-flipped alternatives are generated.
+A genuine rotation near 180 degrees can still be recovered directly by the fit.
+
 Insufficient excitation, no supported subspace, or numerical failure still
 falls back to identity without fitting translation. Otherwise, candidates must
 not worsen positional RMSE on the **same full associated solve set**, including
@@ -182,6 +186,32 @@ retaining the requested spatial alignment. Evaluation results expose
 `time_metrics`, including `offset_candidate_s`, `xcorr_candidate_normalized`,
 `xcorr_candidate_psr`, and `offset_confidence_rejected`, so rejected candidates
 can be distinguished from the final applied `offset_est_s`.
+
+`se3` (including the legacy `se3r` alias) estimates world rotation from paired
+orientations. Before averaging, a median-consensus initialization and up to three
+angular median/MAD filtering passes reject inconsistent alignment rotations. The
+cutoff is `max(1 degree, median + 3 * 1.4826 * MAD)`. At least half the pairs and
+at least two samples must remain; two-pair fits retain the original mean behavior.
+This filter only changes the rotation fit: translation retains its existing
+sample selection, and full/drift-valid metrics still evaluate the original
+trajectory samples. It does not repair persistent frame resets or guarantee
+lower position ATE.
+
+The primary rotation-first `sim3` solver and its stable-window solves use the
+same angular filter. Only rotation inliers enter the scale/translation solve,
+which uses ordinary least squares with rotation fixed. There is no position MAD
+filter or positional candidate search; positions with accepted
+orientations remain in the fit regardless of their position residuals. Scale
+must be positive, with sufficient spatial spread to estimate it. The public
+solver still requires at least three input pairs. The fitting mask does not
+remove samples from ATE or change the SR definition.
+Diagnostics expose `sim3_rotation_*` and `sim3_position_*` inlier/rejection
+counts, with `sim3_position_mad_filter_enabled=false`, zero additional position
+rejections, and angular exclusions recorded separately. On the stable-window
+path counts refer to the selected window. Existing fallback paths and
+their reasons remain visible; the legacy position-only emergency solver does
+not use the angular filter. A majority of drifted samples can still dominate
+the angular median consensus.
 
 Linear quaternion interpolation normalizes the source quaternions and enforces
 sign continuity between chronological neighbors before interpolating. This

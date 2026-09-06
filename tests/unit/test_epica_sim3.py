@@ -351,6 +351,8 @@ def test_epica_sim3_stable_uses_prefix_when_tail_scale_drifts() -> None:
     assert info["sim3_anchor_status"] == "ok"
     assert info["sim3_reliable"] is True
     assert int(info["sim3_anchor_start_index"]) == 0
+    assert info["sim3_rotation_rejected_count"] == 0
+    assert info["sim3_position_rejected_count"] == 0
     assert int(info["sim3_anchor_end_index"]) <= drift_start
     np.testing.assert_allclose(scale, 1.0, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(r_fit, np.eye(3), rtol=1e-6, atol=1e-6)
