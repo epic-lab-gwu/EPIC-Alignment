@@ -107,6 +107,65 @@ Common options:
 - `--save-full-metrics`: keep full per-sample APE/RPE arrays in `metrics.json`
 - `--rerun`: enable Rerun logging
 
+Calibration controls:
+
+- `--disable-time-offset-calibration`: force the calibrated time offset to zero
+- `--disable-extrinsic-calibration`: use identity/zero sensor extrinsics
+- `--disable-calibration`: disable both calibration stages
+- `--disable-identity-safeguard`: disable the shared extrinsic solver's
+  identity-candidate comparison (the safeguard is **on by default**)
+
+The shared extrinsic/world-alignment stage also checks rotation observability
+and compares calibrated candidates with genuine identity extrinsics (`R = I`,
+`t = 0`). The observability threshold is a weakest/strongest rotational
+information eigenvalue ratio of **0.1**, evaluated on the final rotation inliers
+with capped/robust weights. Both trajectories' excitation and the matched-fit
+curvature must pass. Two nonparallel rotation axes can pass; single-axis motion
+cannot. This is a conditioning heuristic, not a statistical confidence bound.
+
+Weakly observable rotation is now refitted with its unsupported log-rotation
+components fixed to zero. The weakest-conditioned information matrix supplies
+the reference-frame eigenvectors; components below the same 0.1 eigenvalue-ratio
+threshold are constrained. The supported components minimize the weighted
+relative-rotation-vector error. Original final pair masks and weights are
+frozen, and the same mask is reused for translation. Axis-flipped alternatives
+are not generated for constrained fits because they can violate the constraint.
+This is an identity-centered prior: genuine extrinsics in weak directions are
+suppressed, and drift may still bias the supported components.
+
+Insufficient excitation, no supported subspace, or numerical failure still
+falls back to identity without fitting translation. Otherwise, candidates must
+not worsen positional RMSE on the **same full associated solve set**, including
+poses excluded from their trimmed alignment fits. Tolerance is numerical only
+(`max(1e-9 m, 1e-9 * identity_RMSE)`). Position ties prefer identity unless
+orientation RMSE improves. The fit and comparison reuse the solve data; this is
+an evaluation safeguard, not independent calibration validation. Conservative
+fallback can reject genuine extrinsics when motion is insufficient or poses are
+inconsistent. Sim3's separate optional correction/acceptance path is unchanged.
+
+Logs and diagnostics expose `extrinsic_selection_reason`,
+`extrinsic_identity_selected`, `extrinsic_rotation_information_ratio`, and the
+identity/selected positional RMSE. Explicit disable flags remain authoritative.
+Constraint diagnostics include `extrinsic_rotation_constraint_success`,
+`extrinsic_rotation_constraint_dimension`, the information source, and original
+and constrained rotation angles. `extrinsic_rotation_observable` still describes
+the original unconstrained fit. For controlled internal evaluations,
+`_solve_extrinsic_and_world_alignment(compare_identity_candidate=False)` bypasses
+the positional identity comparison, but not insufficient-data/numerical safety
+fallbacks. Public CLI behavior retains the identity comparison by default.
+Use `--disable-identity-safeguard` with `epa`, or
+`--epa-disable-identity-safeguard` with the OV-compatible evaluation commands,
+to bypass it. This can accept calibration that worsens positional ATE.
+Observability checks, weak-direction constraints, and insufficient-data/numerical
+safety fallbacks remain active. Disabling extrinsic calibration still forces
+identity/zero extrinsics, regardless of this option. Sim3's separate acceptance
+check is unaffected by this shared-solver option.
+
+The OV-compatible commands expose the same controls with an `--epa-` prefix:
+`--epa-disable-time-offset-calibration`, `--epa-disable-extrinsic-calibration`,
+and `--epa-disable-calibration`. Shorter aliases ending in `--time-offset` and
+`--extrinsic` are also accepted.
+
 Minimal example:
 
 ```bash

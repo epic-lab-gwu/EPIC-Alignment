@@ -385,6 +385,7 @@ def _evaluate_pair_ov_style(
     downsample_hz: float = _DEFAULT_EPA_DOWNSAMPLE_HZ,
     quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
     allow_resampled_fallback: bool = True,
+    disable_extrinsic_calibration: bool = False,
 ) -> dict:
     t_gt, p_gt, q_gt = _load_pose_file(file_gt)
     t_est, p_est, q_est = _load_pose_file(file_est)
@@ -425,6 +426,7 @@ def _evaluate_pair_ov_style(
         quat_est=q_est_m,
         mode=epa_align_mode,
         n_to_align=-1,
+        disable_extrinsic_calibration=disable_extrinsic_calibration,
     )
     align_info.update(timeline_info)
     align_info["requested_align_mode"] = requested_align_mode
@@ -480,6 +482,9 @@ def _evaluate_pair_epa_step3(
     quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
     verbose: bool = False,
     allow_resampled_fallback: bool = True,
+    disable_time_offset_calibration: bool = False,
+    disable_extrinsic_calibration: bool = False,
+    disable_identity_safeguard: bool = False,
 ) -> dict:
     t_gt, p_gt, q_gt = _load_pose_file(file_gt)
     t_est, p_est, q_est = _load_pose_file(file_est)
@@ -503,6 +508,7 @@ def _evaluate_pair_epa_step3(
             offset_min_match_ratio=float(offset_min_match_ratio),
             evo_match_max_diff_s=float(max_diff),
             artificial_offset_s=None,
+            disable_time_offset_calibration=disable_time_offset_calibration,
         )
     else:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -516,6 +522,7 @@ def _evaluate_pair_epa_step3(
                 offset_min_match_ratio=float(offset_min_match_ratio),
                 evo_match_max_diff_s=float(max_diff),
                 artificial_offset_s=None,
+                disable_time_offset_calibration=disable_time_offset_calibration,
             )
     input_coverage = _compute_input_coverage_diagnostics(
         t_ref=t_gt,
@@ -624,6 +631,11 @@ def _evaluate_pair_epa_step3(
         pr_solve=p_est_solve,
         qr_solve=q_est_solve,
         global_align_mode=global_align_mode,
+        calibration_timestamps_s=t_gt_m,
+        calibration_source_timestamps_s=np.asarray(t_est, dtype=float)
+        - float(step1["calculated_offset"]),
+        disable_extrinsic_calibration=disable_extrinsic_calibration,
+        compare_identity_candidate=not bool(disable_identity_safeguard),
     )
 
     gt_t = np.asarray(t_gt_m, dtype=float)
@@ -650,6 +662,12 @@ def _evaluate_pair_epa_step3(
         "sparse_association_failed": bool(sparse_assoc_failed),
         "sparse_association_failure_reason": sparse_assoc_failure_reason,
         "resampled_fallback_used": bool(use_resampled_fallback),
+        "time_offset_calibration_disabled": bool(disable_time_offset_calibration),
+        "extrinsic_calibration_disabled": bool(disable_extrinsic_calibration),
+        **{
+            key: value for key, value in solved.get("step3_choice", {}).items()
+            if key.startswith("extrinsic_") and key != "extrinsic_calibration_disabled"
+        },
         **strict_decision,
     }
     if eval_mode not in {
@@ -732,6 +750,10 @@ def _evaluate_pair(
     epa_quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
     epa_no_fallback: bool = False,
     epa_verbose_fallback: bool = False,
+    epa_disable_time_offset_calibration: bool = False,
+    epa_disable_extrinsic_calibration: bool = False,
+    epa_disable_calibration: bool = False,
+    epa_disable_identity_safeguard: bool = False,
 ) -> dict:
     requested_align_alias = str(align_mode).lower()
     requested_align_mode = _public_align_mode(requested_align_alias)
@@ -750,6 +772,15 @@ def _evaluate_pair(
                 quat_interp=str(epa_quat_interp),
                 verbose=bool(epa_verbose_fallback),
                 allow_resampled_fallback=not bool(epa_no_fallback),
+                disable_identity_safeguard=bool(epa_disable_identity_safeguard),
+                disable_time_offset_calibration=(
+                    bool(epa_disable_calibration)
+                    or bool(epa_disable_time_offset_calibration)
+                ),
+                disable_extrinsic_calibration=(
+                    bool(epa_disable_calibration)
+                    or bool(epa_disable_extrinsic_calibration)
+                ),
             )
             result["requested_align_mode"] = requested_align_mode
             if requested_align_alias != requested_align_mode:
@@ -772,6 +803,10 @@ def _evaluate_pair(
         downsample_hz=float(epa_downsample_hz),
         quat_interp=str(epa_quat_interp),
         allow_resampled_fallback=not bool(epa_no_fallback),
+        disable_extrinsic_calibration=(
+            bool(epa_disable_calibration)
+            or bool(epa_disable_extrinsic_calibration)
+        ),
     )
     result["requested_align_mode"] = requested_align_mode
     if requested_align_alias != requested_align_mode:
@@ -783,6 +818,18 @@ def _evaluate_pair(
 
 def _epa_eval_kwargs(args: argparse.Namespace) -> dict[str, object]:
     return {
+        "epa_disable_identity_safeguard": bool(
+            getattr(args, "epa_disable_identity_safeguard", False)
+        ),
+        "epa_disable_time_offset_calibration": bool(
+            getattr(args, "epa_disable_time_offset_calibration", False)
+        ),
+        "epa_disable_extrinsic_calibration": bool(
+            getattr(args, "epa_disable_extrinsic_calibration", False)
+        ),
+        "epa_disable_calibration": bool(
+            getattr(args, "epa_disable_calibration", False)
+        ),
         "epa_dt_resample": float(getattr(args, "epa_dt_resample", _DEFAULT_EPA_DT_RESAMPLE)),
         "epa_offset_min_match_ratio": float(
             getattr(args, "epa_offset_min_match_ratio", _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO)

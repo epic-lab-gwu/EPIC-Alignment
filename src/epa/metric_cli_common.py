@@ -370,12 +370,14 @@ def align_for_eval_with_info(
     *,
     t_ref: np.ndarray | None = None,
     align_indices: np.ndarray | None = None,
+    disable_extrinsic_calibration: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     requested_mode = str(mode).lower()
     mode = resolve_metric_eval_align_mode(requested_mode, default="none")
     info: dict[str, object] = {
         "align_mode": mode,
         "n_to_align": int(n_to_align),
+        "extrinsic_calibration_disabled": bool(disable_extrinsic_calibration),
     }
     if requested_mode != mode:
         info["requested_align_mode"] = requested_mode
@@ -523,7 +525,9 @@ def align_for_eval_with_info(
         info["sim3_extrinsic_rotation_correction_used"] = False
         info["sim3_raw_candidate_position_rmse_m"] = raw_pos_rmse
         info["sim3_raw_candidate_orientation_rmse_deg"] = raw_rot_rmse
-        if mode in {"sim3", "epa_sim3"}:
+        if mode in {"sim3", "epa_sim3"} and not bool(
+            disable_extrinsic_calibration
+        ):
             try:
                 r_body = solve_extrinsic_rotation(
                     np.asarray(quat_ref[idx], dtype=float),

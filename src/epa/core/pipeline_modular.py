@@ -189,6 +189,13 @@ def run_pipeline_modular(args, script_dir: Path):
     t_est_input = np.asarray(t_est, dtype=float).copy()
 
     print("--- STEP 1: TIME ALIGNMENT ---")
+    disable_all_calibration = bool(getattr(args, "disable_calibration", False))
+    disable_time_offset_calibration = disable_all_calibration or bool(
+        getattr(args, "disable_time_offset_calibration", False)
+    )
+    disable_extrinsic_calibration = disable_all_calibration or bool(
+        getattr(args, "disable_extrinsic_calibration", False)
+    )
     dt_resample = float(getattr(args, "dt_resample", 0.001))
     offset_search_window_s = float(getattr(args, "offset_search_window_s", 0.0))
     offset_min_match_ratio = float(getattr(args, "offset_min_match_ratio", 0.3))
@@ -203,6 +210,7 @@ def run_pipeline_modular(args, script_dir: Path):
         offset_min_match_ratio=offset_min_match_ratio,
         evo_match_max_diff_s=evo_match_max_diff_s,
         artificial_offset_s=ARTIFICIAL_OFFSET if args.synthetic else None,
+        disable_time_offset_calibration=disable_time_offset_calibration,
     )
     calculated_offset = float(step1["calculated_offset"])
     time_metrics = step1["time_metrics"]
@@ -324,6 +332,10 @@ def run_pipeline_modular(args, script_dir: Path):
         robust_kernel=robust_kernel,
         robust_kernel_delta_m=robust_kernel_delta_m,
         robust_kernel_max_iterations=robust_kernel_max_iterations,
+        calibration_timestamps_s=t_gt,
+        calibration_source_timestamps_s=solve_eval["t_est_sync"],
+        disable_extrinsic_calibration=disable_extrinsic_calibration,
+        compare_identity_candidate=not bool(getattr(args, "disable_identity_safeguard", False)),
     )
     R_calc = solved["R_calc"]
     t_calc = solved["t_calc"]
@@ -335,6 +347,12 @@ def run_pipeline_modular(args, script_dir: Path):
     q_step2 = solved["q_step2"]
     q_step3 = solved["q_step3"]
     step3_choice = solved["step3_choice"]
+    print(
+        f"Extrinsic selection: {step3_choice['extrinsic_selection_reason']} "
+        f"(rotation information ratio={step3_choice['extrinsic_rotation_information_ratio']:.6f}, "
+        f"identity RMSE={step3_choice['extrinsic_identity_position_rmse_m']:.6f} m, "
+        f"selected RMSE={step3_choice['extrinsic_selected_position_rmse_m']:.6f} m)"
+    )
     if verbose:
         print(f"Calculated Extrinsic Rotation Matrix:\n{np.round(R_calc, 4)}")
         print(f"Calculated Translation: {np.round(t_calc, 4)} m")

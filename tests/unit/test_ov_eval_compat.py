@@ -989,7 +989,9 @@ def test_module_subcommand_help_uses_real_command_parser(
     assert "--epa-no-fallback" in out
 
 
-def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Path) -> None:
+def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     t = np.arange(20, dtype=float) * 0.05
     pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
     quat = np.tile(np.array([0.0, 0.0, 0.0, 1.0]), (t.size, 1))
@@ -999,6 +1001,11 @@ def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Pat
     _write_tum(gt_path, t, pos, quat)
     _write_tum(est_path, t, pos, quat)
 
+    # Zero rotational excitation now has a legitimate identity-extrinsic
+    # solution. An unrelated solver error must still propagate, not invoke OV.
+    def fail_world_solver(**kwargs):
+        raise ValueError("invalid world-alignment input")
+    monkeypatch.setattr("epa.compat.ov_eval.evaluate._solve_extrinsic_and_world_alignment", fail_world_solver)
     with pytest.raises(RuntimeError, match="EPA Step3 evaluation failed"):
         _evaluate_pair(
             file_gt=gt_path,
@@ -1012,6 +1019,7 @@ def test_evaluate_pair_no_fallback_raises_for_impossible_epa_step3(tmp_path: Pat
 def test_evaluate_pair_fails_without_ov_style_fallback_by_default(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     t = np.arange(20, dtype=float) * 0.05
     pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
@@ -1022,6 +1030,9 @@ def test_evaluate_pair_fails_without_ov_style_fallback_by_default(
     _write_tum(gt_path, t, pos, quat)
     _write_tum(est_path, t, pos, quat)
 
+    def fail_world_solver(**kwargs):
+        raise ValueError("invalid world-alignment input")
+    monkeypatch.setattr("epa.compat.ov_eval.evaluate._solve_extrinsic_and_world_alignment", fail_world_solver)
     with pytest.raises(RuntimeError, match="EPA Step3 evaluation failed"):
         _evaluate_pair(
             file_gt=gt_path,

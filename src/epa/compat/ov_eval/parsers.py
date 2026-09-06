@@ -27,6 +27,29 @@ def _build_format_converter_parser() -> argparse.ArgumentParser:
 
 def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
+        "--epa-disable-time-offset-calibration",
+        "--epa-disable-time-offset",
+        action="store_true",
+        help="Keep input timestamps unchanged and use a zero EPA time offset.",
+    )
+    p.add_argument(
+        "--epa-disable-extrinsic-calibration",
+        "--epa-disable-extrinsic",
+        action="store_true",
+        help="Use identity rotation and zero translation for EPA extrinsics.",
+    )
+    p.add_argument(
+        "--epa-disable-identity-safeguard",
+        action="store_true",
+        help="Disable the shared EPA extrinsic solver's identity-candidate comparison (enabled by default).",
+    )
+    p.add_argument(
+        "--epa-disable-calibration",
+        "--epa-disable-all-calibration",
+        action="store_true",
+        help="Disable both EPA time-offset and extrinsic calibration.",
+    )
+    p.add_argument(
         "--epa-dt-resample",
         type=float,
         default=_DEFAULT_EPA_DT_RESAMPLE,

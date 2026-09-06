@@ -111,6 +111,13 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
             f"(est={eval_res['length_est']:.2f}m, gt={eval_res['length_gt']:.2f}m)"
         )
     eval_alignment = eval_res.get("eval_alignment", {})
+    if isinstance(eval_alignment, dict) and "extrinsic_selection_reason" in eval_alignment:
+        print(
+            "Extrinsic selection = " + str(eval_alignment["extrinsic_selection_reason"])
+            + f" | rotation_information_ratio = {float(eval_alignment['extrinsic_rotation_information_ratio']):.6f}"
+            + f" | identity_position_rmse_m = {float(eval_alignment['extrinsic_identity_position_rmse_m']):.6f}"
+            + f" | selected_position_rmse_m = {float(eval_alignment['extrinsic_selected_position_rmse_m']):.6f}"
+        )
     if isinstance(eval_alignment, dict) and eval_alignment.get("sim3_scale_severe"):
         print(
             "[WARN] "
@@ -246,6 +253,10 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
                 "eval_source": str(eval_res.get("eval_source", "unknown")),
                 "matched": int(eval_res["matched"]),
                 "ape_rmse_m": float(ate3_pos["rmse"]),
+                **{
+                    key: value for key, value in eval_alignment.items()
+                    if key.startswith("extrinsic_")
+                },
                 "rpe_time_1s_rmse_m": float(time_pos_stats["rmse"]),
                 "sr_distance_pct": float(success["success_rate_distance"]) * 100.0,
                 "sr_time_pct": float(success["success_rate_time"]) * 100.0,
