@@ -166,6 +166,31 @@ The OV-compatible commands expose the same controls with an `--epa-` prefix:
 and `--epa-disable-calibration`. Shorter aliases ending in `--time-offset` and
 `--extrinsic` are also accepted.
 
+Automatic time calibration uses zero-mean normalized cross-correlation (ZNCC),
+recomputing the mean and variance over the actual overlap at each candidate lag.
+Only lags retaining at least 50% of the resampled signal and 100 samples are
+eligible. The selected candidate must have ZNCC >= 0.4 and peak-to-sidelobe ratio
+(PSR) >= 6; PSR excludes a 0.2-second guard on each side of the peak and ignores
+ineligible lags. Otherwise the applied offset is zero. These conservative
+thresholds are heuristics, not probabilities; periodic or nearly constant motion
+can leave a real offset unidentifiable. There is no fixed one-second offset limit.
+The existing overlap and timestamp-association requirements still apply.
+
+OV-compatible `se3`, `se3-original`, `posyaw`, and `sim3` evaluations all use this
+time-calibration step. `--epa-disable-time-offset-calibration` forces zero while
+retaining the requested spatial alignment. Evaluation results expose
+`time_metrics`, including `offset_candidate_s`, `xcorr_candidate_normalized`,
+`xcorr_candidate_psr`, and `offset_confidence_rejected`, so rejected candidates
+can be distinguished from the final applied `offset_est_s`.
+
+Linear quaternion interpolation normalizes the source quaternions and enforces
+sign continuity between chronological neighbors before interpolating. This
+prevents equivalent `q` and `-q` representations from cancelling near an interval
+midpoint and producing artificial rotation-error spikes. The interpolated
+quaternions are normalized afterward; the method remains normalized linear
+interpolation. SLERP remains available through `--quat-interp slerp` or the
+OV-compatible `--epa-quat-interp slerp` option.
+
 Minimal example:
 
 ```bash

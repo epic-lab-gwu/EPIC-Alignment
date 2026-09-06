@@ -8,6 +8,12 @@ from .math_utils import rmse
 from .time_alignment import compute_psr, get_angular_velocity_norm, matching_time_indices
 
 
+_MIN_ZNCC = 0.4
+_MIN_PSR = 6.0
+_MIN_CORRELATION_OVERLAP = 0.5
+_PSR_GUARD_S = 0.2
+
+
 def _next_fast_len_235(size: int) -> int:
     """Return the smallest 2/3/5-smooth FFT length at least ``size``."""
     target = max(1, int(size))
@@ -39,6 +45,47 @@ def _correlate_full(lhs, rhs):
     fft_size = _next_fast_len_235(output_size)
     spectrum = np.fft.rfft(x, fft_size) * np.fft.rfft(y[::-1], fft_size)
     return np.fft.irfft(spectrum, fft_size)[:output_size]
+
+
+def _correlate_zncc(lhs, rhs):
+    """Full correlation with means and variances computed on each lag's overlap.
+
+    Undefined correlations (fewer than two samples or constant signals) are NaN.
+    Prefix sums keep the normalization linear in the output size.
+    """
+    x = np.asarray(lhs, dtype=float).reshape(-1)
+    y = np.asarray(rhs, dtype=float).reshape(-1)
+    if x.size == 0 or y.size == 0:
+        raise ValueError("Cross-correlation inputs must be non-empty.")
+    # Center and scale first to reduce cancellation in the prefix moments.
+    x = x - np.mean(x)
+    y = y - np.mean(y)
+    # Do not amplify floating-point noise in constant angular velocity.
+    x /= max(float(np.max(np.abs(x))), 1e-8)
+    y /= max(float(np.max(np.abs(y))), 1e-8)
+    lags = np.arange(1 - y.size, x.size)
+    x_start = np.maximum(lags, 0)
+    x_end = np.minimum(x.size, y.size + lags)
+    y_start = x_start - lags
+    y_end = x_end - lags
+    count = x_end - x_start
+
+    def moments(values, start, end):
+        prefix = np.concatenate(([0.0], np.cumsum(values)))
+        prefix_sq = np.concatenate(([0.0], np.cumsum(values * values)))
+        total = prefix[end] - prefix[start]
+        squares = prefix_sq[end] - prefix_sq[start]
+        variance = np.maximum(squares - total * total / count, 0.0)
+        return total, variance
+
+    sum_x, var_x = moments(x, x_start, x_end)
+    sum_y, var_y = moments(y, y_start, y_end)
+    covariance = _correlate_full(x, y) - sum_x * sum_y / count
+    denominator = np.sqrt(var_x * var_y)
+    valid = (count >= 2) & (var_x > 1e-12 * count) & (var_y > 1e-12 * count)
+    corr = np.full(count.shape, np.nan, dtype=float)
+    np.divide(covariance, denominator, out=corr, where=valid)
+    return np.clip(corr, -1.0, 1.0), count
 
 
 def _linear_interp_extrapolate(x, y, query):
@@ -223,25 +270,27 @@ def _run_time_alignment(
             "Step-1 signals contain non-finite values. Check timestamps for duplicates/non-monotonic samples."
         )
 
-    corr = _correlate_full(sig_est, sig_gt)
-    if not np.all(np.isfinite(corr)):
-        raise ValueError(
-            "Cross-correlation contains non-finite values (possible invalid timestamp deltas or signal values)."
-        )
+    corr, overlap_count = _correlate_zncc(sig_est, sig_gt)
     lags = np.arange(-len(sig_gt) + 1, len(sig_est))
     offsets_s = lags.astype(float) * dt_resample
 
-    search_mask = np.ones_like(offsets_s, dtype=bool)
+    min_overlap = max(100, int(np.ceil(_MIN_CORRELATION_OVERLAP * len(sig_gt))))
+    search_mask = (overlap_count >= min_overlap) & np.isfinite(corr)
     if offset_search_window_s > 0.0:
-        search_mask = np.abs(offsets_s) <= offset_search_window_s
-        if not np.any(search_mask):
-            raise ValueError(
-                "Offset search window has no valid lag candidates. Increase --offset-search-window-s."
-            )
+        search_mask &= np.abs(offsets_s) <= offset_search_window_s
 
     search_indices = np.flatnonzero(search_mask)
-    peak_idx = int(search_indices[int(np.argmax(corr[search_indices]))])
+    peak_idx = (
+        int(search_indices[int(np.argmax(corr[search_indices]))])
+        if search_indices.size
+        else int(np.argmin(np.abs(offsets_s)))
+    )
     calculated_offset = float(offsets_s[peak_idx])
+    # Exclude unsupported lags from both peak selection and PSR statistics.
+    psr_corr = np.where(search_mask, corr, np.nan)
+
+    def _peak_psr(index: int) -> float:
+        return compute_psr(psr_corr, index, guard_bins=max(1, int(_PSR_GUARD_S / dt_resample)))
 
     def _count_matches_for_offset(offset_s: float) -> dict[str, object]:
         return _offset_match_diagnostics(
@@ -252,9 +301,7 @@ def _run_time_alignment(
         )
 
     def _best_near_zero_offset(window_s: float) -> tuple[float, int]:
-        zero_mask = np.abs(offsets_s) <= float(window_s)
-        if offset_search_window_s > 0.0:
-            zero_mask &= search_mask
+        zero_mask = (np.abs(offsets_s) <= float(window_s)) & search_mask
         if np.any(zero_mask):
             zero_indices = np.flatnonzero(zero_mask)
             zero_peak_idx = int(zero_indices[int(np.argmax(corr[zero_indices]))])
@@ -263,10 +310,12 @@ def _run_time_alignment(
         return float(offsets_s[zero_peak_idx]), zero_peak_idx
 
     def _omega_rmse_after_offset(offset_s: float) -> float:
-        sig_est_shifted_for_offset = _linear_interp_extrapolate(
-            t_uniform - float(offset_s), sig_est, t_uniform
-        )
-        return rmse(sig_est_shifted_for_offset - sig_gt)
+        lag = int(round(float(offset_s) / dt_resample))
+        start = max(lag, 0)
+        end = min(sig_est.size, sig_gt.size + lag)
+        # Compare real samples only: extrapolation can reward moving a reset
+        # outside the observed interval and changes with the candidate lag.
+        return rmse(sig_est[start:end] - sig_gt[start - lag : end - lag])
 
     match_diag = _count_matches_for_offset(calculated_offset)
     match_ratio_global = float(match_diag["ratio_global"])
@@ -362,7 +411,16 @@ def _run_time_alignment(
             print(step1_force_reason)
             print(f"Continuing with highest-confidence candidate offset: {calculated_offset:.4f} s")
 
-    if bool(disable_time_offset_calibration):
+    candidate_offset = calculated_offset
+    candidate_corr = float(corr[peak_idx])
+    candidate_psr = float(_peak_psr(peak_idx))
+    confidence_rejected = not (
+        np.isfinite(candidate_corr)
+        and candidate_corr >= _MIN_ZNCC
+        and np.isfinite(candidate_psr)
+        and candidate_psr >= _MIN_PSR
+    )
+    if bool(disable_time_offset_calibration) or confidence_rejected:
         calculated_offset = zero_offset
         peak_idx = int(np.argmin(np.abs(offsets_s)))
         match_ratio_global = float(zero_diag["ratio_global"])
@@ -370,23 +428,33 @@ def _run_time_alignment(
         match_ratio_gate = float(zero_diag["ratio_gate"])
         overlap_pair_cap = int(zero_diag["pair_cap_overlap"])
         overlap_gate_min_pairs = int(zero_diag["overlap_gate_min_pairs"])
-        fallback_used = 0.0
+        fallback_used = float(confidence_rejected and not disable_time_offset_calibration)
+        if fallback_used:
+            fallback_offset = zero_offset
+            fallback_ratio_global = match_ratio_global
+            fallback_ratio_overlap = match_ratio_overlap
+            fallback_ratio_gate = match_ratio_gate
         step1_forced_candidate = False
         step1_force_reason = ""
 
-    sig_est_shifted = _linear_interp_extrapolate(
-        t_uniform - calculated_offset, sig_est, t_uniform
-    )
-
-    corr_norm_peak = corr[peak_idx] / (np.linalg.norm(sig_gt) * np.linalg.norm(sig_est) + 1e-12)
-    psr = compute_psr(corr, peak_idx, guard_bins=max(1, int(0.02 / dt_resample)))
+    corr_norm_peak = corr[peak_idx]
+    psr = _peak_psr(peak_idx)
     time_metrics = {
         "offset_est_s": calculated_offset,
         "offset_err_ms": np.nan,
         "xcorr_peak_normalized": corr_norm_peak,
         "xcorr_psr": psr,
         "omega_rmse_before": rmse(sig_est - sig_gt),
-        "omega_rmse_after": rmse(sig_est_shifted - sig_gt),
+        "omega_rmse_after": _omega_rmse_after_offset(calculated_offset),
+        "offset_candidate_s": float(candidate_offset),
+        "xcorr_candidate_normalized": candidate_corr,
+        "xcorr_candidate_psr": candidate_psr,
+        "xcorr_min_normalized": _MIN_ZNCC,
+        "xcorr_min_psr": _MIN_PSR,
+        "xcorr_min_overlap_ratio": _MIN_CORRELATION_OVERLAP,
+        "offset_confidence_rejected": float(
+            confidence_rejected and not disable_time_offset_calibration
+        ),
         "offset_search_window_s": offset_search_window_s,
         "offset_min_match_ratio": offset_min_match_ratio,
         "offset_fallback_used": fallback_used,
