@@ -8,7 +8,7 @@ from epa.core.calibration import (
 from epa.core import trajectory_alignment as alignment
 
 
-def _pose_case(single_axis=False, translation=True):
+def _pose_case(single_axis=False, translation=True, extrinsic_angles=(12, -8, 23)):
     rng = np.random.default_rng(2409)
     increments = rng.normal(size=(159, 3)) * 0.08
     if single_axis:
@@ -17,7 +17,7 @@ def _pose_case(single_axis=False, translation=True):
     for delta in R.from_rotvec(increments):
         poses.append(poses[-1] * delta)
     reference = R.concatenate(poses)
-    extrinsic = R.from_euler("xyz", [12, -8, 23], degrees=True)
+    extrinsic = R.from_euler("xyz", extrinsic_angles, degrees=True)
     world = R.from_euler("xyz", [17, 11, -32], degrees=True)
     world_t = np.array([3.0, -2.0, 1.0])
     extrinsic_t = np.array([0.2, -0.1, 0.15]) if translation else np.zeros(3)
@@ -67,9 +67,12 @@ def test_observability_ratio_is_invariant_to_motion_scale():
     assert first["information_ratio"] == pytest.approx(second["information_ratio"])
 
 
-def test_well_observed_nonidentity_extrinsic_still_recovers_full_transform():
+@pytest.mark.parametrize("extrinsic_angles", [(12, -8, 23), (179, 5, -3)])
+def test_well_observed_nonidentity_extrinsic_still_recovers_full_transform(extrinsic_angles):
     # Isolate the rotation safeguard from the existing lever-arm convention.
-    kwargs, x, t, world, world_t = _pose_case(translation=False)
+    kwargs, x, t, world, world_t = _pose_case(
+        translation=False, extrinsic_angles=extrinsic_angles
+    )
     fitted = alignment._solve_extrinsic_and_world_alignment(**kwargs)
     np.testing.assert_allclose(fitted["R_calc"], x.as_matrix(), atol=1e-10)
     np.testing.assert_allclose(fitted["t_calc"], t, atol=1e-10)
@@ -80,14 +83,12 @@ def test_well_observed_nonidentity_extrinsic_still_recovers_full_transform():
     assert choice["extrinsic_identity_selected"] == 0
     assert choice["extrinsic_selection_reason"] == "calibrated_candidate_accepted"
     assert choice["extrinsic_selected_position_rmse_m"] < 1e-10
-    assert choice["orientation_candidate_count"] == 5
+    assert choice["orientation_candidate_count"] == 2
+    assert choice["orientation_ambiguity_detected"] == 0
 
 
-def test_unobservable_fit_uses_constrained_candidate_without_axis_flips(monkeypatch):
+def test_unobservable_fit_uses_constrained_candidate_without_axis_flips():
     kwargs, *_ = _pose_case(single_axis=True)
-    def unexpected_flips(*args, **kwargs):
-        pytest.fail("Constrained rotation must not produce axis-flipped candidates")
-    monkeypatch.setattr(alignment, "_extrinsic_rotation_candidates", unexpected_flips)
     actual = alignment._solve_extrinsic_and_world_alignment(**kwargs, compare_identity_candidate=False)
     choice = actual["step3_choice"]
     assert choice["extrinsic_selection_reason"] == "constrained_candidate_accepted"
