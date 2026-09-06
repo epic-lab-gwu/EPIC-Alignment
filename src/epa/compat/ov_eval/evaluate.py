@@ -376,6 +376,47 @@ def _associate_or_resample_ov_style(
     )
 
 
+def _run_eval_time_alignment(
+    *,
+    t_gt: np.ndarray,
+    q_gt: np.ndarray,
+    t_est: np.ndarray,
+    q_est: np.ndarray,
+    dt_resample: float,
+    offset_min_match_ratio: float,
+    max_diff: float,
+    disable_time_offset_calibration: bool,
+    verbose: bool,
+) -> dict:
+    if disable_time_offset_calibration:
+        return {
+            "calculated_offset": 0.0,
+            "time_metrics": {
+                "offset_est_s": 0.0,
+                "evo_t_offset_used_s": 0.0,
+                "time_offset_calibration_disabled": 1.0,
+            },
+        }
+    output_context = (
+        contextlib.nullcontext()
+        if verbose
+        else contextlib.redirect_stdout(io.StringIO())
+    )
+    with output_context:
+        return _run_time_alignment(
+            t_gt=t_gt,
+            quat_gt=q_gt,
+            t_est=t_est,
+            quat_est=q_est,
+            dt_resample=float(dt_resample),
+            offset_search_window_s=0.0,
+            offset_min_match_ratio=float(offset_min_match_ratio),
+            evo_match_max_diff_s=float(max_diff),
+            artificial_offset_s=None,
+            disable_time_offset_calibration=disable_time_offset_calibration,
+        )
+
+
 def _evaluate_pair_ov_style(
     file_gt: Path,
     file_est: Path,
@@ -386,6 +427,11 @@ def _evaluate_pair_ov_style(
     quat_interp: str = _DEFAULT_EPA_QUAT_INTERP,
     allow_resampled_fallback: bool = True,
     disable_extrinsic_calibration: bool = False,
+    calibrate_time: bool = False,
+    dt_resample: float = _DEFAULT_EPA_DT_RESAMPLE,
+    offset_min_match_ratio: float = _DEFAULT_EPA_OFFSET_MIN_MATCH_RATIO,
+    disable_time_offset_calibration: bool = False,
+    verbose: bool = False,
 ) -> dict:
     t_gt, p_gt, q_gt = _load_pose_file(file_gt)
     t_est, p_est, q_est = _load_pose_file(file_est)
@@ -397,15 +443,31 @@ def _evaluate_pair_ov_style(
         float(np.sum(np.linalg.norm(np.diff(p_est, axis=0), axis=1))) if p_est.shape[0] > 1 else 0.0
     )
     ratio = len_est / (len_gt + 1e-12)
+    step1 = (
+        _run_eval_time_alignment(
+            t_gt=t_gt,
+            q_gt=q_gt,
+            t_est=t_est,
+            q_est=q_est,
+            dt_resample=dt_resample,
+            offset_min_match_ratio=offset_min_match_ratio,
+            max_diff=max_diff,
+            disable_time_offset_calibration=disable_time_offset_calibration,
+            verbose=verbose,
+        )
+        if calibrate_time
+        else {"calculated_offset": 0.0, "time_metrics": {}}
+    )
+    calculated_offset = float(step1["calculated_offset"])
     input_coverage = _compute_input_coverage_diagnostics(
         t_ref=t_gt,
         pos_ref=p_gt,
         t_est=t_est,
-        offset_est_s=0.0,
+        offset_est_s=calculated_offset,
     )
 
     t_gt_m, p_gt_m, q_gt_m, p_est_m, q_est_m, timeline_info = _associate_or_resample_ov_style(
-        t_est=t_est,
+        t_est=t_est - calculated_offset,
         p_est=p_est,
         q_est=q_est,
         t_gt=t_gt,
@@ -431,6 +493,8 @@ def _evaluate_pair_ov_style(
     align_info.update(timeline_info)
     align_info["requested_align_mode"] = requested_align_mode
     align_info["eval_source"] = "epa_eval_align"
+    if calibrate_time:
+        align_info["time_offset_calibration_disabled"] = bool(disable_time_offset_calibration)
 
     ape3 = compute_ape(
         pos_ref=p_gt_m,
@@ -456,6 +520,8 @@ def _evaluate_pair_ov_style(
         "length_gt": float(len_gt),
         "length_est": float(len_est),
         "input_coverage": input_coverage,
+        "calculated_offset": calculated_offset,
+        "time_metrics": dict(step1["time_metrics"]),
         "gt_t": t_gt_m,
         "gt_pos": p_gt_m,
         "gt_quat": q_gt_m,
@@ -497,33 +563,17 @@ def _evaluate_pair_epa_step3(
     )
     ratio = len_est / (len_gt + 1e-12)
 
-    if bool(verbose):
-        step1 = _run_time_alignment(
-            t_gt=t_gt,
-            quat_gt=q_gt,
-            t_est=t_est,
-            quat_est=q_est,
-            dt_resample=float(dt_resample),
-            offset_search_window_s=0.0,
-            offset_min_match_ratio=float(offset_min_match_ratio),
-            evo_match_max_diff_s=float(max_diff),
-            artificial_offset_s=None,
-            disable_time_offset_calibration=disable_time_offset_calibration,
-        )
-    else:
-        with contextlib.redirect_stdout(io.StringIO()):
-            step1 = _run_time_alignment(
-                t_gt=t_gt,
-                quat_gt=q_gt,
-                t_est=t_est,
-                quat_est=q_est,
-                dt_resample=float(dt_resample),
-                offset_search_window_s=0.0,
-                offset_min_match_ratio=float(offset_min_match_ratio),
-                evo_match_max_diff_s=float(max_diff),
-                artificial_offset_s=None,
-                disable_time_offset_calibration=disable_time_offset_calibration,
-            )
+    step1 = _run_eval_time_alignment(
+        t_gt=t_gt,
+        q_gt=q_gt,
+        t_est=t_est,
+        q_est=q_est,
+        dt_resample=dt_resample,
+        offset_min_match_ratio=offset_min_match_ratio,
+        max_diff=max_diff,
+        disable_time_offset_calibration=disable_time_offset_calibration,
+        verbose=verbose,
+    )
     input_coverage = _compute_input_coverage_diagnostics(
         t_ref=t_gt,
         pos_ref=p_gt,
@@ -712,6 +762,8 @@ def _evaluate_pair_epa_step3(
         "length_gt": float(len_gt),
         "length_est": float(len_est),
         "input_coverage": input_coverage,
+        "calculated_offset": float(step1["calculated_offset"]),
+        "time_metrics": dict(step1["time_metrics"]),
         "gt_t": gt_t,
         "gt_pos": gt_pos,
         "gt_quat": gt_quat,
@@ -807,6 +859,14 @@ def _evaluate_pair(
             bool(epa_disable_calibration)
             or bool(epa_disable_extrinsic_calibration)
         ),
+        calibrate_time=requested_align_mode == "sim3",
+        dt_resample=float(epa_dt_resample),
+        offset_min_match_ratio=float(epa_offset_min_match_ratio),
+        disable_time_offset_calibration=(
+            bool(epa_disable_calibration)
+            or bool(epa_disable_time_offset_calibration)
+        ),
+        verbose=bool(epa_verbose_fallback),
     )
     result["requested_align_mode"] = requested_align_mode
     if requested_align_alias != requested_align_mode:

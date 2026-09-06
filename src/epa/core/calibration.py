@@ -751,12 +751,57 @@ def solve_world_alignment(P, Q):
     return Rw, cQ - Rw @ cP
 
 
+def _rotation_median_inliers(relative: R, *, min_threshold_deg: float = 1.0, return_info=False):
+    """Reject angular outliers around a median-consensus alignment rotation.
+
+    Use a bounded, deterministic medoid search to avoid starting from a mean
+    already pulled towards orientation jumps. Quaternions are compared through
+    absolute dot products, so their arbitrary signs do not affect selection.
+    Position residuals and genuine motion shared by both trajectories do not
+    enter this check.
+    """
+    n = len(relative)
+    mask = np.ones(n, dtype=bool)
+    info = {"inlier_count": n, "rejected_count": 0, "threshold_deg": None,
+            "median_deg": None, "mad_deg": None, "iterations": 0}
+    if n < 3:
+        return (mask, info) if return_info else mask
+    quats = relative.as_quat()
+    candidate_ids = np.linspace(0, n - 1, min(n, 64), dtype=int)
+    sample_ids = np.linspace(0, n - 1, min(n, 2048), dtype=int)
+    dots = np.clip(np.abs(quats[candidate_ids] @ quats[sample_ids].T), 0.0, 1.0)
+    scores = np.median(2.0 * np.arccos(dots), axis=1)
+    center = relative[candidate_ids[int(np.argmin(scores))]]
+    for _ in range(3):
+        errors = (center.inv() * relative).magnitude()
+        median = float(np.median(errors))
+        mad = float(np.median(np.abs(errors - median)))
+        threshold = max(np.radians(min_threshold_deg), median + 3.0 * 1.4826 * mad)
+        updated = errors <= threshold
+        # An ambiguous/minuscule consensus must not produce an underdetermined fit.
+        if np.count_nonzero(updated) < max(2, (n + 1) // 2):
+            break
+        unchanged = np.array_equal(updated, mask)
+        mask = updated
+        info.update(inlier_count=int(mask.sum()), rejected_count=int(n - mask.sum()),
+                    threshold_deg=float(np.degrees(threshold)),
+                    median_deg=float(np.degrees(median)), mad_deg=float(np.degrees(mad)),
+                    iterations=info["iterations"] + 1)
+        center = relative[mask].mean()
+        if unchanged:
+            break
+    return (mask, info) if return_info else mask
+
+
 def solve_rotation_first_alignment(P, Q, qP, qQ, weights=None):
     """Solve a rigid transform with rotation fixed by orientation pairs.
 
     The returned transform maps source poses ``(P, qP)`` into reference poses
     ``(Q, qQ)``.  Unlike position-only SE(3), position residuals cannot rotate
     the trajectory; they determine translation only after the orientation mean.
+    A median/MAD angular check removes orientation outliers from that mean.
+    Translation still uses all supplied position pairs, and no evaluation poses
+    are removed by this fitting-only filter.
     """
     P = np.asarray(P, dtype=float)
     Q = np.asarray(Q, dtype=float)
@@ -784,7 +829,9 @@ def solve_rotation_first_alignment(P, Q, qP, qQ, weights=None):
         mean_weights = mean_weights[valid]
 
     relative = R.from_quat(qQ) * R.from_quat(qP).inv()
-    Rw = relative.mean(weights=mean_weights).as_matrix()
+    rotation_inliers = _rotation_median_inliers(relative)
+    rotation_weights = None if mean_weights is None else mean_weights[rotation_inliers]
+    Rw = relative[rotation_inliers].mean(weights=rotation_weights).as_matrix()
     offsets = Q - (Rw @ P.T).T
     if mean_weights is None:
         tw = np.mean(offsets, axis=0)

@@ -63,15 +63,18 @@ def get_angular_velocity_norm(t, quats):
 
 
 def compute_psr(corr, peak_idx, guard_bins):
+    corr = np.asarray(corr, dtype=float)
     if corr.size <= 2 * guard_bins + 1:
         return np.nan
-    mask = np.ones_like(corr, dtype=bool)
+    mask = np.isfinite(corr)
     lo = max(0, peak_idx - guard_bins)
     hi = min(corr.size, peak_idx + guard_bins + 1)
     mask[lo:hi] = False
     sidelobe = corr[mask]
+    if sidelobe.size < 5:
+        return np.nan
     std_side = np.std(sidelobe)
-    if sidelobe.size < 5 or std_side < 1e-12:
+    if std_side < 1e-12:
         return np.nan
     return (corr[peak_idx] - np.mean(sidelobe)) / std_side
 
@@ -100,6 +103,18 @@ def interpolate_quat_slerp(t_src, q_src, t_query):
 
 
 def interpolate_quat_linear(t_src, q_src, t_query):
+    """Normalized linear interpolation with consistent quaternion signs."""
+    t_src = np.asarray(t_src, dtype=float).reshape(-1)
+    q_src = normalize_quat_array(np.asarray(q_src, dtype=float))
+    if np.any(np.diff(t_src) < 0.0):
+        # Match the underlying interpolator's chronological ordering before
+        # choosing the signs of neighboring quaternions.
+        order = np.argsort(t_src, kind="stable")
+        t_src, q_src = t_src[order], q_src[order]
+    # q and -q represent the same rotation. Accumulate sign corrections so
+    # every adjacent pair shares a hemisphere and cannot cancel at its midpoint.
+    dots = np.sum(q_src[:-1] * q_src[1:], axis=1)
+    q_src[1:] *= np.cumprod(np.where(dots < 0.0, -1.0, 1.0))[:, None]
     return normalize_quat_array(interpolate_linear_extrapolate(t_src, q_src, t_query))
 
 
