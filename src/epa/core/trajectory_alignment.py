@@ -1471,7 +1471,7 @@ def _solve_extrinsic_and_world_alignment(
         "robust_iterations": 0,
         "observable": False,
         "information_ratio": 0.0,
-        "min_information_ratio": 0.1,
+        "min_information_ratio": 0.03,
         "reference_information_ratio": 0.0,
         "estimate_information_ratio": 0.0,
         "matched_information_ratio": 0.0,

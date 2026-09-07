@@ -9,7 +9,11 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 
 from epa.alignment.modes import resolve_metric_eval_align_mode
-from epa.core.calibration import solve_extrinsic_rotation, solve_rotation_first_alignment
+from epa.core.calibration import (
+    InsufficientRotationExcitationError,
+    solve_extrinsic_rotation_multibaseline,
+    solve_rotation_first_alignment,
+)
 from epa.core.sim3 import solve_anchor_sim3, solve_epa_sim3, solve_epa_sim3_v1, solve_epa_sim3_v2, solve_epica_sim3_variant
 from epa.io.trajectory import load_estimation_trajectory, load_reference_trajectory
 from epa.core.math_utils import normalize_quat_array
@@ -529,10 +533,24 @@ def align_for_eval_with_info(
             disable_extrinsic_calibration
         ):
             try:
-                r_body = solve_extrinsic_rotation(
+                r_body, _, _, rotation_info = solve_extrinsic_rotation_multibaseline(
                     np.asarray(quat_ref[idx], dtype=float),
                     np.asarray(quat_est[idx], dtype=float),
+                    timestamps_s=(
+                        np.asarray(t_ref, dtype=float)[idx] if t_ref is not None else None
+                    ),
                 )
+                info["sim3_extrinsic_rotation_solver"] = "multibaseline"
+                info["sim3_extrinsic_rotation_info"] = rotation_info
+                # Match the shared SE3 solver's observability gate: only use
+                # an observable fit or a successfully constrained weak-axis fit.
+                if not (
+                    bool(rotation_info["observable"])
+                    or bool(rotation_info.get("constraint_success", False))
+                ):
+                    raise InsufficientRotationExcitationError(
+                        "Extrinsic rotation is unobservable and could not be constrained."
+                    )
                 q_est_body_corrected = normalize_quat_array(
                     R.from_matrix(
                         np.einsum(
@@ -578,6 +596,8 @@ def align_for_eval_with_info(
                         "n_to_align": int(n_to_align),
                         "align_pair_count": int(idx.size),
                         "sim3_extrinsic_rotation_correction_used": True,
+                        "sim3_extrinsic_rotation_solver": "multibaseline",
+                        "sim3_extrinsic_rotation_info": rotation_info,
                         "sim3_raw_candidate_position_rmse_m": raw_pos_rmse,
                         "sim3_raw_candidate_orientation_rmse_deg": raw_rot_rmse,
                         "sim3_extrinsic_candidate_position_rmse_m": ext_pos_rmse,
