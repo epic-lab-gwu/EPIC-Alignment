@@ -545,6 +545,7 @@ def run_pipeline_modular(args, script_dir: Path):
     eval_align_indices_by_stage = None
     eval_project_to_plane = str(getattr(args, "eval_project_to_plane", "none"))
     pose_metrics = _compute_pose_metrics_by_stage(
+        input_coverage=input_coverage,
         t_gt=t_gt,
         pos_gt=pos_gt,
         quat_gt=quat_gt,
@@ -855,6 +856,7 @@ def run_pipeline_modular(args, script_dir: Path):
         interactive_step3_metrics = pose_metrics
     else:
         interactive_step3_metrics = _compute_pose_metrics_by_stage(
+            input_coverage=input_coverage,
             t_gt=t_gt,
             pos_gt=pos_gt,
             quat_gt=quat_gt,
@@ -921,6 +923,7 @@ def run_pipeline_modular(args, script_dir: Path):
                 view_pose_metrics = pose_metrics
             else:
                 view_pose_metrics = _compute_pose_metrics_by_stage(
+                    input_coverage=input_coverage,
                     t_gt=t_gt,
                     pos_gt=pos_gt,
                     quat_gt=quat_gt,

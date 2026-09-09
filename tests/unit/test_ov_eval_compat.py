@@ -716,13 +716,13 @@ def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gat
 
     assert int(result["matched"]) >= 20
     assert result["eval_source"] == "epa_step3"
-    assert result["eval_alignment"]["timeline_policy"] == "gt_resampled_association_fallback"
-    assert result["eval_alignment"]["sparse_association_failed"] is True
-    assert result["eval_alignment"]["resampled_fallback_used"] is True
+    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
+    assert result["eval_alignment"]["sparse_association_failed"] is False
+    assert result["eval_alignment"]["resampled_fallback_used"] is False
     assert float(result["ate3_pos"]["rmse"]) < 1e-2
 
 
-def test_evaluate_pair_epa_step3_no_fallback_rejects_low_rate_gt(
+def test_evaluate_pair_epa_step3_no_fallback_interpolates_short_gaps(
     tmp_path: Path,
 ) -> None:
     t_gt = np.arange(0.0, 30.001, 1.0)
@@ -737,13 +737,13 @@ def test_evaluate_pair_epa_step3_no_fallback_rejects_low_rate_gt(
     _write_tum(gt_path, t_gt, pos_gt, quat_gt)
     _write_tum(est_path, t_est, pos_est, quat_est)
 
-    with pytest.raises(ValueError, match="resampled fallback disabled"):
-        _evaluate_pair_epa_step3(
-            gt_path,
-            est_path,
-            0.02,
-            allow_resampled_fallback=False,
-        )
+    result = _evaluate_pair_epa_step3(
+        gt_path, est_path, 0.02, allow_resampled_fallback=False,
+    )
+    assert result["matched"] == 29
+    assert result["eval_alignment"]["dense_timeline_used"] is False
+    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
+    assert float(result["ate3_pos"]["rmse"]) < 0.01
 
 
 def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) -> None:
@@ -818,13 +818,13 @@ def test_evaluate_pair_ov_style_sim3_resamples_when_low_rate_gt_misses_timestamp
     assert int(result["matched"]) >= 20
     assert result["eval_source"] == "epa_eval_align"
     assert result["eval_alignment"]["align_mode"] == "sim3"
-    assert result["eval_alignment"]["timeline_policy"] == "gt_resampled_association_fallback"
-    assert result["eval_alignment"]["sparse_association_failed"] is True
-    assert result["eval_alignment"]["resampled_fallback_used"] is True
+    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
+    assert result["eval_alignment"]["sparse_association_failed"] is False
+    assert result["eval_alignment"]["resampled_fallback_used"] is False
     assert float(result["ate3_pos"]["rmse"]) < 0.5
 
 
-def test_evaluate_pair_ov_style_no_fallback_rejects_low_rate_gt(
+def test_evaluate_pair_ov_style_no_fallback_interpolates_short_gaps(
     tmp_path: Path,
 ) -> None:
     t_gt = np.arange(0.0, 30.001, 1.0)
@@ -839,14 +839,13 @@ def test_evaluate_pair_ov_style_no_fallback_rejects_low_rate_gt(
     _write_tum(gt_path, t_gt, pos_gt, quat_gt)
     _write_tum(est_path, t_est, pos_est, quat_est)
 
-    with pytest.raises(ValueError, match="Unable to associate enough timestamps"):
-        _evaluate_pair_ov_style(
-            gt_path,
-            est_path,
-            "sim3",
-            0.02,
-            allow_resampled_fallback=False,
-        )
+    result = _evaluate_pair_ov_style(
+        gt_path, est_path, "sim3", 0.02, allow_resampled_fallback=False,
+    )
+    assert result["matched"] == 29
+    assert result["eval_alignment"]["dense_timeline_used"] is False
+    assert result["eval_alignment"]["timeline_policy"] == "strict_timestamp_association"
+    assert float(result["ate3_pos"]["rmse"]) < 0.01
 
 
 def test_error_comparison_sim3_resamples_when_low_rate_gt_misses_timestamp_gate(
@@ -1325,7 +1324,7 @@ def test_error_dataset_reports_unreliable_rotation_with_high_translation_sr(
             "gt_t": t,
             "gt_pos": gt_pos,
             "gt_quat": quat_gt,
-            "est_pos": gt_pos,
+            "est_pos": R.from_quat(quat_bad[0]).apply(gt_pos),
             "est_quat": quat_bad,
         }
 
@@ -1350,10 +1349,12 @@ def test_error_dataset_reports_unreliable_rotation_with_high_translation_sr(
     assert "Translation SR is high but rotation error is unstable" in out
 
 
-def test_error_comparison_gates_unreliable_sim3_valid_only_metrics(
+@pytest.mark.parametrize("failure", ["sim3", "coverage", "orientation"])
+def test_error_comparison_preserves_unreliable_sr_and_valid_only_metrics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    failure: str,
 ) -> None:
     t = np.arange(5, dtype=float)
     gt_pos = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
@@ -1378,13 +1379,18 @@ def test_error_comparison_gates_unreliable_sim3_valid_only_metrics(
             "eval_source": "epa_eval_align",
             "eval_alignment": {
                 "align_mode": "sim3",
-                "sim3_reliable": False,
+                "sim3_reliable": failure != "sim3",
                 "sim3_failure_reason": "no_dominant_global_support",
+            },
+            "input_coverage": {
+                "coverage_status": "failed" if failure == "coverage" else "ok",
+                "reference_path_length_m": 4.0 if failure == "orientation" else 8.0,
+                "reference_duration_s": 4.0 if failure == "orientation" else 8.0,
             },
             "gt_t": t,
             "gt_pos": gt_pos,
             "gt_quat": quat_gt,
-            "est_pos": gt_pos,
+            "est_pos": R.from_quat(quat_bad[0]).apply(gt_pos),
             "est_quat": quat_bad,
         }
 
@@ -1403,8 +1409,28 @@ def test_error_comparison_gates_unreliable_sim3_valid_only_metrics(
         ]
     )
 
+    from epa.compat.ov_eval import commands as comparison_commands
+
+    captured = {}
+    original_report = comparison_commands.print_comparison_tables
+
+    def capture_report(**kwargs):
+        captured.update(kwargs)
+        original_report(**kwargs)
+
+    monkeypatch.setattr(comparison_commands, "print_comparison_tables", capture_report)
+
     assert run_error_comparison(args) == 0
     out = capsys.readouterr().out
-    assert "unreliable_runs: unreliable_sim3.txt:no_dominant_global_support" in out
-    assert "algo & 0.00 & 0.00" in out
-    assert "algo & nan / nan & nan / nan" in out
+    assert "unreliable_runs: unreliable_sim3.txt:" in out
+    if failure == "sim3":
+        assert "no_dominant_global_support" in out
+    elif failure == "coverage":
+        assert "Reference support is incomplete" in out
+    else:
+        assert "Translation SR is high but rotation error is unstable" in out
+    expected_sr = "100.00" if failure == "orientation" else "50.00"
+    assert f"algo & {expected_sr} & {expected_sr}" in out
+    assert f"SR - distance = {expected_sr}% | time = {expected_sr}%" in out
+    assert np.all(np.isfinite(captured["valid_ate_table"]["algo"]["seq"]))
+    assert np.all(np.isfinite(captured["valid_time_rpe_table"]["algo"]["seq"]))

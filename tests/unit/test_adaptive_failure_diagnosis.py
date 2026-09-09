@@ -51,6 +51,56 @@ def test_input_coverage_detects_internal_reference_gap() -> None:
     assert "reference_internal_gap_critical" in result["coverage_hard_reasons"]
 
 
+def test_estimate_gap_with_stationary_reference_is_exempt() -> None:
+    t, pos = _line_trajectory()
+    pos[:, 0] = np.where(t < 30, t, np.where(t <= 70, 30, t - 40))
+    keep = (t <= 35) | (t >= 65)
+    result = _compute_input_coverage_diagnostics(
+        t_ref=t, pos_ref=pos, t_est=t[keep] + 7, offset_est_s=7,
+    )
+    assert result["coverage_status"] == "ok"
+    assert result["estimate_raw_internal_gap_ratio"] > 0.25
+    assert result["estimate_internal_gap_ratio"] == 0
+    assert result["estimate_gap_motion_details"][0]["stationary_exempt"]
+
+
+def test_estimate_gap_with_motion_still_fails() -> None:
+    t, pos = _line_trajectory()
+    result = _compute_input_coverage_diagnostics(
+        t_ref=t, pos_ref=pos, t_est=t[(t <= 35) | (t >= 65)], offset_est_s=0,
+    )
+    assert "estimate_internal_gap_critical" in result["coverage_hard_reasons"]
+
+
+def test_estimate_gap_with_return_motion_is_not_stationary() -> None:
+    t, pos = _line_trajectory()
+    pos[:, 0] = np.maximum(0, 15 - np.abs(t - 50))
+    result = _compute_input_coverage_diagnostics(
+        t_ref=t, pos_ref=pos, t_est=t[(t <= 35) | (t >= 65)], offset_est_s=0,
+    )
+    assert "estimate_internal_gap_critical" in result["coverage_hard_reasons"]
+    assert result["estimate_gap_motion_details"][0]["reference_position_extent_m"] == 15
+
+
+def test_estimate_gap_without_reference_support_is_not_exempt() -> None:
+    t, pos = _line_trajectory()
+    pos[:] = 0
+    keep = (t <= 35) | (t >= 65)
+    result = _compute_input_coverage_diagnostics(
+        t_ref=t[keep], pos_ref=pos[keep], t_est=t[keep], offset_est_s=0,
+    )
+    assert "estimate_internal_gap_critical" in result["coverage_hard_reasons"]
+
+
+def test_stationary_gap_tolerates_small_position_noise() -> None:
+    t, pos = _line_trajectory()
+    pos[:, 0] = 0.01 * np.sin(t * 10)
+    result = _compute_input_coverage_diagnostics(
+        t_ref=t, pos_ref=pos, t_est=t[(t <= 35) | (t >= 65)], offset_est_s=0,
+    )
+    assert result["estimate_internal_gap_ratio"] == 0
+
+
 def test_alignment_quality_is_scale_adaptive() -> None:
     labels = []
     normalized = []

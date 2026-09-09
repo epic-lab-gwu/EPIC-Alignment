@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
 
 from epa.core.math_utils import normalize_quat_array
 
@@ -17,6 +17,7 @@ def associate_est_gt(
     q_gt: np.ndarray,
     max_diff: float,
     offset: float = 0.0,
+    interpolate_short_gaps: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     i_est: list[int] = []
     i_gt: list[int] = []
@@ -42,24 +43,48 @@ def associate_est_gt(
             i_est.append(int(i))
             i_gt.append(best_gt)
 
-    if len(i_est) < 3:
-        raise ValueError(
-            "Unable to associate enough timestamps between estimate and ground truth. "
-            f"matches={len(i_est)}, max_diff={max_diff}, offset={offset}."
-        )
-
     ie = np.asarray(i_est, dtype=int)
     ig = np.asarray(i_gt, dtype=int)
+    positions = np.asarray(p_est, dtype=float)[ie]
+    orientations = np.asarray(q_est, dtype=float)[ie]
+    if interpolate_short_gaps:
+        # Preserve direct pairs; fill only unmatched GT times bracketed by
+        # short source intervals. Never extrapolate or bridge long outages.
+        source_t = np.asarray(t_est, dtype=float) + float(offset)
+        dt = np.diff(source_t)
+        positive = dt[dt > 0.0]
+        limit = min(0.2, 3.0 * float(np.median(positive))) if positive.size else 0.0
+        if source_t.size > 1 and np.all(dt > 0.0):
+            candidates = np.setdiff1d(np.arange(t_gt.size), ig)
+            right = np.searchsorted(source_t, t_gt[candidates], side="right")
+            inside = (right > 0) & (right < source_t.size)
+            candidates, right = candidates[inside], right[inside]
+            left = right - 1
+            short = source_t[right] - source_t[left] <= limit + 1e-12
+            candidates, left, right = candidates[short], left[short], right[short]
+            if candidates.size:
+                fraction = ((t_gt[candidates] - source_t[left]) /
+                            (source_t[right] - source_t[left]))[:, None]
+                interp_pos = ((1.0 - fraction) * np.asarray(p_est)[left] +
+                              fraction * np.asarray(p_est)[right])
+                interp_quat = Slerp(source_t, R.from_quat(q_est))(t_gt[candidates]).as_quat()
+                ig = np.concatenate((ig, candidates))
+                # Interpolated samples retain their left source index for
+                # timeline diagnostics; no synthetic source timestamps are added.
+                ie = np.concatenate((ie, left))
+                positions = np.concatenate((positions, interp_pos))
+                orientations = np.concatenate((orientations, interp_quat))
+                order = np.argsort(ig)
+                ig, ie = ig[order], ie[order]
+                positions, orientations = positions[order], orientations[order]
+    if ie.size < 3:
+        raise ValueError(
+            "Unable to associate enough timestamps between estimate and ground truth. "
+            f"matches={ie.size}, max_diff={max_diff}, offset={offset}."
+        )
     t_match = np.asarray(t_gt, dtype=float)[ig]
-    return (
-        t_match,
-        np.asarray(p_est, dtype=float)[ie],
-        np.asarray(q_est, dtype=float)[ie],
-        t_match,
-        np.asarray(p_gt, dtype=float)[ig],
-        np.asarray(q_gt, dtype=float)[ig],
-        ie,
-    )
+    return (t_match, positions, orientations, t_match,
+            np.asarray(p_gt, dtype=float)[ig], np.asarray(q_gt, dtype=float)[ig], ie)
 
 
 def rot_z(theta: float) -> np.ndarray:

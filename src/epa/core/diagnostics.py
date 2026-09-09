@@ -168,8 +168,17 @@ def _compute_input_coverage_diagnostics(
     critical_ratio: float = 0.50,
     gap_warning_ratio: float = 0.05,
     gap_critical_ratio: float = 0.25,
+    gap_stationary_tolerance_m: float = 0.10,
 ) -> dict:
-    """Audit input support before overlap-only solve/evaluation cropping."""
+    """Audit support, exempting estimate gaps with stationary reference positions.
+
+    Reference gaps remain unknown support. Estimate gaps are exempt only when
+    the reference covers the entire interval without a reference timestamp gap
+    and its positional bounding-box diagonal is within the stationary tolerance.
+    This translation-coverage check does not assess rotational tracking.
+    """
+    if not np.isfinite(gap_stationary_tolerance_m) or gap_stationary_tolerance_m < 0:
+        raise ValueError("gap_stationary_tolerance_m must be finite and nonnegative")
     tref = np.asarray(t_ref, dtype=float).reshape(-1)
     pref = np.asarray(pos_ref, dtype=float)
     test = np.asarray(t_est, dtype=float).reshape(-1) - float(offset_est_s)
@@ -196,6 +205,49 @@ def _compute_input_coverage_diagnostics(
 
     ref_gap = _timestamp_gap_metrics(tref)
     est_gap = _timestamp_gap_metrics(test)
+    raw_est_missing = float(est_gap["internal_gap_duration_s"])
+    stationary_missing = 0.0
+    gap_motion_details = []
+    sorted_est = np.sort(test[np.isfinite(test)])
+    ref_order = np.argsort(tref)
+    sorted_ref, sorted_pos = tref[ref_order], pref[ref_order]
+    for index in np.flatnonzero(np.diff(sorted_est) > est_gap["gap_threshold_s"]):
+        start, end = sorted_est[index:index + 2]
+        missing = float(end - start - est_gap["median_dt_s"])
+        lo = int(np.searchsorted(sorted_ref, start, side="right")) - 1
+        hi = int(np.searchsorted(sorted_ref, end, side="left"))
+        motion = float("nan")
+        stationary = False
+        if lo >= 0 and hi < sorted_ref.size:
+            times = sorted_ref[lo:hi + 1]
+            positions = sorted_pos[lo:hi + 1]
+            if (
+                np.all(np.isfinite(positions))
+                and np.all(np.isfinite(times))
+                and np.all(np.diff(times) > 0)
+                and np.all(np.diff(times) <= ref_gap["gap_threshold_s"])
+            ):
+                # Interpolate the boundaries; inspect all interior samples too.
+                interior = (times > start) & (times < end)
+                boundaries = np.array([
+                    np.interp([start, end], times, positions[:, axis])
+                    for axis in range(3)
+                ]).T
+                points = np.concatenate((boundaries, positions[interior]), axis=0)
+                motion = float(np.linalg.norm(np.ptp(points, axis=0)))
+                stationary = motion <= gap_stationary_tolerance_m
+        if stationary:
+            stationary_missing += missing
+        gap_motion_details.append({
+            "start_s": float(start), "end_s": float(end),
+            "missing_duration_s": missing,
+            "reference_position_extent_m": motion,
+            "stationary_exempt": bool(stationary),
+        })
+    est_gap["internal_gap_duration_s"] = max(0.0, raw_est_missing - stationary_missing)
+    est_gap["internal_gap_ratio"] = (
+        est_gap["internal_gap_duration_s"] / max(est_gap["duration_s"], 1e-12)
+    )
     leading_missing = max(0.0, overlap_start - ref_start)
     trailing_missing = max(0.0, ref_end - overlap_end)
 
@@ -244,6 +296,11 @@ def _compute_input_coverage_diagnostics(
         "reference_largest_gap_s": float(ref_gap["largest_gap_s"]),
         "estimate_internal_gap_duration_s": float(est_gap["internal_gap_duration_s"]),
         "estimate_internal_gap_ratio": float(est_gap["internal_gap_ratio"]),
+        "estimate_raw_internal_gap_duration_s": raw_est_missing,
+        "estimate_raw_internal_gap_ratio": raw_est_missing / max(est_gap["duration_s"], 1e-12),
+        "estimate_stationary_gap_duration_s": stationary_missing,
+        "estimate_gap_motion_details": gap_motion_details,
+        "gap_stationary_tolerance_m": float(gap_stationary_tolerance_m),
         "estimate_largest_gap_s": float(est_gap["largest_gap_s"]),
         "coverage_warning_ratio": float(warning_ratio),
         "coverage_critical_ratio": float(critical_ratio),
