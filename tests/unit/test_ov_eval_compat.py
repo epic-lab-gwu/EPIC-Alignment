@@ -716,13 +716,13 @@ def test_evaluate_pair_epa_step3_resamples_when_low_rate_gt_misses_timestamp_gat
 
     assert int(result["matched"]) >= 20
     assert result["eval_source"] == "epa_step3"
-    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
-    assert result["eval_alignment"]["sparse_association_failed"] is False
-    assert result["eval_alignment"]["resampled_fallback_used"] is False
+    assert result["eval_alignment"]["timeline_policy"] == "gt_resampled_association_fallback"
+    assert result["eval_alignment"]["sparse_association_failed"] is True
+    assert result["eval_alignment"]["resampled_fallback_used"] is True
     assert float(result["ate3_pos"]["rmse"]) < 1e-2
 
 
-def test_evaluate_pair_epa_step3_no_fallback_interpolates_short_gaps(
+def test_evaluate_pair_epa_step3_no_fallback_rejects_long_gt_gaps(
     tmp_path: Path,
 ) -> None:
     t_gt = np.arange(0.0, 30.001, 1.0)
@@ -737,13 +737,10 @@ def test_evaluate_pair_epa_step3_no_fallback_interpolates_short_gaps(
     _write_tum(gt_path, t_gt, pos_gt, quat_gt)
     _write_tum(est_path, t_est, pos_est, quat_est)
 
-    result = _evaluate_pair_epa_step3(
-        gt_path, est_path, 0.02, allow_resampled_fallback=False,
-    )
-    assert result["matched"] == 29
-    assert result["eval_alignment"]["dense_timeline_used"] is False
-    assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
-    assert float(result["ate3_pos"]["rmse"]) < 0.01
+    with pytest.raises(ValueError, match="resampled fallback disabled"):
+        _evaluate_pair_epa_step3(
+            gt_path, est_path, 0.02, allow_resampled_fallback=False,
+        )
 
 
 def test_evaluate_pair_ov_style_sim3_recovers_scaled_similarity(tmp_path: Path) -> None:
@@ -818,13 +815,13 @@ def test_evaluate_pair_ov_style_sim3_resamples_when_low_rate_gt_misses_timestamp
     assert int(result["matched"]) >= 20
     assert result["eval_source"] == "epa_eval_align"
     assert result["eval_alignment"]["align_mode"] == "sim3"
-    assert result["eval_alignment"]["timeline_policy"] == "dense_overlap"
-    assert result["eval_alignment"]["sparse_association_failed"] is False
-    assert result["eval_alignment"]["resampled_fallback_used"] is False
+    assert result["eval_alignment"]["timeline_policy"] == "gt_resampled_association_fallback"
+    assert result["eval_alignment"]["sparse_association_failed"] is True
+    assert result["eval_alignment"]["resampled_fallback_used"] is True
     assert float(result["ate3_pos"]["rmse"]) < 0.5
 
 
-def test_evaluate_pair_ov_style_no_fallback_interpolates_short_gaps(
+def test_evaluate_pair_ov_style_no_fallback_rejects_long_gt_gaps(
     tmp_path: Path,
 ) -> None:
     t_gt = np.arange(0.0, 30.001, 1.0)
@@ -839,13 +836,10 @@ def test_evaluate_pair_ov_style_no_fallback_interpolates_short_gaps(
     _write_tum(gt_path, t_gt, pos_gt, quat_gt)
     _write_tum(est_path, t_est, pos_est, quat_est)
 
-    result = _evaluate_pair_ov_style(
-        gt_path, est_path, "sim3", 0.02, allow_resampled_fallback=False,
-    )
-    assert result["matched"] == 29
-    assert result["eval_alignment"]["dense_timeline_used"] is False
-    assert result["eval_alignment"]["timeline_policy"] == "strict_timestamp_association"
-    assert float(result["ate3_pos"]["rmse"]) < 0.01
+    with pytest.raises(ValueError, match="Unable to associate enough timestamps"):
+        _evaluate_pair_ov_style(
+            gt_path, est_path, "sim3", 0.02, allow_resampled_fallback=False,
+        )
 
 
 def test_error_comparison_sim3_resamples_when_low_rate_gt_misses_timestamp_gate(

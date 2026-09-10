@@ -19,6 +19,48 @@ def associate_est_gt(
     offset: float = 0.0,
     interpolate_short_gaps: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Associate poses, optionally interpolating GT onto corrected estimate times.
+
+    Interpolation preserves estimate poses and indices, accepts exact GT samples,
+    and otherwise requires a short bracketing GT interval. Never extrapolate.
+    With interpolation disabled, retain the legacy nearest-timestamp association.
+    """
+    if interpolate_short_gaps:
+        source_t = np.asarray(t_gt, dtype=float).reshape(-1)
+        target_t = np.asarray(t_est, dtype=float).reshape(-1) + float(offset)
+        dt = np.diff(source_t)
+        if not np.all(np.isfinite(source_t)) or np.any(dt <= 0):
+            raise ValueError("GT interpolation requires finite, strictly increasing timestamps")
+        limit = min(0.2, 3.0 * float(np.median(dt))) if dt.size else 0.0
+        right = np.searchsorted(source_t, target_t, side="left")
+        safe_right = np.clip(right, 0, max(source_t.size - 1, 0))
+        exact = np.zeros(target_t.size, dtype=bool)
+        short = np.zeros_like(exact)
+        if source_t.size:
+            exact = (right < source_t.size) & (source_t[safe_right] == target_t)
+            inside = (right > 0) & (right < source_t.size)
+            ids = np.flatnonzero(inside)
+            short[ids] = source_t[right[ids]] - source_t[right[ids] - 1] <= limit + 1e-12
+        ie = np.flatnonzero(np.isfinite(target_t) & (exact | short))
+        if ie.size < 3:
+            raise ValueError(
+                "Unable to associate enough timestamps between estimate and ground truth. "
+                f"matches={ie.size}, max_diff={max_diff}, offset={offset}."
+            )
+        times = target_t[ie]
+        positions = np.asarray(p_gt, dtype=float)[safe_right[ie]].copy()
+        orientations = np.asarray(q_gt, dtype=float)[safe_right[ie]].copy()
+        interp = ~exact[ie]
+        if np.any(interp):
+            hi = right[ie[interp]]
+            lo = hi - 1
+            fraction = ((times[interp] - source_t[lo]) / (source_t[hi] - source_t[lo]))[:, None]
+            positions[interp] = ((1.0 - fraction) * np.asarray(p_gt)[lo]
+                                 + fraction * np.asarray(p_gt)[hi])
+            orientations[interp] = Slerp(source_t, R.from_quat(q_gt))(times[interp]).as_quat()
+        return (times, np.asarray(p_est, dtype=float)[ie], np.asarray(q_est, dtype=float)[ie],
+                times, positions, orientations, ie)
+
     i_est: list[int] = []
     i_gt: list[int] = []
     gt_ptr = 0
@@ -47,36 +89,6 @@ def associate_est_gt(
     ig = np.asarray(i_gt, dtype=int)
     positions = np.asarray(p_est, dtype=float)[ie]
     orientations = np.asarray(q_est, dtype=float)[ie]
-    if interpolate_short_gaps:
-        # Preserve direct pairs; fill only unmatched GT times bracketed by
-        # short source intervals. Never extrapolate or bridge long outages.
-        source_t = np.asarray(t_est, dtype=float) + float(offset)
-        dt = np.diff(source_t)
-        positive = dt[dt > 0.0]
-        limit = min(0.2, 3.0 * float(np.median(positive))) if positive.size else 0.0
-        if source_t.size > 1 and np.all(dt > 0.0):
-            candidates = np.setdiff1d(np.arange(t_gt.size), ig)
-            right = np.searchsorted(source_t, t_gt[candidates], side="right")
-            inside = (right > 0) & (right < source_t.size)
-            candidates, right = candidates[inside], right[inside]
-            left = right - 1
-            short = source_t[right] - source_t[left] <= limit + 1e-12
-            candidates, left, right = candidates[short], left[short], right[short]
-            if candidates.size:
-                fraction = ((t_gt[candidates] - source_t[left]) /
-                            (source_t[right] - source_t[left]))[:, None]
-                interp_pos = ((1.0 - fraction) * np.asarray(p_est)[left] +
-                              fraction * np.asarray(p_est)[right])
-                interp_quat = Slerp(source_t, R.from_quat(q_est))(t_gt[candidates]).as_quat()
-                ig = np.concatenate((ig, candidates))
-                # Interpolated samples retain their left source index for
-                # timeline diagnostics; no synthetic source timestamps are added.
-                ie = np.concatenate((ie, left))
-                positions = np.concatenate((positions, interp_pos))
-                orientations = np.concatenate((orientations, interp_quat))
-                order = np.argsort(ig)
-                ig, ie = ig[order], ie[order]
-                positions, orientations = positions[order], orientations[order]
     if ie.size < 3:
         raise ValueError(
             "Unable to associate enough timestamps between estimate and ground truth. "

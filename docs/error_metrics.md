@@ -280,3 +280,16 @@ Key observations from this example:
 - Distance drift rate normalizes translation RPE by segment length. For example,
   full-trajectory `8m` drift rate `23.334%` means the average 8-meter translation
   RPE is about `23.334%` of the segment length.
+
+## Short-Gap Timestamp Association
+
+OpenVINS-compatible evaluation interpolates ground-truth positions linearly and
+orientations with SLERP at estimate timestamps (after clock-offset correction).
+Estimate poses and source indices are preserved; association does not create
+additional estimate poses. Exact GT timestamps are accepted directly. Other
+samples require a bracketing GT interval no longer than
+`min(0.2 seconds, 3 * median GT sampling interval)`; association does not
+extrapolate or interpolate across longer GT gaps. The legacy nearest-timestamp
+association remains available when short-gap interpolation is disabled.
+The separate dense-resampling fallback remains available when enabled by the
+caller and selected by the evaluation timeline policy.

@@ -14,7 +14,6 @@ from epa.core.evaluation import (
     compute_path_length,
     compute_rpe,
     compute_valid_segment_metrics,
-    resolve_success_threshold,
 )
 from epa.core.diagnostics import _compute_input_coverage_diagnostics
 from epa.core.math_utils import compute_error_statistics

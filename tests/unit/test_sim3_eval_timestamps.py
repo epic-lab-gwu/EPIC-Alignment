@@ -1,6 +1,6 @@
 """Regression coverage for time-bounded Sim3 extrinsic calibration pairs."""
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
 import epa.metric_cli_common as alignment
 from epa.compat.ov_eval.evaluate import _evaluate_pair
 
@@ -14,18 +14,23 @@ def test_sim3_evaluation_calibrates_on_matched_timestamps(tmp_path, monkeypatch)
     world = R.from_euler('zyx', [25.0, -7.0, 4.0], degrees=True)
     body = R.from_euler('xyz', [150.0, -18.0, 32.0], degrees=True)
     scale = 1.8
-    est_pos = world.inv().apply((pos - [0.5, -0.8, 0.3]) / scale)
-    est_quat = (world.inv() * R.from_quat(quat) * body).as_quat()
-    selected = slice(3, -4)
+    # Keep shifted estimate times inside short GT intervals, excluding the outage.
+    selected = np.arange(3, t.size - 4)
+    selected = selected[selected != 79]
+    est_t = t[selected] + 0.001
+    gt_at_est = np.column_stack([np.interp(est_t, t, pos[:, axis]) for axis in range(3)])
+    quat_at_est = Slerp(t, R.from_quat(quat))(est_t)
+    est_pos = world.inv().apply((gt_at_est - [0.5, -0.8, 0.3]) / scale)
+    est_quat = (world.inv() * quat_at_est * body).as_quat()
     gt, est = tmp_path / 'gt.txt', tmp_path / 'est.txt'
     np.savetxt(gt, np.column_stack([t, pos, quat]))
-    np.savetxt(est, np.column_stack([t[selected] + 0.001, est_pos[selected], est_quat[selected]]))
+    np.savetxt(est, np.column_stack([est_t, est_pos, est_quat]))
     original = alignment.solve_extrinsic_rotation_multibaseline
     checked = []
 
     def check_pairs(q_ref, q_est, **kwargs):
         timestamps = kwargs.get('timestamps_s')
-        np.testing.assert_allclose(timestamps, t[selected])
+        np.testing.assert_allclose(timestamps, est_t, rtol=0, atol=1e-10)
         result = original(q_ref, q_est, **kwargs)
         pairs = result[1]
         durations = timestamps[pairs[:, 1]] - timestamps[pairs[:, 0]]
