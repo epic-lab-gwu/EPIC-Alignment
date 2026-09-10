@@ -717,10 +717,8 @@ def _select_stable_alignment_window(
             "step3_stable_segment_end_index": float(n - 1),
         }
 
-    if segments[0][0] == 0:
-        start, end = segments[0]
-    else:
-        start, end = max(segments, key=lambda item: item[1] - item[0])
+    # Choose by pose count; equal-length windows retain chronological order.
+    start, end = max(segments, key=lambda item: item[1] - item[0])
     solve_count = end - start
     if solve_count >= n:
         return mask_all, {
@@ -1443,6 +1441,7 @@ def _solve_extrinsic_and_world_alignment(
     robust_kernel_max_iterations: int = 3,
     calibration_timestamps_s: np.ndarray | None = None,
     calibration_source_timestamps_s: np.ndarray | None = None,
+    calibration_reset_intervals=(),
     disable_extrinsic_calibration: bool = False,
     compare_identity_candidate: bool = True,
 ):
@@ -1484,6 +1483,7 @@ def _solve_extrinsic_and_world_alignment(
                     qr_solve,
                     timestamps_s=calibration_timestamps_s,
                     source_timestamps_s=calibration_source_timestamps_s,
+                    reset_intervals=calibration_reset_intervals,
                 )
             )
         except InsufficientRotationExcitationError as exc:

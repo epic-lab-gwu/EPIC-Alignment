@@ -145,6 +145,7 @@ def _prepare_solve_eval_trajectories(
     calculated_offset: float,
     downsample_hz: float,
     quat_interp: str,
+    safe_association: bool = False,
 ):
     t_est_sync = np.asarray(t_est, dtype=float) - float(calculated_offset)
     t_gt_full = np.asarray(t_gt, dtype=float)
@@ -168,11 +169,22 @@ def _prepare_solve_eval_trajectories(
         downsample_hz,
     )
 
-    pr_sync = interpolate_linear_extrapolate(t_est_sync, pos_est, t_gt_out)
-    if str(quat_interp) == "slerp":
-        qr_sync = interpolate_quat_slerp(t_est_sync, quat_est, t_gt_out)
+    if safe_association:
+        from .adaptive_association import detect_interpolation_resets, interpolate_supported
+        resets = detect_interpolation_resets(t_est_sync, pos_est, quat_est, t_gt_full)
+        ids, pr_sync, qr_sync, _ = interpolate_supported(
+            t_est_sync, pos_est, quat_est, t_gt_out, resets=resets)
+        t_gt_out, pos_gt_out, quat_gt_out = t_gt_out[ids], pos_gt_out[ids], quat_gt_out[ids]
+        if len(ids) < 3:
+            raise ValueError("Safe dense association produced fewer than 3 samples")
+        overlap_info.update(selected_samples=len(ids), overlap_samples=len(ids),
+                            extrapolated_sample_ratio=0., safe_association=True)
     else:
-        qr_sync = interpolate_quat_linear(t_est_sync, quat_est, t_gt_out)
+        pr_sync = interpolate_linear_extrapolate(t_est_sync, pos_est, t_gt_out)
+        if str(quat_interp) == "slerp":
+            qr_sync = interpolate_quat_slerp(t_est_sync, quat_est, t_gt_out)
+        else:
+            qr_sync = interpolate_quat_linear(t_est_sync, quat_est, t_gt_out)
 
     return {
         "t_est_sync": t_est_sync,

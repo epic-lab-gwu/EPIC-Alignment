@@ -475,6 +475,7 @@ def solve_extrinsic_rotation_multibaseline(
     *,
     timestamps_s: np.ndarray | None = None,
     source_timestamps_s: np.ndarray | None = None,
+    reset_intervals=(),
     angle_abs_threshold_deg: float = 0.5,
     angle_rel_threshold: float = 0.2,
     relative_angle_floor_deg: float = 1.0,
@@ -522,6 +523,10 @@ def solve_extrinsic_rotation_multibaseline(
         if timestamps_s is None
         else np.asarray(timestamps_s, dtype=float).reshape(-1)
     )
+    from .adaptive_association import reset_crossing_mask
+    reset_edges = reset_crossing_mask(timestamps, reset_intervals)
+    segment_ids = np.r_[0, np.cumsum((np.diff(segment_ids) != 0) | reset_edges)]
+    segment_info["independent_reset_boundary_count"] = int(np.count_nonzero(reset_edges))
     pair_indices = _multibaseline_pair_indices(
         timestamps,
         sample_valid,

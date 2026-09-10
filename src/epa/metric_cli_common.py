@@ -375,6 +375,7 @@ def align_for_eval_with_info(
     t_ref: np.ndarray | None = None,
     align_indices: np.ndarray | None = None,
     disable_extrinsic_calibration: bool = False,
+    calibration_reset_intervals=(),
 ) -> tuple[np.ndarray, np.ndarray, dict[str, object]]:
     requested_mode = str(mode).lower()
     mode = resolve_metric_eval_align_mode(requested_mode, default="none")
@@ -536,6 +537,7 @@ def align_for_eval_with_info(
                 r_body, _, _, rotation_info = solve_extrinsic_rotation_multibaseline(
                     np.asarray(quat_ref[idx], dtype=float),
                     np.asarray(quat_est[idx], dtype=float),
+                    reset_intervals=calibration_reset_intervals,
                     timestamps_s=(
                         np.asarray(t_ref, dtype=float)[idx] if t_ref is not None else None
                     ),

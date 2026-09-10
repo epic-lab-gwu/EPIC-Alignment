@@ -383,7 +383,7 @@ def test_step3_robust_trimmed_alignment_ignores_drift_for_transform_only() -> No
     assert late_rmse > 5.0
 
 
-def test_step3_uses_stable_prefix_when_trajectory_jumps() -> None:
+def test_step3_uses_longest_stable_window_when_trajectory_jumps() -> None:
     n = 90
     t = np.linspace(0.0, 1.0, n)
     pos_gt = np.column_stack([6.0 * t, np.sin(4.0 * t), 0.2 * np.cos(3.0 * t)])
@@ -406,14 +406,22 @@ def test_step3_uses_stable_prefix_when_trajectory_jumps() -> None:
     )
 
     assert np.isfinite(out["step3_candidate_stable_sr_proxy"])
-    assert out["step3_candidate_full_anchor_rmse_m"] > out["step3_candidate_stable_anchor_rmse_m"]
-    assert out["step3_stable_segment_used"] == 1.0
-    assert int(out["step3_stable_segment_start_index"]) == 0
-    assert int(out["step3_stable_segment_end_index"]) == 34
+    # The robust full fit can win when it agrees with the longest-window fit.
+    assert out["step3_candidate_stable_anchor_rmse_m"] < 0.2
+    assert not np.any(out["step3_selected_mask"][:35])
+    assert np.all(out["step3_selected_mask"][35:])
     early_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][:35] - pos_gt[:35]) ** 2, axis=1))))
     late_rmse = float(np.sqrt(np.mean(np.sum((out["pr_final"][35:] - pos_gt[35:]) ** 2, axis=1))))
-    assert early_rmse < 0.2
-    assert late_rmse > 1000.0
+    assert early_rmse > 1000.0
+    assert late_rmse < 0.2
+
+
+def test_stable_candidate_can_use_early_anchor_preference():
+    full = {"step3_solve_variant": "full", "step3_sr_proxy": .7,
+            "step3_gate_proxy_m": 1., "step3_stable_anchor_rmse_m": 40.}
+    stable = {"step3_solve_variant": "stable", "step3_sr_proxy": .4,
+              "step3_gate_proxy_m": .1, "step3_stable_anchor_rmse_m": 1.}
+    assert _select_world_alignment_variant([full, stable]) is stable
 
 
 def test_step3_motion_prefix_only_overrides_global_failures() -> None:

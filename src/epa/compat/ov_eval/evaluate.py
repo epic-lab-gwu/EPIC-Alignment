@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from epa.core.adaptive_association import detect_interpolation_resets, reset_crossing_mask
+
 import argparse
 import contextlib
 import io
@@ -329,6 +331,7 @@ def _associate_or_resample_ov_style(
         calculated_offset=0.0,
         downsample_hz=float(downsample_hz),
         quat_interp=str(quat_interp),
+        safe_association=True,
     )
     overlap_info = solve_eval.get("overlap_info", {})
     overlap_samples = int(overlap_info.get("overlap_samples", 0) or 0)
@@ -466,6 +469,8 @@ def _evaluate_pair_ov_style(
         offset_est_s=calculated_offset,
     )
 
+    input_coverage["reset_intervals"] = detect_interpolation_resets(t_est - calculated_offset, p_est, q_est, t_gt)
+
     t_gt_m, p_gt_m, q_gt_m, p_est_m, q_est_m, timeline_info = _associate_or_resample_ov_style(
         t_est=t_est - calculated_offset,
         p_est=p_est,
@@ -489,9 +494,12 @@ def _evaluate_pair_ov_style(
         mode=epa_align_mode,
         n_to_align=-1,
         t_ref=t_gt_m,
+        calibration_reset_intervals=input_coverage["reset_intervals"],
         disable_extrinsic_calibration=disable_extrinsic_calibration,
     )
     align_info.update(timeline_info)
+    align_info["association_policy"] = "local_rate_adaptive"
+    align_info["independent_reset_count"] = len(input_coverage["reset_intervals"])
     align_info["requested_align_mode"] = requested_align_mode
     align_info["eval_source"] = "epa_eval_align"
     if calibrate_time:
@@ -581,6 +589,8 @@ def _evaluate_pair_epa_step3(
         t_est=t_est,
         offset_est_s=float(step1["calculated_offset"]),
     )
+    input_coverage["reset_intervals"] = detect_interpolation_resets(
+        t_est - float(step1["calculated_offset"]), p_est, q_est, t_gt)
     sparse_assoc_failed = False
     sparse_assoc_failure_reason = ""
     try:
@@ -633,6 +643,7 @@ def _evaluate_pair_epa_step3(
             calculated_offset=float(step1["calculated_offset"]),
             downsample_hz=float(downsample_hz),
             quat_interp=str(quat_interp),
+            safe_association=True,
         )
         t_gt_m = np.asarray(solve_eval["t_gt"], dtype=float)
         p_gt_m = np.asarray(solve_eval["pos_gt"], dtype=float)
@@ -684,6 +695,7 @@ def _evaluate_pair_epa_step3(
         qr_solve=q_est_solve,
         global_align_mode=global_align_mode,
         calibration_timestamps_s=t_gt_m,
+        calibration_reset_intervals=input_coverage["reset_intervals"],
         calibration_source_timestamps_s=np.asarray(t_est, dtype=float)
         - float(step1["calculated_offset"]),
         disable_extrinsic_calibration=disable_extrinsic_calibration,
@@ -709,6 +721,8 @@ def _evaluate_pair_epa_step3(
         "step3_alignment_mode": str(solved.get("step3_choice", {}).get("step3_alignment_mode", "")),
         "step3_orientation_mode": str(solved.get("step3_choice", {}).get("orientation_mode", "")),
         "timeline_policy": timeline_policy,
+        "association_policy": "local_rate_adaptive",
+        "independent_reset_count": len(input_coverage["reset_intervals"]),
         "dense_timeline_used": bool(use_dense_timeline),
         "auto_sparse_low_rate_estimate_used": bool(prefer_sparse_timeline),
         "sparse_association_failed": bool(sparse_assoc_failed),
@@ -1149,6 +1163,7 @@ def _compute_rpe_segments(
     est_pos: np.ndarray,
     est_quat: np.ndarray,
     segments_m: list[float],
+    valid_segment_mask=None,
 ) -> dict[float, dict[str, np.ndarray | dict[str, float] | int]]:
     return _compute_rpe_segments_ov_eval_style(
         gt_pos=gt_pos,
@@ -1156,6 +1171,7 @@ def _compute_rpe_segments(
         est_pos=est_pos,
         est_quat=est_quat,
         segments_m=segments_m,
+        valid_segment_mask=valid_segment_mask,
     )
 
 
@@ -1165,6 +1181,7 @@ def _compute_time_rpe_1s(
     gt_quat: np.ndarray,
     est_pos: np.ndarray,
     est_quat: np.ndarray,
+    valid_segment_mask=None,
 ) -> dict[str, np.ndarray | dict[str, float] | int]:
     blk = compute_rpe(
         pos_ref=gt_pos,
@@ -1179,6 +1196,7 @@ def _compute_time_rpe_1s(
         pairs_from_reference=True,
         timestamps=np.asarray(gt_t, dtype=float),
         include_raw=True,
+        valid_segment_mask=valid_segment_mask,
     )
     ori_vals = np.asarray(blk["_error_arrays"]["rotation_angle_deg"], dtype=float)
     pos_vals = np.asarray(blk["_error_arrays"]["translation_part"], dtype=float)

@@ -43,15 +43,15 @@ def test_rotation_limits(motion, error, passing):
     assert out['success']['success_rate_time'] == float(passing)
 
 
-def test_missing_one_second_pairs_use_sequential_rpe():
+def test_sparse_samples_use_per_pose_rpe_without_tolerance():
     t = np.array([0., 2., 4.])
     ref = np.column_stack([t, t * 0, t * 0])
     out = evaluate(t, ref, ref, identity(3), identity(3))
     assert out['success']['success_rate_distance'] == 1
     assert out['success']['unscored_segment_count'] == 0
-    assert out['success']['sequential_fallback_pair_count'] == 2
-    assert out['success']['one_second_pair_count'] == 0
-    assert out['rpe_time_1s']['pair_count'] == 0
+    assert out['success']['sequential_fallback_pair_count'] == 0
+    assert out['success']['one_second_pair_count'] == 3
+    assert out['rpe_time_1s']['pair_count'] == 3
     assert out['ape']['translation_part']['rmse'] == 0
 
 
@@ -82,7 +82,7 @@ def test_low_sr_alignment_excludes_failed_poses_and_resolves_collinear_rotation(
     ref = np.column_stack([t, t * 0, t * 0])
     world = R.from_euler('x', 30, degrees=True)
     est = world.apply(ref) + [20., 10., 0.]
-    est[2:, 1] += np.arange(1, 5) * 20
+    est[3:, 1] += np.arange(1, 4) * 20
     qr, qe = identity(6), np.tile(world.as_quat(), (6, 1))
     out = evaluate(t, ref, est, qr, qe)
     assert out['success']['success_rate_distance'] == .2
@@ -117,16 +117,17 @@ def test_nonfinite_rotation_rpe_fails_pair():
     (10., 10., 29.9, True), (10., 10., 30.1, False),
     (5., .09, .299, True), (5., .09, .301, False),
 ])
-def test_sequential_fallback_uses_motion_not_error_rate(duration, motion, error, passing):
+def test_per_pose_pairs_use_motion_not_error_rate(duration, motion, error, passing):
     ref = np.array([[0., 0., 0.], [motion, 0., 0.]])
     est = ref + [[0., 0., 0.], [0., error, 0.]]
     out = evaluate(np.array([0., duration]), ref, est, identity(2), identity(2))
     assert out['success']['success_rate_time'] == float(passing)
-    assert out['success']['sequential_fallback_pair_count'] == 1
+    assert out['success']['sequential_fallback_pair_count'] == 0
+    assert out['success']['one_second_pair_count'] == 2
 
 
 @pytest.mark.parametrize('motion,error,passing', [(10., 29.9, True), (10., 30.1, False), (.5, 2.99, True), (.5, 3.01, False)])
-def test_sequential_fallback_rotation_limits(motion, error, passing):
+def test_chained_sparse_pair_rotation_limits(motion, error, passing):
     ref = np.zeros((2, 3))
     qr = R.from_euler('z', [0., motion], degrees=True).as_quat()
     qe = R.from_euler('z', [0., motion + error], degrees=True).as_quat()
@@ -134,7 +135,7 @@ def test_sequential_fallback_rotation_limits(motion, error, passing):
     assert out['success']['success_rate_time'] == float(passing)
 
 
-def test_fallback_does_not_rescue_failed_one_second_pairs():
+def test_per_pose_sr_preserves_failed_pairs_across_irregular_spacing():
     t = np.array([0., 1., 3., 4.])
     ref = np.column_stack([t, t * 0, t * 0])
     est = ref.copy()
@@ -142,10 +143,11 @@ def test_fallback_does_not_rescue_failed_one_second_pairs():
     out = evaluate(t, ref, est, identity(4), identity(4))
     success = out['success']
     np.testing.assert_array_equal(success['valid_segment_mask'], [False, True, True])
-    np.testing.assert_array_equal(success['sequential_fallback_pair_ids'], [[1, 2]])
+    assert success['sequential_fallback_pair_ids'].shape == (0, 2)
+    assert success['pairing_policy'] == 'overlapping_per_pose_nearest_1s'
     assert success['success_rate_distance'] == .75
-    assert success['scored_pair_count'] == 3
-    assert success['passing_pair_count'] == 2
+    assert success['scored_pair_count'] == 4
+    assert success['passing_pair_count'] == 3
 
 
 def test_refit_reuses_step3_rotation_first_solver_when_positions_disagree():
@@ -173,3 +175,41 @@ def test_refit_reuses_step3_rotation_first_solver_when_positions_disagree():
     assert out['ape']['rotation_angle_deg']['rmse'] < 1e-12
     assert out['ape']['translation_part']['rmse'] > .1
     assert out['success']['success_rate_distance'] == .4
+
+
+def test_passing_enclosing_pair_cannot_rescue_failed_interior_pose():
+    t = np.array([0., .4, 1., 1.4, 2., 2.4, 3.])
+    ref = np.column_stack((t, t*0, t*0)); est = ref.copy()
+    est[1, 1] = 10000.
+    out = evaluate(t, ref, est, identity(len(t)), identity(len(t)))
+    s = out['success']
+    assert s['pose_check_pass_mask'][0]
+    assert not s['pose_check_pass_mask'][1]
+    assert not np.any(s['valid_segment_mask'][:2])
+    assert not s['valid_sample_mask'][1]
+    assert out['ape']['translation_part']['rmse'] == 0
+    assert not np.any(s['valid_sample_mask'] & ~s['pose_check_pass_mask'])
+
+
+def test_tail_pose_has_its_own_check_and_cannot_escape():
+    t=np.arange(0.,3.1,.1);ref=np.column_stack((t,t*0,t*0));est=ref.copy();est[-1,1]=10000.
+    out=evaluate(t,ref,est,identity(len(t)),identity(len(t)))
+    s=out['success'];assert s['pose_checked_mask'].all()
+    assert not s['pose_check_pass_mask'][-1]
+    assert not s['valid_segment_mask'][-1] and not s['valid_sample_mask'][-1]
+
+
+def test_overlapping_checks_have_every_owner_and_respect_reset_fragments():
+    from epa.core.evaluation import rpe_pairs_per_pose
+    t=np.array([0.,.31,.92,1.37,2.08,3.6,3.7,4.9,5.1])
+    pairs,owners=rpe_pairs_per_pose(t)
+    np.testing.assert_array_equal(owners,np.arange(len(t)))
+    assert [i for i,j in pairs[:-1]]==list(range(len(t)-1))
+    for i,j in pairs[:-1]:assert j==i+1+np.argmin(abs(t[i+1:]-t[i]-1.))
+    assert pairs[-1][1]==len(t)-1
+    assert pairs[-1][0]==np.argmin(abs(t[:-1]-(t[-1]-1.)))
+    allowed=np.ones(len(t)-1,bool);allowed[3]=False
+    pairs,owners=rpe_pairs_per_pose(t,valid_segment_mask=allowed)
+    np.testing.assert_array_equal(owners,np.arange(len(t)))
+    for i,j in pairs:assert allowed[i:j].all()
+    with pytest.raises(ValueError):rpe_pairs_per_pose([0.,1.,1.])

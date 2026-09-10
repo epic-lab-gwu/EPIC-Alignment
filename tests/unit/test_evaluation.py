@@ -455,13 +455,13 @@ def test_compute_valid_segment_metrics_filters_ape_and_rpe_pairs() -> None:
         include_raw=True,
     )
 
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.8)
-    np.testing.assert_allclose(metrics["success"]["raw_success_rate_distance"], 0.8)
-    np.testing.assert_allclose(metrics["success"]["local_success_rate_distance"], 0.8)
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.6)
+    np.testing.assert_allclose(metrics["success"]["raw_success_rate_distance"], 0.6)
+    np.testing.assert_allclose(metrics["success"]["local_success_rate_distance"], 0.6)
     assert metrics["success"]["sr_reliability_status"] == "ok"
-    assert metrics["ape"]["translation_part"]["rmse"] == np.sqrt(72.0)
-    assert metrics["rpe"]["pair_count"] == 4
-    assert metrics["rpe_time_1s"]["pair_count"] == 4
+    assert metrics["ape"]["translation_part"]["rmse"] == np.sqrt(3 * 144.0 / 5)
+    assert metrics["rpe"]["pair_count"] == 3
+    assert metrics["rpe_time_1s"]["pair_count"] == 3
 
 
 def test_resolve_drift_thresholds_adapts_to_case_scale() -> None:
@@ -506,7 +506,7 @@ def test_compute_valid_segment_metrics_ignores_legacy_adaptive_ape_threshold() -
     )
 
     assert metrics["success"]["policy"] == "rpe_1s_motion_relative"
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.8)
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.6)
 
 
 def test_compute_valid_segment_metrics_drops_isolated_valid_samples() -> None:
@@ -583,7 +583,7 @@ def test_compute_valid_segment_metrics_allows_stable_bias_above_ape_threshold() 
     np.testing.assert_allclose(metrics["rpe_time_1s"]["translation_part"]["rmse"], 0.0)
 
 
-def test_compute_valid_segment_metrics_invalidates_full_bad_time_rpe_interval() -> None:
+def test_compute_valid_segment_metrics_scores_start_poses_without_spanning_veto() -> None:
     t = np.arange(21, dtype=float) * 0.1
     pos_ref = np.column_stack([t, np.zeros_like(t), np.zeros_like(t)])
     pos_est = pos_ref.copy()
@@ -620,8 +620,8 @@ def test_compute_valid_segment_metrics_invalidates_full_bad_time_rpe_interval() 
         include_masks=True,
     )
 
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.05)
-    assert metrics["rpe_time_1s"]["pair_count"] == 0
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 0.5)
+    assert metrics["rpe_time_1s"]["pair_count"] == 1
 
 
 def test_compute_valid_segment_metrics_preserves_recovered_segment_between_failures() -> None:
@@ -662,10 +662,10 @@ def test_compute_valid_segment_metrics_preserves_recovered_segment_between_failu
 
     np.testing.assert_array_equal(
         metrics["success"]["valid_segment_mask"],
-        np.array([True, False, True, True, True, False, True, True]),
+        np.array([False, False, True, True, False, False, True, True]),
     )
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 6.0 / 8.0)
-    np.testing.assert_array_equal(metrics["rpe"]["_pair_ids"], np.array([[0, 1], [2, 3], [3, 4], [4, 5], [6, 7], [7, 8]]))
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 4.0 / 8.0)
+    np.testing.assert_array_equal(metrics["rpe"]["_pair_ids"], np.array([[2, 3], [3, 4], [6, 7], [7, 8]]))
 
 
 def test_compute_valid_segment_metrics_global_gate_keeps_local_success_rate() -> None:
@@ -704,8 +704,8 @@ def test_compute_valid_segment_metrics_global_gate_keeps_local_success_rate() ->
 
     assert metrics["success"]["case_status"] == "valid_segment"
     assert metrics["success"]["global_gate_failed"] is False
-    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 8.0 / 9.0)
-    assert metrics["ape"]["_error_arrays"]["translation_part"].size == 10
+    np.testing.assert_allclose(metrics["success"]["success_rate_distance"], 7.0 / 9.0)
+    assert metrics["ape"]["_error_arrays"]["translation_part"].size == 9
 
 
 def test_rpe_point_distance_ratio_keeps_pair_aligned_raw_arrays() -> None:

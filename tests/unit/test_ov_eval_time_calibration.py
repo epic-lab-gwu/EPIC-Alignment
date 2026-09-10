@@ -93,7 +93,7 @@ def test_disabled_time_calibration_skips_solver_for_short_trajectories(
     assert result["ate3_pos"]["rmse"] < 1e-6
 
 
-def test_sim3_resampled_fallback_receives_shifted_timestamps(tmp_path, monkeypatch):
+def test_sim3_adaptive_association_receives_shifted_timestamps(tmp_path, monkeypatch):
     t_gt = np.arange(0.0, 30.01, 1.0)
     t_est = np.arange(0.025, 30.0, 0.05)
     gt_path, est_path = tmp_path / "gt.tum", tmp_path / "est.tum"
@@ -105,11 +105,11 @@ def test_sim3_resampled_fallback_receives_shifted_timestamps(tmp_path, monkeypat
     )
     result = evaluate._evaluate_pair(
         gt_path, est_path, "sim3", 0.02,
-        epa_disable_extrinsic_calibration=True,
+        epa_disable_extrinsic_calibration=True, epa_no_fallback=True,
     )
 
-    assert result["eval_alignment"]["resampled_fallback_used"] is True
-    assert result["eval_alignment"]["dense_timeline_used"] is True
+    assert result["eval_alignment"]["resampled_fallback_used"] is False
+    assert result["eval_alignment"]["dense_timeline_used"] is False
     assert result["calculated_offset"] == 2.0
     assert result["gt_t"][0] == 1.0
     assert result["gt_t"][-1] == 29.0

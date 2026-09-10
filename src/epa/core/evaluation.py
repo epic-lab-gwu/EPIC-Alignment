@@ -284,6 +284,68 @@ def compute_ape(pos_ref, quat_ref, pos_est, quat_est, include_raw=False):
     return result
 
 
+def rpe_pairs_chained(timestamps, delta=1.0, valid_segment_mask=None):
+    """Cover each supported interval once with contiguous nearest-duration pairs.
+
+    Each endpoint starts the next pair. Include the final short tail; restart
+    only after explicitly blocked intervals. Ties choose the earlier endpoint.
+    """
+    t = np.asarray(timestamps, dtype=float)
+    if t.ndim != 1 or not np.all(np.isfinite(t)) or np.any(np.diff(t) <= 0):
+        raise ValueError("Chained RPE requires finite, strictly increasing timestamps")
+    if not np.isfinite(delta) or delta <= 0:
+        raise ValueError("Chained RPE duration must be positive")
+    valid = np.ones(max(0, len(t)-1), dtype=bool) if valid_segment_mask is None else np.asarray(valid_segment_mask, dtype=bool)
+    if valid.shape != (max(0, len(t)-1),):
+        raise ValueError("RPE interval mask must match trajectory intervals")
+    edges = np.diff(np.r_[False, valid, False].astype(int))
+    pairs = []
+    for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+        i = int(start)
+        while i < end:
+            target = t[i] + delta
+            hi = int(np.clip(np.searchsorted(t, target), i+1, end))
+            lo = max(i+1, hi-1)
+            j = lo if abs(t[lo]-target) <= abs(t[hi]-target) else hi
+            pairs.append((i, j))
+            i = j
+    return pairs
+
+
+def rpe_pairs_per_pose(timestamps, delta=1.0, valid_segment_mask=None):
+    """One owned RPE check per pose, overlapping in time.
+
+    Prefer the forward endpoint nearest delta, shortening near each supported
+    fragment's end. Its final pose owns a backward check nearest delta. Isolated
+    poses have no check. No pair crosses an explicitly blocked interval.
+    """
+    t = np.asarray(timestamps, dtype=float)
+    if t.ndim != 1 or not np.all(np.isfinite(t)) or np.any(np.diff(t) <= 0):
+        raise ValueError("Per-pose RPE requires finite, strictly increasing timestamps")
+    if not np.isfinite(delta) or delta <= 0:
+        raise ValueError("Per-pose RPE duration must be positive")
+    valid = np.ones(max(0, len(t)-1), dtype=bool) if valid_segment_mask is None else np.asarray(valid_segment_mask, dtype=bool)
+    if valid.shape != (max(0, len(t)-1),):
+        raise ValueError("RPE interval mask must match trajectory intervals")
+    edges = np.diff(np.r_[False, valid, False].astype(int))
+    pairs, owners = [], []
+    for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)):
+        ids = np.arange(start, end)
+        target = t[ids] + delta
+        hi = np.minimum(np.maximum(np.searchsorted(t, target), ids+1), end)
+        lo = np.maximum(ids+1, hi-1)
+        ends = np.where(abs(t[lo]-target) <= abs(t[hi]-target), lo, hi)
+        pairs.extend(zip(ids.tolist(), ends.tolist()))
+        owners.extend(ids.tolist())
+        target = t[end] - delta
+        hi = int(np.clip(np.searchsorted(t, target), start, end-1))
+        lo = max(int(start), hi-1)
+        begin = lo if abs(t[lo]-target) <= abs(t[hi]-target) else hi
+        pairs.append((begin, int(end)))
+        owners.append(int(end))
+    return pairs, np.asarray(owners, dtype=int)
+
+
 def compute_rpe(
     pos_ref,
     quat_ref,
@@ -297,6 +359,8 @@ def compute_rpe(
     timestamps=None,
     include_raw=False,
     max_pairs=50000,
+    valid_segment_mask=None,
+    pair_indices=None,
 ):
     if len(pos_ref) != len(pos_est):
         raise ValueError("RPE requires trajectories with the same number of poses.")
@@ -306,7 +370,7 @@ def compute_rpe(
     T_ref = poses_se3_from_traj(pos_ref, quat_ref)
     T_est = poses_se3_from_traj(pos_est, quat_est)
     pair_source = T_ref if pairs_from_reference else T_est
-    id_pairs = build_rpe_pairs(
+    id_pairs = list(pair_indices) if pair_indices is not None else build_rpe_pairs(
         pair_source,
         delta=delta,
         delta_unit=delta_unit,
@@ -314,6 +378,14 @@ def compute_rpe(
         all_pairs=all_pairs,
         timestamps=timestamps,
     )
+    if any(i < 0 or j >= len(pos_ref) or j <= i for i, j in id_pairs):
+        raise ValueError("Invalid RPE pair indices")
+    if valid_segment_mask is not None:
+        valid = np.asarray(valid_segment_mask, dtype=bool)
+        if valid.shape != (max(0, len(pos_ref)-1),):
+            raise ValueError("RPE interval mask must match trajectory intervals")
+        invalid_prefix = np.r_[0, np.cumsum(~valid)]
+        id_pairs = [(i, j) for i, j in id_pairs if invalid_prefix[j] == invalid_prefix[i]]
     if int(max_pairs) > 0 and len(id_pairs) > int(max_pairs):
         keep = np.linspace(0, len(id_pairs) - 1, int(max_pairs), dtype=int)
         id_pairs = [id_pairs[int(idx)] for idx in keep]
@@ -544,6 +616,11 @@ def _filter_rpe_block(rpe_block, valid_segment_mask, include_raw=True):
             "delta_ids": kept_pairs[:, 1].astype(float) if kept_pairs.size else np.array([], dtype=float),
         }
         result["_pair_ids"] = kept_pairs.astype(int).reshape(-1, 2)
+        if "_reference_motion" in rpe_block:
+            result["_reference_motion"] = {
+                key: np.asarray(values)[keep]
+                for key, values in rpe_block["_reference_motion"].items()
+            }
     return result
 
 
@@ -1052,7 +1129,7 @@ def _motion_relative_pair_pass(block):
                    & (trans_error < trans_limit) & (rot_error < rot_limit))
 
 
-def _longest_successful_group(timestamps, valid_segment, max_gap_s=10.0):
+def _longest_successful_group(timestamps, valid_segment, max_gap_s=10.0, hard_boundaries=None):
     """Keep the group with most successful time; short separating gaps stay false.
 
     Groups are joined only across gaps strictly shorter than max_gap_s. Ties
@@ -1064,12 +1141,17 @@ def _longest_successful_group(timestamps, valid_segment, max_gap_s=10.0):
         raise ValueError("Interval mask must have one entry per timestamp interval")
     if not np.all(np.isfinite(t)) or np.any(np.diff(t) < 0):
         raise ValueError("Group selection requires finite, nondecreasing timestamps")
+    barriers = np.zeros_like(valid) if hard_boundaries is None else np.asarray(hard_boundaries, dtype=bool)
+    if barriers.shape != valid.shape:
+        raise ValueError("Hard boundaries must match interval mask")
+    valid = valid & ~barriers
     edges = np.diff(np.r_[False, valid, False].astype(int))
     starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
     groups = []
     for start, end in zip(starts, ends):
         duration = float(t[end] - t[start])
-        if groups and t[start] - t[groups[-1]["end_index"]] < max_gap_s:
+        if (groups and t[start] - t[groups[-1]["end_index"]] < max_gap_s
+                and not np.any(barriers[groups[-1]["end_index"]:start])):
             groups[-1]["end_index"] = int(end)
             groups[-1]["successful_duration_s"] += duration
         else:
@@ -1112,52 +1194,67 @@ def compute_valid_segment_metrics(
     quat_est=None,
     input_coverage=None,
 ):
-    """Score one-second relative pose error; legacy threshold arguments are ignored.
+    """Score every pose with overlapping RPE; require both interval endpoints.
 
-    Passing pairs cover intervals, failing pairs veto every interval they span.
-    Intervals without a time pair use consecutive-pose RPE instead. SR is frozen before the
-    optional valid-only rigid world alignment and never depends on absolute APE.
+    A passing check validates only its owner pose, never its interior. A failed
+    pose cannot enter valid ATE through an adjacent interval. SR is frozen before
+    optional valid-only world alignment and never depends on absolute APE.
     """
     t = np.asarray(timestamps, dtype=float)
     pos = np.asarray(pos_ref, dtype=float).reshape(-1, 3)
     n = len(t)
+    from .adaptive_association import reset_crossing_mask
+    resets = (input_coverage or {}).get("reset_intervals", [])
+    blocked = reset_crossing_mask(t, resets)
+    per_pose = all(v is not None for v in (quat_ref, pos_est, quat_est))
+    if per_pose:
+        check_pairs, owners = rpe_pairs_per_pose(t, valid_segment_mask=~blocked)
+        rpe_time_1s_block = compute_rpe(
+            pos, quat_ref, pos_est, quat_est, include_raw=True, max_pairs=0,
+            pair_indices=check_pairs,
+        )
+    elif np.any(blocked):
+        rpe_time_1s_block = _filter_rpe_block(rpe_time_1s_block, ~blocked)
+    if np.any(blocked):
+        rpe_block = _filter_rpe_block(rpe_block, ~blocked)
     pairs, pair_ok = _motion_relative_pair_pass(rpe_time_1s_block)
     m = len(pairs)
-    covered_diff = np.zeros(n + 1, dtype=int)
-    failed_diff = np.zeros(n + 1, dtype=int)
-    if m:
-        i, j = pairs.T
-        if np.any((i < 0) | (j >= n) | (j <= i)):
-            raise ValueError("Invalid one-second RPE pair indices")
-        np.add.at(covered_diff, i, 1)
-        np.add.at(covered_diff, j, -1)
-        np.add.at(failed_diff, i[~pair_ok], 1)
-        np.add.at(failed_diff, j[~pair_ok], -1)
-    covered = np.cumsum(covered_diff)[:max(n - 1, 0)] > 0
-    valid_segment = covered & (np.cumsum(failed_diff)[:max(n - 1, 0)] == 0)
+    if np.any((pairs[:, 0] < 0) | (pairs[:, 1] >= n) | (pairs[:, 1] <= pairs[:, 0])):
+        raise ValueError("Invalid per-pose RPE pair indices")
+    if not per_pose:
+        owners = pairs[:, 0]
+    checks = np.bincount(owners, minlength=n)
+    failures = np.bincount(owners[~pair_ok], minlength=n)
+    pose_checked = checks > 0
+    pose_pass = pose_checked & (failures == 0)
     fallback_pairs = np.empty((0, 2), dtype=int)
     fallback_ok = np.array([], dtype=bool)
-    if np.any(~covered):
-        sequential = rpe_block
-        if all(v is not None for v in (quat_ref, pos_est, quat_est)):
-            sequential = compute_rpe(
-                pos, quat_ref, pos_est, quat_est, delta=1, delta_unit="f",
-                all_pairs=True, max_pairs=0, include_raw=True,
-            )
-        seq_pairs, seq_ok = _motion_relative_pair_pass(sequential)
-        # A failed one-second pair is never rescued by this fallback.
+    if not per_pose:
+        # Compatibility for callers supplying error blocks without pose arrays.
+        seq_pairs, seq_ok = _motion_relative_pair_pass(rpe_block)
         eligible = (seq_pairs[:, 0] >= 0) & (seq_pairs[:, 1] < n)
         eligible &= seq_pairs[:, 1] == seq_pairs[:, 0] + 1
         ids = np.flatnonzero(eligible)
-        ids = ids[~covered[seq_pairs[ids, 0]]]
+        ids = ids[~pose_checked[seq_pairs[ids, 0]]]
         fallback_pairs, fallback_ok = seq_pairs[ids], seq_ok[ids]
-        covered[fallback_pairs[:, 0]] = True
-        valid_segment[fallback_pairs[:, 0]] = fallback_ok
+        pose_checked[fallback_pairs[:, 0]] = True
+        pose_pass[fallback_pairs[:, 0]] = fallback_ok
+        # The final pose has no outgoing pair; use its closest available incoming check.
+        if n and not pose_checked[-1]:
+            all_pairs = np.concatenate((pairs, fallback_pairs))
+            all_ok = np.r_[pair_ok, fallback_ok]
+            ids = np.flatnonzero(all_pairs[:, 1] == n-1)
+            if ids.size:
+                k = ids[np.argmin(abs(t[-1]-t[all_pairs[ids, 0]]-1.0))]
+                pose_checked[-1], pose_pass[-1] = True, all_ok[k]
+    covered = pose_checked[:-1] & pose_checked[1:] & ~blocked
+    valid_segment = pose_pass[:-1] & pose_pass[1:] & ~blocked
     unfiltered_segment = valid_segment.copy()
     valid_segment, group_selection = _longest_successful_group(t, valid_segment)
     valid_sample = np.zeros(n, dtype=bool)
     valid_sample[:-1] |= valid_segment
     valid_sample[1:] |= valid_segment
+    valid_sample &= pose_pass
     # Use the common reporting shape, then replace totals with the pair-based
     # segment mask (adjacent passing intervals need not share passing pairs).
     success = compute_success_regions(t, pos, np.zeros(n), valid_sample_mask=valid_sample)
@@ -1187,6 +1284,14 @@ def compute_valid_segment_metrics(
     local_time = valid_time / np.sum(dt) if np.sum(dt) > 0 else float("nan")
     success.update({
         "policy": "rpe_1s_motion_relative",
+        "pairing_policy": "overlapping_per_pose_nearest_1s" if per_pose else "supplied_per_pose_pairs",
+        "interval_policy": "both_endpoint_poses_pass",
+        "tail_policy": "shortened_forward_then_backward_at_fragment_end",
+        "checked_pose_count": int(np.count_nonzero(pose_checked)),
+        "passing_pose_count": int(np.count_nonzero(pose_pass)),
+        "nominal_pair_duration_s": 1.0,
+        "reset_intervals": resets,
+        "reset_blocked_interval_count": int(np.count_nonzero(blocked)),
         "group_selection": group_selection,
         "fail_segments": failed_regions, "fail_segment_count": len(failed_regions),
         "threshold": {"mode": "rpe_1s_motion_relative", "relative_ratio": 3.0,
@@ -1206,7 +1311,7 @@ def compute_valid_segment_metrics(
         "sequential_fallback_pair_count": len(fallback_pairs),
         "sequential_fallback_passing_pair_count": int(np.count_nonzero(fallback_ok)),
         "unscored_segment_count": int(np.count_nonzero(~covered)),
-        "unscored_interval_policy": "sequential_rpe_fallback",
+        "unscored_interval_policy": "unsuccessful",
     })
     success.pop("threshold_m", None)
     raw_dist = float(np.sum(dist[unfiltered_segment]))
@@ -1274,6 +1379,10 @@ def compute_valid_segment_metrics(
         success["valid_segment_mask"] = valid_segment
         success["unfiltered_valid_segment_mask"] = unfiltered_segment
         success["rpe_pair_pass_mask"] = pair_ok
+        success["pose_check_pair_ids"] = pairs
+        success["pose_check_owner_ids"] = owners
+        success["pose_check_pass_mask"] = pose_pass
+        success["pose_checked_mask"] = pose_checked
         success["sequential_fallback_pair_ids"] = fallback_pairs
         success["sequential_fallback_pair_pass_mask"] = fallback_ok
     return {

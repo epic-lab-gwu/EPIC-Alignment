@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from epa.core.adaptive_association import reset_crossing_mask
 from epa.core.evaluation import apply_input_coverage_to_success
 from epa.core.math_utils import compute_error_statistics
 from epa.ov_io import load_ov_csv as _load_ov_eval_csv
@@ -139,6 +140,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
 
     segments = [8.0, 16.0, 24.0, 32.0, 40.0]
     rpe = _compute_rpe_segments(
+        valid_segment_mask=~reset_crossing_mask(eval_res["gt_t"], (eval_res.get("input_coverage") or {}).get("reset_intervals", [])),
         gt_pos=np.asarray(eval_res["gt_pos"], dtype=float),
         gt_quat=np.asarray(eval_res["gt_quat"], dtype=float),
         est_pos=np.asarray(eval_res["est_pos"], dtype=float),
@@ -146,6 +148,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         segments_m=segments,
     )
     time_rpe = _compute_time_rpe_1s(
+        valid_segment_mask=~reset_crossing_mask(eval_res["gt_t"], (eval_res.get("input_coverage") or {}).get("reset_intervals", [])),
         gt_t=np.asarray(eval_res["gt_t"], dtype=float),
         gt_pos=np.asarray(eval_res["gt_pos"], dtype=float),
         gt_quat=np.asarray(eval_res["gt_quat"], dtype=float),
@@ -368,6 +371,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                     fallback_details.append(f"{run_file.name}:fallback")
 
             rpe = _compute_rpe_segments(
+                valid_segment_mask=~reset_crossing_mask(ev["gt_t"], (ev.get("input_coverage") or {}).get("reset_intervals", [])),
                 gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                 gt_quat=np.asarray(ev["gt_quat"], dtype=float),
                 est_pos=np.asarray(ev["est_pos"], dtype=float),
@@ -378,6 +382,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
                 rpe_ori_vals[seg].extend(np.asarray(rpe[seg]["ori_values"], dtype=float).tolist())
                 rpe_pos_vals[seg].extend(np.asarray(rpe[seg]["pos_values"], dtype=float).tolist())
             time_rpe = _compute_time_rpe_1s(
+                valid_segment_mask=~reset_crossing_mask(ev["gt_t"], (ev.get("input_coverage") or {}).get("reset_intervals", [])),
                 gt_t=np.asarray(ev["gt_t"], dtype=float),
                 gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                 gt_quat=np.asarray(ev["gt_quat"], dtype=float),
@@ -611,6 +616,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                         ds_fallback_details.append(f"{run_file.name}:fallback")
 
                 rpe = _compute_rpe_segments(
+                    valid_segment_mask=~reset_crossing_mask(ev["gt_t"], (ev.get("input_coverage") or {}).get("reset_intervals", [])),
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                     gt_quat=np.asarray(ev["gt_quat"], dtype=float),
                     est_pos=np.asarray(ev["est_pos"], dtype=float),
@@ -623,6 +629,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     ds_rpe_ori[seg].extend(ori_vals)
                     ds_rpe_pos[seg].extend(pos_vals)
                 time_rpe = _compute_time_rpe_1s(
+                    valid_segment_mask=~reset_crossing_mask(ev["gt_t"], (ev.get("input_coverage") or {}).get("reset_intervals", [])),
                     gt_t=np.asarray(ev["gt_t"], dtype=float),
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                     gt_quat=np.asarray(ev["gt_quat"], dtype=float),
