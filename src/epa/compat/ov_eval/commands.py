@@ -153,6 +153,7 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         est_quat=np.asarray(eval_res["est_quat"], dtype=float),
     )
     valid = _compute_valid_segment_summary(
+        input_coverage=eval_res.get("input_coverage"),
         gt_t=np.asarray(eval_res["gt_t"], dtype=float),
         gt_pos=np.asarray(eval_res["gt_pos"], dtype=float),
         gt_quat=np.asarray(eval_res["gt_quat"], dtype=float),
@@ -205,7 +206,6 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         if eval_alignment.get("sim3_scale_severe"):
             success["sim3_scale_warning"] = str(eval_alignment.get("sim3_warning", ""))
     quality = _eval_quality_flags(eval_res, success, time_rpe)
-    resolved_threshold_m = float(success["threshold"]["threshold_m"])
     print(
         _fmt_sr_config(
             valid,
@@ -219,13 +219,13 @@ def run_error_singlerun(args: argparse.Namespace) -> int:
         f"| status = {success['input_coverage_status']}"
     )
     print(
-        f"SR local@{_fmt(resolved_threshold_m, 1)}m - distance = "
+        f"SR local - distance = "
         f"{_fmt(float(success['local_success_rate_distance']) * 100.0, 2)}% "
         f"| time = {_fmt(float(success['local_success_rate_time']) * 100.0, 2)}% "
         f"| valid_dist = {_fmt(success['valid_distance_m'])}/{_fmt(success['local_total_distance_m'])}m"
     )
     print(
-        f"SR complete@{_fmt(resolved_threshold_m, 1)}m - distance = "
+        f"SR complete - distance = "
         f"{_fmt(float(success['complete_success_rate_distance']) * 100.0, 2)}% "
         f"| time = {_fmt(float(success['complete_success_rate_time']) * 100.0, 2)}% "
         f"| valid_dist = {_fmt(success['valid_distance_m'])}/{_fmt(success['complete_total_distance_m'])}m"
@@ -387,6 +387,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
             time_ori_vals.extend(np.asarray(time_rpe["ori_values"], dtype=float).tolist())
             time_pos_vals.extend(np.asarray(time_rpe["pos_values"], dtype=float).tolist())
             valid = _compute_valid_segment_summary(
+                input_coverage=ev.get("input_coverage"),
                 gt_t=np.asarray(ev["gt_t"], dtype=float),
                 gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                 gt_quat=np.asarray(ev["gt_quat"], dtype=float),
@@ -414,11 +415,8 @@ def run_error_dataset(args: argparse.Namespace) -> int:
             quality = _eval_quality_flags(ev, valid["success"], time_rpe)
             if not bool(quality["eval_reliable"]):
                 unreliable_details.append(f"{run_file.name}:{quality['eval_warning']}")
-                sr_dist_vals.append(0.0)
-                sr_time_vals.append(0.0)
-            else:
-                sr_dist_vals.append(float(valid["success"]["success_rate_distance"]))
-                sr_time_vals.append(float(valid["success"]["success_rate_time"]))
+            sr_dist_vals.append(float(valid["success"]["success_rate_distance"]))
+            sr_time_vals.append(float(valid["success"]["success_rate_time"]))
 
         valid_runs = len(ate_ori_rmse)
         if valid_runs == 0:
@@ -475,7 +473,7 @@ def run_error_dataset(args: argparse.Namespace) -> int:
         sr_dist_stats = compute_error_statistics(np.asarray(sr_dist_vals, dtype=float))
         sr_time_stats = compute_error_statistics(np.asarray(sr_time_vals, dtype=float))
         print(
-            f"\tSR@{_fmt(sr_m, 1)}m - distance = {_fmt(sr_dist_stats['mean'] * 100.0, 2)}% "
+            f"\tSR - distance = {_fmt(sr_dist_stats['mean'] * 100.0, 2)}% "
             f"| time = {_fmt(sr_time_stats['mean'] * 100.0, 2)}%"
         )
         print("\tNEES: n/a in EPA compatibility mode")
@@ -636,6 +634,7 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                 ds_time_ori.extend(time_ori_vals)
                 ds_time_pos.extend(time_pos_vals)
                 valid = _compute_valid_segment_summary(
+                    input_coverage=ev.get("input_coverage"),
                     gt_t=np.asarray(ev["gt_t"], dtype=float),
                     gt_pos=np.asarray(ev["gt_pos"], dtype=float),
                     gt_quat=np.asarray(ev["gt_quat"], dtype=float),
@@ -661,15 +660,13 @@ def run_error_comparison(args: argparse.Namespace) -> int:
                     valid["success"], ev.get("input_coverage"), set_primary=True
                 )
                 quality = _eval_quality_flags(ev, valid["success"], time_rpe)
+                # Reliability warnings do not suppress SR or drift-valid metrics.
+                ds_sr_dist.append(float(valid["success"]["success_rate_distance"]))
+                ds_sr_time.append(float(valid["success"]["success_rate_time"]))
                 if not bool(quality["eval_reliable"]):
                     detail = f"{run_file.name}:{quality['eval_warning']}"
                     ds_unreliable.append(detail)
                     unreliable_total.append(f"{algo_dir.name}/{ds}/{detail}")
-                    ds_sr_dist.append(0.0)
-                    ds_sr_time.append(0.0)
-                    continue
-                ds_sr_dist.append(float(valid["success"]["success_rate_distance"]))
-                ds_sr_time.append(float(valid["success"]["success_rate_time"]))
                 ds_valid_ate_ori.extend(
                     np.asarray(
                         valid["ape"]["_error_arrays"]["rotation_angle_deg"], dtype=float

@@ -131,8 +131,8 @@ def _print_sim3_ov_eval_terminal_metrics(
     print(
         f"SR config: GT path={_fmt_ov_eval_terminal(total_distance_m, 2)}m "
         f"| time={_fmt_ov_eval_terminal(duration_s, 2)}s "
-        f"| threshold={_fmt_ov_eval_terminal(threshold_m, 2)}m({threshold_mode}) "
-        f"| gate={gate_desc}m"
+        f"| 1s RPE error < 300.00% of reference motion "
+        f"| motion < 0.10m/1.00deg: error < 0.30m/3.00deg | no 1s pair=sequential RPE"
     )
     print(
         f"Coverage - path = {_fmt_ov_eval_terminal(_finite_float(success.get('path_coverage_ratio')) * 100.0, 2)}% "
@@ -140,14 +140,14 @@ def _print_sim3_ov_eval_terminal_metrics(
         f"| status = {success.get('input_coverage_status', 'ok')}"
     )
     print(
-        f"SR local@{_fmt_ov_eval_terminal(threshold_m, 1)}m - distance = "
+        f"SR local - distance = "
         f"{_fmt_ov_eval_terminal(_finite_float(success.get('local_success_rate_distance')) * 100.0, 2)}% "
         f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('local_success_rate_time')) * 100.0, 2)}% "
         f"| valid_dist = {_fmt_ov_eval_terminal(success.get('valid_distance_m'))}/"
         f"{_fmt_ov_eval_terminal(success.get('local_total_distance_m'))}m"
     )
     print(
-        f"SR complete@{_fmt_ov_eval_terminal(threshold_m, 1)}m - distance = "
+        f"SR complete - distance = "
         f"{_fmt_ov_eval_terminal(_finite_float(success.get('complete_success_rate_distance')) * 100.0, 2)}% "
         f"| time = {_fmt_ov_eval_terminal(_finite_float(success.get('complete_success_rate_time')) * 100.0, 2)}% "
         f"| valid_dist = {_fmt_ov_eval_terminal(success.get('valid_distance_m'))}/"

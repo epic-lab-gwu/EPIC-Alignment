@@ -322,6 +322,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=5.0,
         help=argparse.SUPPRESS,
     )
+    for action in parser._actions:
+        if action.dest.startswith("success_") and action.help != argparse.SUPPRESS:
+            action.help = "Legacy option, ignored: SR uses 1s relative pose error with motion-relative limits."
+
     parser.add_argument(
         "--t-max-diff",
         type=float,

@@ -174,6 +174,10 @@ def _add_epa_advanced_args(p: argparse.ArgumentParser) -> None:
         help="Minimum APE jump paired with APE growth-rate for local drift detection.",
     )
 
+    for action in p._actions:
+        if action.dest.startswith("epa_success_"):
+            action.help = "Legacy option, ignored: SR uses 1s relative pose error with motion-relative limits."
+
 
 def _add_batch_failure_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(

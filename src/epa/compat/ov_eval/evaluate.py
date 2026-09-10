@@ -14,7 +14,6 @@ from epa.core.evaluation import (
     compute_path_length,
     compute_rpe,
     compute_valid_segment_metrics,
-    resolve_success_threshold,
 )
 from epa.core.diagnostics import _compute_input_coverage_diagnostics
 from epa.core.math_utils import compute_error_statistics
@@ -283,6 +282,7 @@ def _associate_or_resample_ov_style(
             q_gt=q_gt,
             max_diff=float(max_diff),
             offset=0.0,
+            interpolate_short_gaps=True,
         )
         sparse_matched = int(t_gt_m.size)
         strict_decision = _timeline_decision_for_strict_association(
@@ -488,6 +488,7 @@ def _evaluate_pair_ov_style(
         quat_est=q_est_m,
         mode=epa_align_mode,
         n_to_align=-1,
+        t_ref=t_gt_m,
         disable_extrinsic_calibration=disable_extrinsic_calibration,
     )
     align_info.update(timeline_info)
@@ -592,6 +593,7 @@ def _evaluate_pair_epa_step3(
             q_gt=q_gt,
             max_diff=float(max_diff),
             offset=-float(step1["calculated_offset"]),
+            interpolate_short_gaps=True,
         )
     except ValueError as exc:
         sparse_assoc_failed = True
@@ -1171,6 +1173,7 @@ def _compute_time_rpe_1s(
         quat_est=est_quat,
         delta=1.0,
         delta_unit="s",
+        max_pairs=0,
         rel_delta_tol=0.1,
         all_pairs=True,
         pairs_from_reference=True,
@@ -1209,6 +1212,7 @@ def _compute_valid_segment_summary(
     drift_rpe_1s_m: float = 2.0,
     drift_ape_slope_mps: float = 1.0,
     drift_ape_jump_m: float = 5.0,
+    input_coverage: dict | None = None,
 ) -> dict:
     ape = compute_ape(
         pos_ref=gt_pos,
@@ -1233,40 +1237,18 @@ def _compute_valid_segment_summary(
         quat_est=est_quat,
         delta=1.0,
         delta_unit="s",
+        max_pairs=0,
         rel_delta_tol=0.1,
         all_pairs=True,
         pairs_from_reference=True,
         timestamps=np.asarray(gt_t, dtype=float),
         include_raw=True,
     )
-    resolved_threshold_m, threshold_info = resolve_success_threshold(
-        ape["_error_arrays"]["translation_part"],
-        mode=str(threshold_mode),
-        fixed_threshold_m=float(threshold_m),
-        min_threshold_m=float(threshold_min_m),
-        max_threshold_m=float(threshold_max_m),
-        trim_percentile=float(threshold_trim_percentile),
-    )
     valid = compute_valid_segment_metrics(
-        timestamps=gt_t,
-        pos_ref=gt_pos,
-        ape_block=ape,
-        rpe_block=rpe,
-        rpe_time_1s_block=rpe_time,
-        threshold_m=float(resolved_threshold_m),
-        threshold_info=threshold_info,
-        global_gate_mode=str(global_gate_mode),
-        global_gate_m=float(global_gate_m),
-        global_gate_path_ratio=float(global_gate_path_ratio),
-        global_gate_min_m=float(global_gate_min_m),
-        global_gate_max_m=float(global_gate_max_m),
-        global_gate_percentile=float(global_gate_percentile),
-        drift_threshold_mode=str(drift_threshold_mode),
-        drift_rpe_1s_m=float(drift_rpe_1s_m),
-        drift_ape_slope_mps=float(drift_ape_slope_mps),
-        drift_ape_jump_m=float(drift_ape_jump_m),
-        include_raw=True,
-        include_masks=True,
+        timestamps=gt_t, pos_ref=gt_pos, quat_ref=gt_quat,
+        pos_est=est_pos, quat_est=est_quat, input_coverage=input_coverage,
+        ape_block=ape, rpe_block=rpe, rpe_time_1s_block=rpe_time,
+        include_raw=True, include_masks=True,
     )
     return valid
 
@@ -1291,11 +1273,6 @@ def _compute_valid_rpe_segments(
 
 def _fmt_sr_config(valid: dict, gt_t: np.ndarray, gt_pos: np.ndarray) -> str:
     success = valid["success"]
-    threshold = success.get("threshold", {})
-    threshold_m = float(threshold.get("threshold_m", success.get("threshold_m", np.nan)))
-    threshold_mode = str(threshold.get("mode", "unknown"))
-    gate_m = float(success.get("global_gate_m", np.nan))
-    gate_mode = str(success.get("global_gate_mode", "unknown"))
     gt_t = np.asarray(gt_t, dtype=float).reshape(-1)
     duration_s = float(
         success.get(
@@ -1311,6 +1288,8 @@ def _fmt_sr_config(valid: dict, gt_t: np.ndarray, gt_pos: np.ndarray) -> str:
     )
     return (
         f"SR config: GT path={_fmt(path_m, 2)}m | time={_fmt(duration_s, 2)}s | "
-        f"threshold={_fmt(threshold_m, 2)}m({threshold_mode}) | "
-        f"gate={_fmt(gate_m, 2)}m({gate_mode})"
+        f"1s RPE: error < 300.00% of reference motion | "
+        f"motion < 0.10m/1.00deg: error < 0.30m/3.00deg | no 1s pair=sequential RPE | "
+        f"longest successful-duration group; connecting gaps <10s remain failed | "
+        f"valid-only SE3 realignment={success.get('valid_only_world_alignment', {}).get('reason', 'unavailable')}"
     )

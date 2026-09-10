@@ -7,7 +7,7 @@ class InsufficientRotationExcitationError(ValueError):
     """Valid pose input does not provide enough usable calibration pairs."""
 
 
-def _rotation_observability(vA, vB, rotation, weights, *, min_information_ratio=0.1):
+def _rotation_observability(vA, vB, rotation, weights, *, min_information_ratio=0.03):
     """Check directional excitation and curvature of the matched rotation fit.
 
     For a scatter matrix S, trace(S) I - S is rotational information. Unlike
@@ -487,7 +487,7 @@ def solve_extrinsic_rotation_multibaseline(
     residual_floor_deg: float = 1.0,
     robust_max_iterations: int = 5,
     max_pairs: int = 50000,
-    min_information_ratio: float = 0.1,
+    min_information_ratio: float = 0.03,
     constrain_unobservable: bool = True,
 ):
     """Fit rotation and report observability; the world solver gates its use.

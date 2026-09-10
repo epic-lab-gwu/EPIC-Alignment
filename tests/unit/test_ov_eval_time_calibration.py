@@ -76,7 +76,7 @@ def test_disabled_time_calibration_skips_solver_for_short_trajectories(
         pytest.fail("Sim3 must not calibrate extrinsics when disabled")
 
     monkeypatch.setattr(evaluate, "_run_time_alignment", unexpected_time_alignment)
-    monkeypatch.setattr("epa.metric_cli_common.solve_extrinsic_rotation", unexpected_extrinsic_solve)
+    monkeypatch.setattr("epa.metric_cli_common.solve_extrinsic_rotation_multibaseline", unexpected_extrinsic_solve)
     result = evaluate._evaluate_pair(
         gt_path, est_path, mode, 0.02,
         epa_disable_calibration=disable_all,

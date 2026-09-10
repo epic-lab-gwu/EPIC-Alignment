@@ -12,7 +12,6 @@ from .evaluation import (
     compute_ape,
     compute_rpe,
     compute_valid_segment_metrics,
-    resolve_success_threshold,
 )
 from ..metric_cli_common import align_for_eval_with_info, cum_distance, project_to_plane
 
@@ -160,6 +159,7 @@ def _compute_pose_metrics_by_stage(
     t_offset: float,
     t_start,
     t_end,
+    input_coverage=None,
 ):
     ape_metrics_by_stage = {}
     rpe_metrics_by_stage = {}
@@ -217,6 +217,7 @@ def _compute_pose_metrics_by_stage(
             quat_est=est_eval_quat,
             delta=1.0,
             delta_unit="s",
+            max_pairs=0,
             rel_delta_tol=0.1,
             all_pairs=True,
             pairs_from_reference=True,
@@ -241,32 +242,12 @@ def _compute_pose_metrics_by_stage(
         rpe_time_1s_by_stage[stage_name]["_x_axis"]["distances_from_start"] = distances_from_start[
             time_delta_ids[valid_time]
         ]
-        stage_threshold_m, threshold_info = resolve_success_threshold(
-            ape_metrics_by_stage[stage_name]["_error_arrays"]["translation_part"],
-            mode=success_threshold_mode,
-            fixed_threshold_m=float(success_threshold_m),
-            min_threshold_m=float(success_threshold_min_m),
-            max_threshold_m=float(success_threshold_max_m),
-            trim_percentile=float(success_threshold_trim_percentile),
-        )
         valid_metrics_by_stage[stage_name] = compute_valid_segment_metrics(
-            timestamps=t_gt,
-            pos_ref=ref_eval_pos,
+            timestamps=t_gt, pos_ref=ref_eval_pos, quat_ref=ref_eval_quat,
+            pos_est=est_eval_pos, quat_est=est_eval_quat, input_coverage=input_coverage,
             ape_block=ape_metrics_by_stage[stage_name],
             rpe_block=rpe_metrics_by_stage[stage_name],
             rpe_time_1s_block=rpe_time_1s_by_stage[stage_name],
-            threshold_m=float(stage_threshold_m),
-            threshold_info=threshold_info,
-            global_gate_mode=str(success_global_gate_mode),
-            global_gate_m=float(success_global_gate_m),
-            global_gate_path_ratio=float(success_global_gate_path_ratio),
-            global_gate_min_m=float(success_global_gate_min_m),
-            global_gate_max_m=float(success_global_gate_max_m),
-            global_gate_percentile=float(success_global_gate_percentile),
-            drift_rpe_1s_m=float(success_drift_rpe_1s_m),
-            drift_ape_slope_mps=float(success_drift_ape_slope_mps),
-            drift_ape_jump_m=float(success_drift_ape_jump_m),
-            drift_threshold_mode=str(success_drift_threshold_mode),
             include_raw=True,
         )
         if "sim3" in str(eval_align_mode).lower():
@@ -305,23 +286,16 @@ def _compute_pose_metrics_by_stage(
             "pairs_from_reference": True,
         },
         "valid_segment_config": {
-            "threshold_mode": str(success_threshold_mode),
-            "fixed_threshold_m": float(success_threshold_m),
-            "min_threshold_m": float(success_threshold_min_m),
-            "max_threshold_m": float(success_threshold_max_m),
-            "trim_percentile": float(success_threshold_trim_percentile),
-            "global_gate_mode": str(success_global_gate_mode),
-            "global_gate_m": float(success_global_gate_m),
-            "global_gate_path_ratio": float(success_global_gate_path_ratio),
-            "global_gate_min_m": float(success_global_gate_min_m),
-            "global_gate_max_m": float(success_global_gate_max_m),
-            "global_gate_percentile": float(success_global_gate_percentile),
-            "drift_rpe_1s_m": float(success_drift_rpe_1s_m),
-            "drift_ape_slope_mps": float(success_drift_ape_slope_mps),
-            "drift_ape_jump_m": float(success_drift_ape_jump_m),
-            "drift_threshold_mode": str(success_drift_threshold_mode),
+            "policy": "rpe_1s_motion_relative",
+            "relative_ratio": 3.0,
+            "small_translation_m": 0.1,
+            "small_rotation_deg": 1.0,
+            "absolute_translation_m": 0.3,
+            "absolute_rotation_deg": 3.0,
+            "unscored_interval_policy": "sequential_rpe_fallback",
+            "valid_only_realign_below_sr": 0.5,
             "success_rate_primary": "distance",
-            "fail_definition": "Local fail uses APE threshold, case-aware 1s RPE, and positive APE growth/recovery checks.",
+            "fail_definition": "An interval fails if its 1s RPE checks fail, or if no 1s pair covers it and its consecutive-pose RPE fails.",
         },
         "eval_config": {
             "t_max_diff": float(t_max_diff),
