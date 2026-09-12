@@ -15,17 +15,27 @@ Experiment setup
 2. Preprocessing: timestamps start at zero; poses are expressed relative to the
    first pose; every trajectory is cropped to 80 s and resampled to 10 Hz using
    linear position interpolation and quaternion SLERP. No spatial scaling is
-   applied. KITTI timestamps assume the dataset's 10 Hz rate.
-3. Simulated VIO: a deterministic, smoothed SE(3) random walk is added to each
-   GT trajectory. Translation drift is added in the common world frame and
-   orientation drift is right-multiplied as Exp(delta_theta). The complete
-   traces are normalized to four accuracy targets: oracle (0, 0 deg), high
-   (0.1% S, 0.1 deg), medium (0.5% S, 0.5 deg), and low (2.0% S, 2.0 deg),
-   where S=max(bounding-box diagonal, 0.1*path length). Five fixed seeds are
-   reused across all calibration-error conditions in each matched block.
+   applied. KITTI timestamps assume the dataset's 10 Hz rate. Hot3D, EuRoC,
+   and AEA ground-truth inputs are assumed gravity-aligned; KITTI does not
+   require this convention. The code records this assumption rather than
+   estimating gravity from IMU data.
+3. Simulated VIO: dataset-aware translation RMS targets are applied in the
+   common world frame. High, medium, and low levels are fixed multipliers
+   (0.5, 1, and 2) of the dataset-specific medium target. Roll and pitch are
+   non-accumulating smoothed Gaussian errors; yaw combines a time-dependent
+   deterministic drift rate and a cumulative stochastic random walk. The
+   world-frame perturbation is composed as Rz Ry Rx and left-multiplied as
+   R_delta @ R_gt. The injected medium translation RMS targets are 0.030 m
+   (Hot3D), 0.200 m (indoor EuRoC), 0.330 m (aggressive EuRoC), 0.220 m
+   (AEA), and 2% of path length (KITTI). These values are chosen so that the
+   post-position-alignment APE approaches the supervisor's target ranges; high
+   and low use 0.5/2 multipliers. The medium yaw drift rate is
+   1 deg/s. Five fixed seeds are reused across all calibration-error conditions
+   in each matched block.
 4. Injected perturbations: time offsets (1, 5, 10, 20, 30, 50 ms), extrinsic
-   rotations (5, 20, 45 deg), extrinsic translations (0.05, 0.30, 0.50 m), one
-   combined case (10 ms + 20 deg + 0.30 m), and a no-perturbation control.
+   rotations (5, 20, 45 deg), bounded extrinsic translations (0.01, 0.03,
+   0.05 m), one combined case (10 ms + 20 deg + 0.05 m), and a no-perturbation
+   control.
 5. Evaluation: every case is evaluated four ways: (a) SE(3)-original without
    calibration, (b) SE3R without calibration, (c) SE(3)-original with EPA
    calibration, and (d) SE3R with EPA calibration. The calibrated policies run
@@ -71,6 +81,7 @@ import tempfile
 import time
 from collections import defaultdict
 from dataclasses import asdict
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -105,9 +116,9 @@ DISPLAY_CONDITIONS = (
     "rotation_5deg",
     "rotation_20deg",
     "rotation_45deg",
+    "translation_0p01m",
+    "translation_0p03m",
     "translation_0p05m",
-    "translation_0p30m",
-    "translation_0p50m",
     "combined_realistic",
 )
 CONDITION_LABELS = {
@@ -117,9 +128,9 @@ CONDITION_LABELS = {
     "rotation_5deg": "R 5 deg",
     "rotation_20deg": "R 20 deg",
     "rotation_45deg": "R 45 deg",
+    "translation_0p01m": "X 0.01 m",
+    "translation_0p03m": "X 0.03 m",
     "translation_0p05m": "X 0.05 m",
-    "translation_0p30m": "X 0.30 m",
-    "translation_0p50m": "X 0.50 m",
     "combined_realistic": "Combined",
 }
 MODES = (
@@ -134,6 +145,11 @@ CALIBRATION_MODES = {
     "se3r_rotation_first_calibrated": "se3r",
 }
 NOISE_SEED_SCOPE = "profile_sequence_accuracy_seed"
+# Use one fixed interior evaluation grid for calibrated and uncalibrated modes.
+# This avoids giving the uncalibrated evaluator an extra endpoint when a
+# timestamp offset shifts the recorded estimate outside the GT interval.
+EVAL_T_START_S = core.DT_S
+EVAL_T_END_S = core.WINDOW_S - 2.0 * core.DT_S
 MODE_LABELS = {
     "se3_position": "SE(3)-original without calibration",
     "se3r_rotation_first": "SE3R without calibration",
@@ -248,6 +264,15 @@ def parse_args() -> argparse.Namespace:
         help="Reuse successful calibration cases in data/calibration_cache.jsonl.",
     )
     parser.add_argument(
+        "--epa-robust-kernel",
+        choices=("none", "standard"),
+        default="none",
+        help=(
+            "EPA calibration weighting. 'none' retains the current hard-trimmed "
+            "Step-3 solver; 'standard' disables trimming for an ablation."
+        ),
+    )
+    parser.add_argument(
         "--print-setup",
         action="store_true",
         help="Print the complete scientific setup and exit without running the experiment.",
@@ -300,14 +325,14 @@ def evaluate_position_only_se3(
     r_est: R,
 ) -> tuple[int, float, float]:
     """Evaluate recorded-time poses with position-only Kabsch SE(3) alignment."""
-    mask = (t_est >= t_gt[0]) & (t_est <= t_gt[-1])
-    query = t_est[mask]
+    query = np.arange(EVAL_T_START_S, EVAL_T_END_S + 0.5 * core.DT_S, core.DT_S)
     if len(query) < 3:
         raise ValueError("Insufficient timestamp overlap for position-only SE(3)")
     p_ref, r_ref = core.interpolate_pose(t_gt, p_gt, r_gt, query)
-    world_r, world_t = core.kabsch_se3(p_est[mask], p_ref)
-    p_aligned = world_r.apply(p_est[mask]) + world_t
-    r_aligned = world_r * r_est[mask]
+    p_src, r_src = core.interpolate_pose(t_est, p_est, r_est, query)
+    world_r, world_t = core.kabsch_se3(p_src, p_ref)
+    p_aligned = world_r.apply(p_src) + world_t
+    r_aligned = world_r * r_src
     ape = float(np.sqrt(np.mean(np.sum(np.square(p_ref - p_aligned), axis=1))))
     are = float(
         np.sqrt(np.mean(np.square((r_ref.inv() * r_aligned).magnitude())))
@@ -367,9 +392,15 @@ def run_epa_calibration_task(task: dict[str, Any]) -> dict[str, Any]:
         "0.5",
         "--t-max-diff",
         "0.06",
+        "--t-start",
+        f"{EVAL_T_START_S:.6f}",
+        "--t-end",
+        f"{EVAL_T_END_S:.6f}",
         "--no-downsample",
         "--no-plot",
     ]
+    if str(task.get("epa_robust_kernel", "none")) != "none":
+        command.extend(["--robust-kernel", str(task["epa_robust_kernel"])])
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(task["epa_repo"]) / "src") + os.pathsep + env.get(
         "PYTHONPATH", ""
@@ -409,6 +440,7 @@ def run_epa_calibration_task(task: dict[str, Any]) -> dict[str, Any]:
             "status": "ok",
             "ape_rmse_m": float(worker_payload["ape_rmse_m"]),
             "are_rmse_deg": float(worker_payload["are_rmse_deg"]),
+            "pair_count": int(worker_payload["pair_count"]),
             "estimated_offset_ms": (
                 1000.0 * float(offset_match.group("offset")) if offset_match else math.nan
             ),
@@ -443,6 +475,7 @@ def run_calibrated_policies(
     workers: int,
     cache_path: Path,
     resume: bool,
+    epa_robust_kernel: str,
 ) -> None:
     """Populate calibration-on metrics in-place with resumable EPA evaluations."""
     if not (epa_repo / "src" / "epa" / "cli.py").is_file():
@@ -453,6 +486,7 @@ def run_calibrated_policies(
         (
             sha256(epa_repo / "src" / "epa" / "cli.py")
             + sha256(epa_repo / "src" / "epa" / "core" / "trajectory_alignment.py")
+            + str(epa_robust_kernel)
             + "full-precision-worker-v1"
         ).encode("utf-8")
     ).hexdigest()[:16]
@@ -476,6 +510,7 @@ def run_calibrated_policies(
                     "gt_path": str(case_dir / "gt.tum"),
                     "est_path": str(case_dir / "est.tum"),
                     "epa_repo": str(epa_repo),
+                    "epa_robust_kernel": str(epa_robust_kernel),
                 }
             )
 
@@ -514,7 +549,7 @@ def run_calibrated_policies(
         case_id = str(row["case_id"])
         for column_mode, epa_mode in CALIBRATION_MODES.items():
             result = by_key[f"{case_id}::{epa_mode}::{epa_fingerprint}"]
-            row[f"{column_mode}_pair_count"] = int(row["sample_count"])
+            row[f"{column_mode}_pair_count"] = int(result["pair_count"])
             row[f"{column_mode}_ape_rmse_m"] = result["ape_rmse_m"]
             row[f"{column_mode}_are_rmse_deg"] = result["are_rmse_deg"]
             row[f"{column_mode}_estimated_offset_ms"] = result["estimated_offset_ms"]
@@ -549,6 +584,13 @@ def run_internal_epa_worker(argv: list[str]) -> int:
         "are_rmse_deg": float(
             pose_metrics["ape"]["step3"]["rotation_angle_deg"]["rmse"]
         ),
+        "pair_count": int(
+            len(
+                pose_metrics["ape"]["step3"]["_error_arrays"][
+                    "translation_part"
+                ]
+            )
+        ),
     }
     print("EPA_WORKER_JSON=" + json.dumps(payload, separators=(",", ":")))
     return int(returncode or 0)
@@ -573,6 +615,54 @@ def prepare_profiles() -> dict[str, dict[str, Any]]:
     return prepared
 
 
+def _spec_value(spec: Any, name: str, default: Any = 0.0) -> Any:
+    """Read a field from the revised accuracy specification.
+
+    ``run_pilot`` owns the target model.  This small adapter keeps the runner
+    independent of whether that model is represented by a dataclass or a
+    JSON-like mapping, which is useful while the setup is being iterated.
+    """
+    if isinstance(spec, Mapping):
+        return spec.get(name, default)
+    return getattr(spec, name, default)
+
+
+def resolve_accuracy_spec(
+    profile: Any, accuracy: Any, descriptors: Mapping[str, Any]
+) -> Any:
+    """Resolve dataset/time-aware synthetic VIO targets through ``run_pilot``."""
+    resolver = getattr(core, "resolve_accuracy_spec", None)
+    if resolver is None:
+        raise RuntimeError(
+            "run_pilot.resolve_accuracy_spec is required for the revised "
+            "dataset-aware/time-dependent VIO setup"
+        )
+    return resolver(profile, accuracy, descriptors)
+
+
+def simulate_with_spec(
+    p_gt: np.ndarray,
+    r_gt: R,
+    profile: Any,
+    accuracy: Any,
+    seed: int,
+    scale_m: float,
+    spec: Any,
+) -> tuple[np.ndarray, R, float, float]:
+    """Call the revised simulator while producing a clear API error if stale code is used."""
+    try:
+        return core.simulated_vio(
+            p_gt, r_gt, profile, accuracy, seed, scale_m, spec=spec
+        )
+    except TypeError as exc:
+        if "spec" not in str(exc) and "keyword" not in str(exc):
+            raise
+        raise RuntimeError(
+            "run_pilot.simulated_vio must accept the revised ``spec=`` "
+            "accuracy specification; stale simulator code was imported"
+        ) from exc
+
+
 def generate_case_metrics(
     prepared: dict[str, dict[str, Any]], input_root: Path
 ) -> list[dict[str, Any]]:
@@ -585,20 +675,25 @@ def generate_case_metrics(
         descriptors = item["descriptors"]
         scale_m = float(descriptors["characteristic_scale_m"])
         for accuracy in core.ACCURACIES:
+            spec = resolve_accuracy_spec(profile, accuracy, descriptors)
+            target_t = float(_spec_value(spec, "translation_rms_m"))
+            target_fraction = target_t / scale_m if scale_m > 0.0 else math.nan
+            roll_pitch_target = float(
+                _spec_value(spec, "roll_pitch_rms_deg", math.nan)
+            )
+            yaw_drift_rate = float(
+                _spec_value(spec, "yaw_drift_deg_per_s", math.nan)
+            )
+            yaw_random_walk_rate = float(
+                _spec_value(spec, "yaw_random_walk_deg_per_sqrt_s", math.nan)
+            )
             for seed in design.SEEDS:
-                p_vio, r_vio, realized_t, realized_r = core.simulated_vio(
-                    p_gt, r_gt, profile, accuracy, seed, scale_m
+                p_vio, r_vio, realized_t, realized_r = simulate_with_spec(
+                    p_gt, r_gt, profile, accuracy, seed, scale_m, spec
                 )
-                target_t = accuracy.translation_fraction * scale_m
                 if not math.isclose(realized_t, target_t, rel_tol=1e-10, abs_tol=1e-12):
                     raise RuntimeError(
                         f"Translation RMS normalization failed for {profile.sequence}/{accuracy.name}/{seed}"
-                    )
-                if not math.isclose(
-                    realized_r, accuracy.rotation_deg, rel_tol=1e-10, abs_tol=1e-12
-                ):
-                    raise RuntimeError(
-                        f"Rotation RMS normalization failed for {profile.sequence}/{accuracy.name}/{seed}"
                     )
                 for calibration in design.CALIBRATIONS:
                     t_est, p_est, r_est, _, _ = core.inject_calibration(
@@ -626,8 +721,16 @@ def generate_case_metrics(
                         "bbox_diagonal_m": descriptors["bbox_diagonal_m"],
                         "characteristic_scale_m": scale_m,
                         "target_translation_rms_m": target_t,
-                        "target_translation_rms_fraction": accuracy.translation_fraction,
-                        "target_rotation_rms_deg": accuracy.rotation_deg,
+                        "target_translation_rms_fraction": target_fraction,
+                        # The revised rotation setup is parameterized by
+                        # component rates, so there is no single fixed
+                        # rotation-RMS target before realization.  Retain the
+                        # realized horizon RMS here for the baseline table;
+                        # the physical component settings are recorded below.
+                        "target_rotation_rms_deg": realized_r,
+                        "target_roll_pitch_rms_deg": roll_pitch_target,
+                        "target_yaw_drift_deg_per_s": yaw_drift_rate,
+                        "target_yaw_random_walk_deg_per_sqrt_s": yaw_random_walk_rate,
                         "realized_translation_rms_m": realized_t,
                         "realized_rotation_rms_deg": realized_r,
                         "injected_offset_ms": calibration.offset_s * 1000.0,
@@ -792,6 +895,16 @@ def aggregate_baseline_table(rows: list[dict[str, Any]]) -> list[dict[str, Any]]
                 ),
                 "target_rotation_rms_deg": mean(
                     float(item["target_rotation_rms_deg"]) for item in selected
+                ),
+                "target_roll_pitch_rms_deg": mean(
+                    float(item["target_roll_pitch_rms_deg"]) for item in selected
+                ),
+                "target_yaw_drift_deg_per_s": mean(
+                    float(item["target_yaw_drift_deg_per_s"]) for item in selected
+                ),
+                "target_yaw_random_walk_deg_per_sqrt_s": mean(
+                    float(item["target_yaw_random_walk_deg_per_sqrt_s"])
+                    for item in selected
                 ),
                 "realized_translation_rms_m_mean": mean(
                     float(item["realized_translation_rms_m"]) for item in selected
@@ -1046,19 +1159,6 @@ def render_figures(
             fontsize=9,
             fontweight="bold",
         )
-        fig.text(
-            0.235,
-            0.035,
-            "Cells show mean matched relative change from the same-sequence, same-accuracy, same-seed no-perturbation baseline.\n"
-            "Hot3D, EuRoC, and KITTI: n=15 per cell (3 trajectories x 5 seeds); EuRoC V2_03 and AEA: n=5.\n"
-            "Blue indicates lower error; red indicates higher error. All four figures use the identical color scale.\n"
-            "Combined = 10 ms + 20 deg + 0.30 m. Synthetic random walk is not a native VIO error distribution.",
-            ha="left",
-            va="bottom",
-            fontsize=5.1,
-            color="#4D5660",
-            linespacing=1.25,
-        )
         base = figures_dir / FIGURE_NAMES[mode]
         save_figure(fig, [ax_a, ax_b], cax, base, skip_tiff)
         bases.append(base)
@@ -1073,11 +1173,18 @@ def setup_markdown(prepared: dict[str, dict[str, Any]], case_count: int) -> str:
             f"| {GROUP_LABELS[profile_group(profile)]} | `{profile.sequence}` | "
             f"{descriptors['path_length_m']:.2f} m | {descriptors['bbox_diagonal_m']:.2f} m |"
         )
-    accuracy_lines = [
-        f"| {accuracy.name} | {100.0 * accuracy.translation_fraction:.1f}% of S | "
-        f"{accuracy.rotation_deg:.1f} deg |"
-        for accuracy in core.ACCURACIES
-    ]
+    accuracy_lines = []
+    for profile in design.PROFILES:
+        descriptors = prepared[core.profile_key(profile)]["descriptors"]
+        for accuracy in core.ACCURACIES:
+            spec = resolve_accuracy_spec(profile, accuracy, descriptors)
+            accuracy_lines.append(
+                f"| {GROUP_LABELS[profile_group(profile)]} | {accuracy.name} | "
+                f"{float(_spec_value(spec, 'translation_rms_m')):.3f} m | "
+                f"{float(_spec_value(spec, 'roll_pitch_rms_deg', math.nan)):.3f} deg | "
+                f"{float(_spec_value(spec, 'yaw_drift_deg_per_s', math.nan)):.3f} deg/s | "
+                f"{float(_spec_value(spec, 'yaw_random_walk_deg_per_sqrt_s', math.nan)):.4f} deg/s^{{1/2}} |"
+            )
     condition_lines = [
         f"| `{condition.name}` | {1000.0 * condition.offset_s:.0f} ms | "
         f"{condition.rotation_deg:.0f} deg | {condition.translation_m:.2f} m |"
@@ -1104,24 +1211,35 @@ Every trajectory is expressed relative to its first pose, cropped to 80 s, and
 resampled to 10 Hz. Position uses linear interpolation; orientation uses quaternion
 SLERP. No spatial scaling is applied. KITTI timestamps assume 10 Hz.
 
+Hot3D, EuRoC, and AEA ground-truth inputs are assumed to use gravity-aligned
+world frames; KITTI does not require this assumption. The simulator records
+this convention but does not re-estimate gravity from IMU data.
+
 | Motion group | Sequence | 80-s path length | Bounding-box diagonal |
 |---|---|---:|---:|
 {chr(10).join(profile_lines)}
 
 ## Simulated VIO generation
 
-The estimate is generated from GT using a smoothed, cumulative SE(3) random walk:
+The estimate is generated from GT using a smoothed translation walk and a
+time-dependent, component-wise rotation error:
 
 `p_vio(t) = p_gt(t) + delta_p(t)`
 
-`R_vio(t) = R_gt(t) Exp(delta_theta(t))`
+`R_vio(t) = Delta_R_world(t) R_gt(t)`
 
-Translation drift is in the common world frame. Rotation drift is right-multiplied.
-Both complete traces are normalized to their RMS targets. Define
-`S = max(bounding-box diagonal, 0.1 * path length)`.
+Translation drift is in the common world frame and is normalized to the
+dataset-specific RMS target shown below. Roll and pitch are stationary,
+non-accumulating smoothed Gaussian errors. Yaw combines a deterministic drift
+rate (degrees per second) with a cumulative stochastic random walk whose
+intensity is specified in degrees per square-root second. The components are
+composed as `Delta_R_world = Rz Ry Rx` and left-multiplied onto the GT pose.
+The rotation magnitude therefore depends on the trajectory time horizon. The
+four levels use multipliers 0, 0.5, 1, and 2 for oracle, high, medium, and low;
+the medium yaw drift rate is 1 deg/s.
 
-| Accuracy | Translation RMS target | Rotation RMS target |
-|---|---:|---:|
+| Motion group | Accuracy | Translation RMS target | Roll/pitch RMS | Yaw drift rate | Yaw random-walk intensity |
+|---|---|---:|---:|---:|---:|
 {chr(10).join(accuracy_lines)}
 
 Five fixed seeds are used: {', '.join(str(seed) for seed in design.SEEDS)}. Within
@@ -1153,8 +1271,11 @@ The exact same injected trajectory is evaluated under four policies:
    world rotation and fixed-rotation translation.
 
 The calibrated command uses `--dt-resample 0.001`,
-`--offset-search-window-s 0.5`, `--t-max-diff 0.06`, `--no-downsample`, and
-`--no-plot`. Terminal-only mode changes output generation, not calibration or metrics.
+`--offset-search-window-s 0.5`, `--t-max-diff 0.06`, the common requested
+evaluation window `[0.1, 79.8]` s, `--no-downsample`, and `--no-plot`.
+Terminal-only mode changes output generation, not calibration or metrics. The
+requested window is shared by all policies; the actual EPA overlap count is
+recorded per case because time-offset correction can crop its support.
 
 APE is translational RMSE in metres. ARE is orientation-angle RMSE in degrees.
 Each heatmap cell is the mean over the available trajectories in its motion group and
@@ -1187,7 +1308,17 @@ def write_config(
     prepared: dict[str, dict[str, Any]],
     epa_repo: Path,
     workers: int,
+    epa_robust_kernel: str,
 ) -> None:
+    try:
+        epa_commit = subprocess.run(
+            ["git", "-C", str(epa_repo), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        epa_commit = "unknown"
     config = {
         "script": str(Path(__file__).resolve()),
         "script_sha256": sha256(Path(__file__).resolve()),
@@ -1210,6 +1341,14 @@ def write_config(
             for profile in design.PROFILES
         ],
         "accuracies": [asdict(accuracy) for accuracy in core.ACCURACIES],
+        "accuracy_model": {
+            "resolver": "run_pilot.resolve_accuracy_spec(profile, accuracy, descriptors)",
+            "translation_target": "dataset-specific medium RMS multiplied by level factor",
+            "level_multipliers": {"oracle": 0.0, "high": 0.5, "medium": 1.0, "low": 2.0},
+            "rotation_model": "roll/pitch stationary Gaussian; yaw deterministic drift plus cumulative random walk",
+            "composition": "Rz @ Ry @ Rx, left-multiplied onto R_gt",
+            "medium_yaw_drift_deg_per_s": 1.0,
+        },
         "calibration_conditions": [asdict(item) for item in design.CALIBRATIONS],
         "seeds": list(design.SEEDS),
         "noise_seed_scope": NOISE_SEED_SCOPE,
@@ -1225,16 +1364,20 @@ def write_config(
         },
         "epa": {
             "repo": str(epa_repo),
+            "commit": epa_commit,
             "cli_sha256": sha256(epa_repo / "src" / "epa" / "cli.py"),
             "trajectory_alignment_sha256": sha256(
                 epa_repo / "src" / "epa" / "core" / "trajectory_alignment.py"
             ),
             "workers": workers,
+            "robust_kernel": str(epa_robust_kernel),
             "arguments": [
-                "--dt-resample", "0.001",
-                "--offset-search-window-s", "0.5",
-                "--t-max-diff", "0.06",
-                "--no-downsample",
+            "--dt-resample", "0.001",
+            "--offset-search-window-s", "0.5",
+            "--t-max-diff", "0.06",
+            "--t-start", f"{EVAL_T_START_S:.6f}",
+            "--t-end", f"{EVAL_T_END_S:.6f}",
+            "--no-downsample",
                 "--no-plot",
             ],
         },
@@ -1293,7 +1436,7 @@ def main() -> int:
     # unintended random-walk realization.
     core.NOISE_SEED_SCOPE = NOISE_SEED_SCOPE
     prepared = prepare_profiles()
-    write_config(output_dir, prepared, epa_repo, args.workers)
+    write_config(output_dir, prepared, epa_repo, args.workers, args.epa_robust_kernel)
 
     with tempfile.TemporaryDirectory(prefix="calibration-sensitivity-inputs-") as temp_dir:
         input_root = Path(temp_dir)
@@ -1305,6 +1448,7 @@ def main() -> int:
             workers=args.workers,
             cache_path=output_dir / "data" / "calibration_cache.jsonl",
             resume=args.resume,
+            epa_robust_kernel=args.epa_robust_kernel,
         )
     validation = validate_cases(rows)
     relative_rows = add_relative_metrics(rows)

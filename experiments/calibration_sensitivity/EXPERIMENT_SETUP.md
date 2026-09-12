@@ -6,6 +6,7 @@
 - Type: controlled simulation on real GT motion templates
 - Verification status: locally generated; scientific interpretation remains evidence-bounded
 - Case count: 3080
+- EPA checkout: PR34-plus checkout recorded in each result manifest; the main rerun used commit `c50102dfdf87ab330f56206b71f44287e1b9dabe`.
 
 ## Research question
 
@@ -33,24 +34,37 @@ SLERP. No spatial scaling is applied. KITTI timestamps assume 10 Hz.
 | EuRoC V2_03 / aggressive | `V2_03_difficult` | 60.96 m | 7.97 m |
 | AEA / exercise | `loc1111` | 45.28 m | 5.71 m |
 
+The Hot3D, EuRoC, and AEA ground-truth inputs are assumed to use
+gravity-aligned world frames; KITTI does not require this assumption. The
+simulator records this profile-level convention but does not re-estimate
+gravity from IMU data during resampling.
+
 ## Simulated VIO generation
 
-The estimate is generated from GT using a smoothed, cumulative SE(3) random walk:
+The estimate is generated from GT using a smoothed translation walk and a
+component-wise rotation error:
 
 `p_vio(t) = p_gt(t) + delta_p(t)`
 
-`R_vio(t) = R_gt(t) Exp(delta_theta(t))`
+`R_vio(t) = Delta_R_world(t) R_gt(t)`
 
-Translation drift is in the common world frame. Rotation drift is right-multiplied.
-Both complete traces are normalized to their RMS targets. Define
-`S = max(bounding-box diagonal, 0.1 * path length)`.
+Translation drift is in the common world frame. Roll and pitch are stationary,
+non-accumulating smoothed Gaussian errors. Yaw combines a deterministic drift
+rate with a cumulative smoothed random walk. The components are composed as
+`Delta_R_world = Rz Ry Rx` and left-multiplied onto the GT pose. Rotation is
+specified by component rates and therefore depends on the 80-s time horizon.
+The medium yaw drift rate is 1 deg/s, with high and low set to 0.5x and 2x;
+this is a controlled synthetic candidate setting, not a claim about native VIO
+error. Translation targets are injected world-frame RMS values; post-alignment
+APE is reported separately in Table 1.
 
-| Accuracy | Translation RMS target | Rotation RMS target |
-|---|---:|---:|
-| oracle | 0.0% of S | 0.0 deg |
-| high | 0.1% of S | 0.1 deg |
-| medium | 0.5% of S | 0.5 deg |
-| low | 2.0% of S | 2.0 deg |
+The injected medium translation RMS targets are 0.030 m for Hot3D, 0.200 m for
+indoor EuRoC, 0.330 m for EuRoC V2_03 aggressive motion, 0.220 m for AEA, and
+2% of the normalized sequence path length for KITTI. These values are chosen
+so that the post-position-alignment APE approaches the supervisor's target
+ranges. Oracle, high, medium, and low use multipliers 0, 0.5, 1, and 2. The
+component-level rotation and profile-specific translation settings are recorded
+in `setup.md` and `config.json` for the exact run.
 
 Five fixed seeds are used: 1101, 2202, 3303, 4404, 5505. Within
 each `(sequence, accuracy, seed)` block, every calibration-error condition uses the
@@ -70,10 +84,10 @@ identical simulated VIO realization.
 | `rotation_5deg` | 0 ms | 5 deg | 0.00 m |
 | `rotation_20deg` | 0 ms | 20 deg | 0.00 m |
 | `rotation_45deg` | 0 ms | 45 deg | 0.00 m |
+| `translation_0p01m` | 0 ms | 0 deg | 0.01 m |
+| `translation_0p03m` | 0 ms | 0 deg | 0.03 m |
 | `translation_0p05m` | 0 ms | 0 deg | 0.05 m |
-| `translation_0p30m` | 0 ms | 0 deg | 0.30 m |
-| `translation_0p50m` | 0 ms | 0 deg | 0.50 m |
-| `combined_realistic` | 10 ms | 20 deg | 0.30 m |
+| `combined_realistic` | 10 ms | 20 deg | 0.05 m |
 
 Rotation axis is normalized `[1, -2, 3]`; translation direction is normalized
 `[1, -0.4, 0.2]`.
@@ -94,8 +108,10 @@ The exact same injected trajectory is evaluated under four policies:
    world rotation and fixed-rotation translation.
 
 The calibrated command uses `--dt-resample 0.001`,
-`--offset-search-window-s 0.5`, `--t-max-diff 0.06`, `--no-downsample`, and
-`--no-plot`. Terminal-only mode changes output generation, not calibration or metrics.
+`--offset-search-window-s 0.5`, `--t-max-diff 0.06`, the common evaluation
+window `[0.1, 79.8]` s, `--no-downsample`, and `--no-plot`. Terminal-only mode
+changes output generation, not calibration or metrics. The actual EPA overlap
+count is retained per case because time-offset correction can crop support.
 
 APE is translational RMSE in metres. ARE is orientation-angle RMSE in degrees.
 Each heatmap cell is the mean over the available trajectories in its motion group and
@@ -107,6 +123,13 @@ under the same alignment and calibration policy:
 Oracle controls remain in `case_metrics.csv` and `simulated_vio_rmse.csv`, but are
 omitted from relative heatmaps because a numerical-zero denominator is undefined.
 
+For the main paper representation, the eight heatmaps are compressed into two
+composite figures: `composite_ape` contains four panels for relative APE and
+`composite_are` contains four panels for relative ARE. In each composite, the
+columns compare SE(3)-original and SE3R, and the rows compare evaluation without
+and with calibration. The no-trim run is retained as an ablation with the same
+case generation and evaluation protocol.
+
 ## Figure contract
 
 ```json
@@ -115,10 +138,10 @@ omitted from relative heatmaps because a numerical-zero denominator is undefined
   "results_level_question": "Where do known perturbations change trajectory-evaluation error, and how much of that sensitivity remains after EPA calibration?",
   "archetype": "quantitative grid",
   "backend": "Python/matplotlib",
-  "final_size": "183 mm x 211 mm per policy figure",
+  "final_size": "183 mm wide composite figures",
   "panels": {
-    "a": "matched relative translation RMSE (APE)",
-    "b": "matched relative orientation RMSE (ARE)"
+    "composite_ape": "2 x 2 panels: alignment method by calibration state",
+    "composite_are": "2 x 2 panels: alignment method by calibration state"
   },
   "replicate_unit": "trajectory; five deterministic random-walk seeds per trajectory",
   "center": "mean over available trajectories and five seeds",
@@ -128,7 +151,7 @@ omitted from relative heatmaps because a numerical-zero denominator is undefined
     "Hot3D/EuRoC/KITTI have three trajectories per group; aggressive EuRoC/AEA have one.",
     "KITTI timestamps use an explicit 10 Hz assumption.",
     "Relative metrics can be unstable near zero; oracle controls are excluded.",
-    "Four figures must share one color normalization for visual comparability."
+    "All panels within each composite use one shared color normalization."
   ]
 }
 ```

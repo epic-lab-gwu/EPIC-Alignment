@@ -50,6 +50,7 @@ class Profile:
     path: Path
     fmt: str
     assumed_rate_hz: float | None = None
+    gravity_aligned: bool = True
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,30 @@ class Accuracy:
     name: str
     translation_fraction: float
     rotation_deg: float
+    # ``multiplier`` is used by the revised, profile-aware synthetic model.
+    # The two legacy fields above remain for backwards compatibility with the
+    # pilot and older callers of ``simulated_vio``.
+    multiplier: float | None = None
+
+
+@dataclass(frozen=True)
+class AccuracySpec:
+    """Resolved synthetic-VIO error targets for one profile and level.
+
+    Translation is an RMS target in metres in the common world frame.  The
+    rotation parameters are physical/time-dependent quantities: roll and
+    pitch are stationary Gaussian RMS values, yaw has a deterministic drift
+    rate, and the optional yaw random-walk coefficient has units
+    ``deg / sqrt(s)``.  Thus, unlike the legacy ``rotation_deg`` setting,
+    the resulting orientation RMS depends on the trajectory duration.
+    """
+
+    name: str
+    translation_rms_m: float
+    roll_pitch_rms_deg: float
+    yaw_drift_deg_per_s: float
+    yaw_random_walk_deg_per_sqrt_s: float
+    source: str = "profile_aware_v2"
 
 
 @dataclass(frozen=True)
@@ -79,15 +104,98 @@ PROFILES = (
     Profile(
         "large", "KITTI", "05",
         RUN_ROOT / "kitti_gt" / "05.txt", "kitti", assumed_rate_hz=10.0,
+        gravity_aligned=False,
     ),
 )
 
 ACCURACIES = (
-    Accuracy("oracle", 0.0, 0.0),
-    Accuracy("high", 0.001, 0.1),
-    Accuracy("medium", 0.005, 0.5),
-    Accuracy("low", 0.020, 2.0),
+    Accuracy("oracle", 0.0, 0.0, 0.0),
+    Accuracy("high", 0.001, 0.1, 0.5),
+    Accuracy("medium", 0.005, 0.5, 1.0),
+    Accuracy("low", 0.020, 2.0, 2.0),
 )
+
+
+# Candidate medium-level targets based on the supervisor's requested
+# operating ranges.  These are controlled synthetic targets, not claims about
+# the native error of a particular estimator.  High and low are 0.5x and 2x
+# the medium target respectively.  KITTI is scale-dependent and therefore
+# uses 1% of the sequence path length.
+TRANSLATION_TARGETS_M = {
+    # These are injected RMS values.  They are calibrated against the
+    # post-position-alignment APE targets reported by the supervisor.
+    "Hot3D": 0.030,
+    "AEA": 0.22,
+    "EuRoC": 0.20,
+    "KITTI": None,  # 2% injected RMS -> approximately 1% post-alignment APE
+}
+
+ROTATION_MEDIUM = {
+    # Roll/pitch are non-accumulating stationary errors.  Yaw is the component
+    # for which a time-dependent drift is intentionally simulated.
+    "Hot3D": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+              "yaw_random_walk_deg_per_sqrt_s": 0.05},
+    "AEA": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+            "yaw_random_walk_deg_per_sqrt_s": 0.05},
+    "EuRoC": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+              "yaw_random_walk_deg_per_sqrt_s": 0.05},
+    "KITTI": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+              "yaw_random_walk_deg_per_sqrt_s": 0.05},
+}
+
+
+def accuracy_multiplier(accuracy: Accuracy) -> float:
+    """Return the revised level multiplier, falling back to legacy levels."""
+    if accuracy.multiplier is not None:
+        return float(accuracy.multiplier)
+    return {"oracle": 0.0, "high": 0.5, "medium": 1.0, "low": 2.0}.get(
+        accuracy.name, 1.0
+    )
+
+
+def resolve_accuracy_spec(
+    profile: Profile,
+    accuracy: Accuracy,
+    descriptors: dict[str, float] | None = None,
+    *,
+    duration_s: float = WINDOW_S,
+) -> AccuracySpec:
+    """Resolve a profile/accuracy level to the revised synthetic targets.
+
+    ``descriptors`` should contain ``path_length_m`` for KITTI.  For a caller
+    that only has the old characteristic scale, the duration-independent
+    fallback is deliberately conservative and is marked in ``source``.
+    """
+    multiplier = accuracy_multiplier(accuracy)
+    dataset = profile.dataset
+    base_translation = TRANSLATION_TARGETS_M.get(dataset, 0.10)
+    if base_translation is None:
+        path_length = (descriptors or {}).get("path_length_m")
+        if path_length is None:
+            path_length = (descriptors or {}).get("characteristic_scale_m", 0.0)
+            source = "profile_aware_v2_kitti_characteristic_scale_fallback"
+        else:
+            source = "profile_aware_v2"
+        base_translation = 0.02 * float(path_length)
+    else:
+        source = "profile_aware_v2"
+
+    # EuRoC V2_03 is the aggressive sequence used by the full experiment and
+    # should carry a larger medium-level target than indoor EuRoC sequences.
+    if dataset == "EuRoC" and "V2_03" in profile.sequence:
+        base_translation = 0.33
+
+    rotation_base = ROTATION_MEDIUM.get(dataset, ROTATION_MEDIUM["EuRoC"])
+    return AccuracySpec(
+        name=accuracy.name,
+        translation_rms_m=float(base_translation) * multiplier,
+        roll_pitch_rms_deg=float(rotation_base["roll_pitch_rms_deg"]) * multiplier,
+        yaw_drift_deg_per_s=float(rotation_base["yaw_drift_deg_per_s"]) * multiplier,
+        yaw_random_walk_deg_per_sqrt_s=(
+            float(rotation_base["yaw_random_walk_deg_per_sqrt_s"]) * multiplier
+        ),
+        source=source,
+    )
 
 CALIBRATIONS = (
     Calibration("none"),
@@ -225,6 +333,115 @@ def normalize_trace(trace: np.ndarray, target_rms: float) -> np.ndarray:
     return trace * (target_rms / current)
 
 
+def _normalize_rotation_components(components: np.ndarray, target_rms: float) -> np.ndarray:
+    """Scale Euler error components to a requested angular RMS in radians.
+
+    ``components`` stores roll, pitch, and yaw in radians.  The final error is
+    composed as three rotations below, so a second normalization using the
+    composed rotation magnitude makes the reported RMS match the requested
+    target (up to floating-point precision).
+    """
+    if target_rms == 0.0:
+        return np.zeros_like(components)
+    current = float(np.sqrt(np.mean(np.sum(np.square(components), axis=1))))
+    if current <= 1e-15:
+        raise ValueError("Degenerate rotational error trace")
+    return components * (target_rms / current)
+
+
+def _rotation_error_trace(
+    count: int,
+    rng: np.random.Generator,
+    target_rms: float | None = None,
+    *,
+    dt_s: float = DT_S,
+    smoothing_sigma_samples: float = 5.0,
+    yaw_drift_deg_per_s: float = 0.0,
+    roll_pitch_rms_deg: float | None = None,
+    yaw_random_walk_deg_per_sqrt_s: float = 0.0,
+) -> R:
+    """Generate a world-frame rotation perturbation for simulated VIO.
+
+    Roll and pitch are stationary, smoothed Gaussian errors.  Yaw is a
+    smoothed cumulative random process.  An optional deterministic yaw-rate
+    term is applied after RMS normalization, so a requested physical drift
+    rate is not silently rescaled away.  The perturbation is composed
+    explicitly as ``Rz @ Ry @ Rx`` so the caller can left-multiply it onto a
+    pose rotation in the global frame.
+    """
+    # Preserve the original exact-RMS path for old callers.  New callers pass
+    # component targets and leave ``target_rms`` as ``None``.
+    legacy_mode = roll_pitch_rms_deg is None and target_rms is not None
+    if legacy_mode and target_rms == 0.0:
+        return R.identity(count)
+
+    if roll_pitch_rms_deg is None:
+        roll_pitch_rms_deg = 0.0
+
+    roll = gaussian_filter1d(
+        rng.normal(size=count), smoothing_sigma_samples, mode="nearest"
+    )
+    pitch = gaussian_filter1d(
+        rng.normal(size=count), smoothing_sigma_samples, mode="nearest"
+    )
+    yaw_increments = gaussian_filter1d(
+        rng.normal(size=count), smoothing_sigma_samples, mode="nearest"
+    )
+    yaw = np.cumsum(yaw_increments)
+    yaw -= yaw[0]
+
+    # Keep the stationary roll/pitch components zero-mean.  In contrast, yaw
+    # intentionally retains its accumulated drift relative to the first pose.
+    roll -= np.mean(roll)
+    pitch -= np.mean(pitch)
+    roll = _normalize_rotation_components(
+        roll[:, None], np.deg2rad(float(roll_pitch_rms_deg))
+    )[:, 0]
+    pitch = _normalize_rotation_components(
+        pitch[:, None], np.deg2rad(float(roll_pitch_rms_deg))
+    )[:, 0]
+    if legacy_mode:
+        component_target = float(target_rms) / np.sqrt(3.0)
+        yaw = _normalize_rotation_components(yaw[:, None], component_target)[:, 0]
+    else:
+        # A random walk coefficient in deg/sqrt(s) gives a full-horizon RMS
+        # proportional to sqrt(duration), making the setting time-dependent.
+        yaw_target = np.deg2rad(float(yaw_random_walk_deg_per_sqrt_s)) * math.sqrt(
+            max((count - 1) * dt_s, dt_s)
+        )
+        yaw = _normalize_rotation_components(yaw[:, None], yaw_target)[:, 0]
+    components = np.column_stack((roll, pitch, yaw))
+
+    # Explicitly compose three rotations.  With SciPy's active rotations,
+    # multiplication below is Rz @ Ry @ Rx, i.e. the rightmost Rx acts first.
+    def compose(values: np.ndarray) -> R:
+        return (
+            R.from_euler("z", values[:, 2])
+            * R.from_euler("y", values[:, 1])
+            * R.from_euler("x", values[:, 0])
+        )
+
+    # Composition on SO(3) is mildly nonlinear.  The legacy path iterates a
+    # scalar correction so old callers retain their exact RMS contract.  The
+    # revised path intentionally does not rescale after composition: its
+    # physical parameters (stationary roll/pitch and time-dependent yaw) are
+    # the controlled quantities.
+    delta = compose(components)
+    if legacy_mode:
+        for _ in range(8):
+            realized = float(np.sqrt(np.mean(np.square(delta.magnitude()))))
+            if realized <= 1e-15:
+                raise ValueError("Degenerate composed rotational error trace")
+            if np.isclose(realized, float(target_rms), rtol=1e-12, atol=1e-14):
+                break
+            components *= float(target_rms) / realized
+            delta = compose(components)
+    if yaw_drift_deg_per_s != 0.0:
+        drift = np.deg2rad(yaw_drift_deg_per_s) * np.arange(count, dtype=float) * dt_s
+        delta = R.from_euler("z", drift) * delta
+    return delta
+
+
 def simulated_vio(
     p_gt: np.ndarray,
     r_gt: R,
@@ -232,10 +449,31 @@ def simulated_vio(
     accuracy: Accuracy,
     seed: int,
     scale_m: float,
+    *,
+    yaw_drift_deg_per_s: float = 0.0,
+    spec: AccuracySpec | None = None,
 ) -> tuple[np.ndarray, R, float, float]:
-    target_translation = accuracy.translation_fraction * scale_m
-    target_rotation_rad = np.deg2rad(accuracy.rotation_deg)
-    if target_translation == 0.0 and target_rotation_rad == 0.0:
+    if spec is None:
+        # Legacy behavior for scripts that have not migrated to the revised
+        # profile-aware resolver yet.
+        target_translation = accuracy.translation_fraction * scale_m
+        target_rotation_rad = np.deg2rad(accuracy.rotation_deg)
+        roll_pitch_rms_deg = None
+        yaw_random_walk = 0.0
+        resolved_yaw_drift = yaw_drift_deg_per_s
+    else:
+        target_translation = spec.translation_rms_m
+        target_rotation_rad = 0.0
+        roll_pitch_rms_deg = spec.roll_pitch_rms_deg
+        yaw_random_walk = spec.yaw_random_walk_deg_per_sqrt_s
+        resolved_yaw_drift = spec.yaw_drift_deg_per_s
+    if (
+        target_translation == 0.0
+        and target_rotation_rad == 0.0
+        and (roll_pitch_rms_deg is None or roll_pitch_rms_deg == 0.0)
+        and yaw_random_walk == 0.0
+        and resolved_yaw_drift == 0.0
+    ):
         return p_gt.copy(), R.from_quat(r_gt.as_quat()), 0.0, 0.0
 
     rng = np.random.default_rng(stable_seed(profile.name, accuracy.name, seed, profile.sequence))
@@ -243,16 +481,24 @@ def simulated_vio(
     trans_increments = gaussian_filter1d(
         rng.normal(size=(len(p_gt), 3)), sigma_samples, axis=0, mode="nearest"
     )
-    rot_increments = gaussian_filter1d(
-        rng.normal(size=(len(p_gt), 3)), sigma_samples, axis=0, mode="nearest"
-    )
     trans_walk = normalize_trace(np.cumsum(trans_increments, axis=0), target_translation)
-    rot_walk = normalize_trace(np.cumsum(rot_increments, axis=0), target_rotation_rad)
     p_vio = p_gt + trans_walk
-    r_vio = r_gt * R.from_rotvec(rot_walk)
+    delta_r = _rotation_error_trace(
+        len(p_gt),
+        rng,
+        target_rotation_rad,
+        dt_s=DT_S,
+        smoothing_sigma_samples=sigma_samples,
+        yaw_drift_deg_per_s=resolved_yaw_drift,
+        roll_pitch_rms_deg=roll_pitch_rms_deg,
+        yaw_random_walk_deg_per_sqrt_s=yaw_random_walk,
+    )
+    # r_gt maps the tracked local frame into the global frame.  A VIO error
+    # defined in the global frame therefore acts on the left: Delta_R @ R_gt.
+    r_vio = delta_r * r_gt
     realized_t = float(np.sqrt(np.mean(np.sum(np.square(trans_walk), axis=1))))
     realized_r = float(
-        np.sqrt(np.mean(np.square((r_gt.inv() * r_vio).magnitude()))) * 180.0 / np.pi
+        np.sqrt(np.mean(np.square((r_vio * r_gt.inv()).magnitude()))) * 180.0 / np.pi
     )
     return p_vio, r_vio, realized_t, realized_r
 
@@ -518,6 +764,30 @@ def write_manifest(output_dir: Path, epa_repo: Path, prepared: dict[str, Any]) -
         "noise_seed_scope": NOISE_SEED_SCOPE,
         "rotation_axis": ROT_AXIS.tolist(),
         "translation_direction": TRANS_DIRECTION.tolist(),
+        "simulated_vio_model": {
+            "translation": "smoothed cumulative random walk in the common world frame",
+            "rotation": "Delta_R_world @ R_gt",
+            "rotation_composition": "Rz @ Ry @ Rx",
+            "roll_pitch": "smoothed stationary Gaussian errors",
+            "yaw": "smoothed cumulative random process plus deterministic drift",
+            "revised_mode": {
+                "translation_targets": TRANSLATION_TARGETS_M,
+                "level_multipliers": {
+                    accuracy.name: accuracy_multiplier(accuracy)
+                    for accuracy in ACCURACIES
+                },
+                "rotation_medium": ROTATION_MEDIUM,
+                "duration_dependent": True,
+            },
+            "legacy_yaw_drift_deg_per_s": 0.0,
+        },
+        "gravity_alignment": {
+            "required_for": ["Hot3D", "EuRoC", "AEA"],
+            "profiles_assumed_aligned": {
+                profile.sequence: profile.gravity_aligned for profile in PROFILES
+            },
+            "KITTI_required": False,
+        },
         "accuracies": [accuracy.__dict__ for accuracy in ACCURACIES],
         "calibrations": [calibration.__dict__ for calibration in CALIBRATIONS],
         "profiles": [

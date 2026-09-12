@@ -60,15 +60,17 @@ CALIBRATIONS = (
     core.Calibration("rotation_5deg", rotation_deg=5.0),
     core.Calibration("rotation_20deg", rotation_deg=20.0),
     core.Calibration("rotation_45deg", rotation_deg=45.0),
+    core.Calibration("translation_0p01m", translation_m=0.01),
+    core.Calibration("translation_0p03m", translation_m=0.03),
     core.Calibration("translation_0p05m", translation_m=0.05),
-    core.Calibration("translation_0p30m", translation_m=0.30),
-    core.Calibration("translation_0p50m", translation_m=0.50),
     core.Calibration(
-        "combined_realistic", offset_s=0.010, rotation_deg=20.0, translation_m=0.30
+        "combined_realistic", offset_s=0.010, rotation_deg=20.0, translation_m=0.05
     ),
 )
 
 SEEDS = main_design.MAIN_SEEDS
+EVAL_T_START_S = core.DT_S
+EVAL_T_END_S = core.WINDOW_S - 2.0 * core.DT_S
 
 
 def calibration_off_rotation_first(
@@ -80,15 +82,19 @@ def calibration_off_rotation_first(
     r_est: R,
 ) -> tuple[int, float, float]:
     """Evaluate without calibration using the current orientation-first SE(3)."""
-    mask = (t_est >= t_gt[0]) & (t_est <= t_gt[-1])
-    query = t_est[mask]
+    query = np.arange(
+        EVAL_T_START_S,
+        EVAL_T_END_S + 0.5 * core.DT_S,
+        core.DT_S,
+    )
     if len(query) < 3:
         raise ValueError("Insufficient uncalibrated timestamp overlap")
     p_ref, r_ref = core.interpolate_pose(t_gt, p_gt, r_gt, query)
-    world_r = (r_ref * r_est[mask].inv()).mean()
-    world_t = np.mean(p_ref - world_r.apply(p_est[mask]), axis=0)
-    p_aligned = world_r.apply(p_est[mask]) + world_t
-    r_aligned = world_r * r_est[mask]
+    p_src, r_src = core.interpolate_pose(t_est, p_est, r_est, query)
+    world_r = (r_ref * r_src.inv()).mean()
+    world_t = np.mean(p_ref - world_r.apply(p_src), axis=0)
+    p_aligned = world_r.apply(p_src) + world_t
+    r_aligned = world_r * r_src
     ape = float(np.sqrt(np.mean(np.sum(np.square(p_ref - p_aligned), axis=1))))
     are = float(
         np.sqrt(np.mean(np.square((r_ref.inv() * r_aligned).magnitude())))
@@ -139,7 +145,7 @@ def selected_cases(smoke: bool) -> list[tuple[core.Profile, core.Accuracy, core.
         return core.all_cases()
     profile = PROFILES[0]
     accuracy = next(item for item in core.ACCURACIES if item.name == "medium")
-    names = {"none", "time_10ms", "rotation_20deg", "translation_0p30m"}
+    names = {"none", "time_10ms", "rotation_20deg", "translation_0p03m"}
     seed = SEEDS[0]
     return [
         (profile, accuracy, calibration, seed)

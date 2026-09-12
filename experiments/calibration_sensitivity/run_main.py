@@ -27,9 +27,9 @@ MAIN_PROFILES = (
     core.Profile("medium", "EuRoC", "V1_01_easy_original", RUN_ROOT / "AlignAnything2" / "GT" / "euroc_mav" / "V1_01_easy_original.txt", "tum"),
     core.Profile("medium", "EuRoC", "V1_02_medium", RUN_ROOT / "AlignAnything2" / "GT" / "euroc_mav" / "V1_02_medium.txt", "tum"),
     core.Profile("medium", "EuRoC", "V2_02_medium", RUN_ROOT / "AlignAnything2" / "GT" / "euroc_mav" / "V2_02_medium.txt", "tum"),
-    core.Profile("large", "KITTI", "03", RUN_ROOT / "kitti_gt" / "03.txt", "kitti", assumed_rate_hz=10.0),
-    core.Profile("large", "KITTI", "05", RUN_ROOT / "kitti_gt" / "05.txt", "kitti", assumed_rate_hz=10.0),
-    core.Profile("large", "KITTI", "00", RUN_ROOT / "kitti_gt" / "00.txt", "kitti", assumed_rate_hz=10.0),
+    core.Profile("large", "KITTI", "03", RUN_ROOT / "kitti_gt" / "03.txt", "kitti", assumed_rate_hz=10.0, gravity_aligned=False),
+    core.Profile("large", "KITTI", "05", RUN_ROOT / "kitti_gt" / "05.txt", "kitti", assumed_rate_hz=10.0, gravity_aligned=False),
+    core.Profile("large", "KITTI", "00", RUN_ROOT / "kitti_gt" / "00.txt", "kitti", assumed_rate_hz=10.0, gravity_aligned=False),
 )
 
 MAIN_CALIBRATIONS = (
