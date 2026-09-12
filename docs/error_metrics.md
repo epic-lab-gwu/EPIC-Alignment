@@ -81,48 +81,70 @@ from the standard RPE table.
 
 ## Drift-Valid Success Rate
 
-Drift-valid success rate is the percentage of the reference path that is not
-marked as local drift/fail:
+SR uses approximately one-second relative pose errors on the matched evaluation
+timeline. For each starting pose, EPA chooses the endpoint closest to 1.00 s
+later, accepting intervals from 0.90 s to 1.10 s. It does not interpolate extra
+poses for this check. Both translation and rotation must pass:
 
-```text
-valid GT path length / total GT path length
-```
+| Reference motion in the pair | Translation error limit | Rotation error limit |
+| --- | --- | --- |
+| Translation below 0.10 m / rotation below 1.00° | 0.30 m | 3.00° |
+| Otherwise, independently for each component | 300.00% of translation motion | 300.00% of rotation motion |
 
-A sequence with `0%` success rate has no drift-valid segments, so drift-valid
-metrics are reported as `nan`.
+Limits use strict `<` comparisons. Translation motion is reference endpoint
+displacement; rotation motion is the angle of reference relative rotation.
+The small-motion branch is selected using reference motion, not error. At the decision boundaries, the relative branches apply.
 
-## Drift-Valid Metrics
+A pair passing both checks covers every interval between its endpoints. A
+failing or nonfinite pair vetoes every interval it spans. Intervals with no
+one-second pair use the consecutive poses at that interval’s endpoints for RPE,
+with the same motion-relative and small-motion limits. Reference motion and
+error are measured over the actual interval; errors are not divided by its duration.
+The fallback cannot override a failing one-second pair. If pose data needed for
+the fallback are unavailable, the interval remains unsuccessful. Absolute APE thresholds, APE growth/jump checks,
+and the previous adaptive translation-RPE threshold do not determine SR.
+Legacy threshold CLI options are accepted but ignored.
 
-Drift-valid metrics are computed only on local segments that are not marked as
-drift/fail.
+Before reporting SR, successful intervals are grouped across unsuccessful gaps
+strictly shorter than 10 seconds. Only the group with the greatest sum of
+successful interval durations is retained (earliest group wins ties). Connecting
+gaps stay unsuccessful: they add no successful time/distance, their interior
+poses are excluded from drift-valid ATE, and drift-valid RPE cannot cross them.
+Original SR is retained in `raw_*` diagnostics. Full-trajectory metrics are unchanged.
 
-They are intended to answer a different question from full-trajectory metrics:
+Distance SR is `100 * successful reference distance / full reference path length`;
+time SR uses successful duration divided by full reference duration. Local SR
+uses the evaluated overlap as denominator. Successful distance sums straight
+reference displacements between matched samples, so sparse sampling can affect
+it. With zero reference path length, distance SR is unavailable; time SR remains
+usable. Reliability warnings do not replace calculated SR with zero.
 
-- Full-trajectory metrics answer: how good was the whole sequence?
-- Drift-valid metrics answer: how good were the non-failed local segments?
+## Drift-Valid Metrics and World Alignment
 
-The two should be read together. Drift-valid metrics should not be reported
-without the corresponding success rate because success rate explains how much of
-the trajectory remained after excluding fail segments.
+Drift-valid ATE uses poses belonging to successful intervals. Drift-valid RPE
+retains a pair only when every interval it spans is successful. Consecutive-pose
+checks used for SR are not added to the one-second RPE metric table. Full metrics
+use the original full-trajectory alignment and are not filtered by SR.
 
-## Drift Detection
+When complete-reference distance SR is below 50.00%, EPA fits one additional
+rigid SE3 world transform using all successful poses together. It does not fit
+an independent transform per segment or refit scale. If distance SR is undefined,
+time SR selects this branch. The refit calls the same `_solve_extrinsic_and_world_alignment` function used
+by the original SE3 Step3 alignment, including rotation-first orientation fitting,
+robust translation fitting, and world-candidate selection. It operates on the
+already calibrated successful poses with extrinsic recalibration disabled;
+synchronization and the original calibration stay fixed. SR and its mask are frozen
+before this fit. Without successful segments, valid-only metrics are unavailable.
 
-Local drift detection uses two signals:
+Only valid-only ATE uses the refitted world frame. Relative pose error is
+invariant to this common rigid world transform, so EPA preserves the original
+RPE errors and pair identities before filtering. Full ATE and full RPE remain
+unchanged. The `success.valid_only_world_alignment` diagnostic records the fit,
+trigger scope, and any reason for skipping it.
 
-- 1-second translation RPE
-- positive APE growth/jump checks
-
-A stable constant bias is not treated as drift by itself. For example, if a
-trajectory stays consistently offset by `6 m` but its relative motion is stable,
-that bias contributes to ATE but does not by itself create a drift/fail segment.
-
-EPA also applies a global failed-case gate. If the 5th percentile final-aligned APE
-translation error is above `30 m`, the case is treated as globally failed and
-drift-valid metrics are reported as `nan`.
-
-EPA still estimates and records a per-case APE knee threshold, clamped to
-`5-30 m` by default, as tolerance metadata for success-rate reporting and
-diagnostics.
+The comparison command retains calculated SR and valid-only metrics for runs
+flagged unreliable and reports their reliability warnings alongside the results.
+Always interpret drift-valid metrics together with SR and full metrics.
 
 ## Reading the Tables
 
@@ -141,7 +163,7 @@ Use full-trajectory tables for overall sequence success and comparability. Use
 drift-valid-only RPE and drift-rate tables to inspect local performance after
 excluding detected fail segments.
 
-Example `error_comparison se3` output:
+Historical `error_comparison se3` output (predates the current SR policy; illustrates table layout only):
 
 ```text
 [COMP]: 1627 poses in R_11_5cp.txt => length of 475.20 meters
@@ -258,3 +280,16 @@ Key observations from this example:
 - Distance drift rate normalizes translation RPE by segment length. For example,
   full-trajectory `8m` drift rate `23.334%` means the average 8-meter translation
   RPE is about `23.334%` of the segment length.
+
+## Short-Gap Timestamp Association
+
+OpenVINS-compatible evaluation interpolates ground-truth positions linearly and
+orientations with SLERP at estimate timestamps (after clock-offset correction).
+Estimate poses and source indices are preserved; association does not create
+additional estimate poses. Exact GT timestamps are accepted directly. Other
+samples require a bracketing GT interval no longer than
+`min(0.2 seconds, 3 * median GT sampling interval)`; association does not
+extrapolate or interpolate across longer GT gaps. The legacy nearest-timestamp
+association remains available when short-gap interpolation is disabled.
+The separate dense-resampling fallback remains available when enabled by the
+caller and selected by the evaluation timeline policy.

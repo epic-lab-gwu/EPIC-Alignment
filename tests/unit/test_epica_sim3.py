@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from scipy.spatial.transform import Rotation as R
 
 from epa.core.evaluation import compute_ape
@@ -118,7 +119,8 @@ def test_epica_sim3_differs_from_position_only_baseline_when_pose_is_inconsisten
     assert epica_info["sim3_solver"] == "epica_orientation_consistent"
 
 
-def test_public_sim3_handles_body_frame_extrinsic_rotation() -> None:
+@pytest.mark.parametrize("weak_excitation", [False, True])
+def test_public_sim3_handles_body_frame_extrinsic_rotation(weak_excitation) -> None:
     n = 160
     t = np.linspace(0.0, 12.0, n)
     pos_ref = np.column_stack(
@@ -133,8 +135,8 @@ def test_public_sim3_handles_body_frame_extrinsic_rotation() -> None:
         np.column_stack(
             [
                 0.4 * t,
-                0.25 * np.sin(0.6 * t),
-                0.18 * np.cos(0.4 * t),
+                (0.25 if weak_excitation else 0.8) * np.sin(0.6 * t),
+                (0.18 if weak_excitation else 0.7) * np.cos(0.4 * t),
             ]
         ),
     ).as_quat()
@@ -159,6 +161,15 @@ def test_public_sim3_handles_body_frame_extrinsic_rotation() -> None:
 
     assert info["align_mode"] == "sim3"
     assert info["sim3_extrinsic_rotation_correction_used"] is True
+    assert info["sim3_extrinsic_rotation_solver"] == "multibaseline"
+    rotation_info = info["sim3_extrinsic_rotation_info"]
+    assert rotation_info["min_information_ratio"] == 0.03
+    if weak_excitation:
+        # This yaw-dominant fixture fell below the previous 10% threshold.
+        # The 3% default retains its identifiable nonidentity rotation.
+        assert 0.03 <= rotation_info["information_ratio"] < 0.1
+    assert rotation_info["observable"]
+    assert not rotation_info["constraint_applied"]
     assert ape["translation_part"]["rmse"] < 1e-9
     assert ape["rotation_angle_deg"]["rmse"] < 1e-9
 
@@ -351,6 +362,8 @@ def test_epica_sim3_stable_uses_prefix_when_tail_scale_drifts() -> None:
     assert info["sim3_anchor_status"] == "ok"
     assert info["sim3_reliable"] is True
     assert int(info["sim3_anchor_start_index"]) == 0
+    assert info["sim3_rotation_rejected_count"] == 0
+    assert info["sim3_position_rejected_count"] == 0
     assert int(info["sim3_anchor_end_index"]) <= drift_start
     np.testing.assert_allclose(scale, 1.0, rtol=1e-6, atol=1e-6)
     np.testing.assert_allclose(r_fit, np.eye(3), rtol=1e-6, atol=1e-6)

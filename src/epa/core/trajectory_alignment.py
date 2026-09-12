@@ -970,16 +970,6 @@ def _select_world_alignment_variant(variants: list[dict]) -> dict:
     return full
 
 
-def _extrinsic_rotation_candidates(R_base: np.ndarray) -> list[tuple[str, np.ndarray]]:
-    flips = [
-        ("base", np.eye(3, dtype=float)),
-        ("right_rx180", R.from_euler("x", 180.0, degrees=True).as_matrix()),
-        ("right_ry180", R.from_euler("y", 180.0, degrees=True).as_matrix()),
-        ("right_rz180", R.from_euler("z", 180.0, degrees=True).as_matrix()),
-    ]
-    return [(name, np.asarray(R_base, dtype=float) @ flip) for name, flip in flips]
-
-
 def _solve_extrinsic_world_candidate(
     *,
     name: str,
@@ -1481,7 +1471,7 @@ def _solve_extrinsic_and_world_alignment(
         "robust_iterations": 0,
         "observable": False,
         "information_ratio": 0.0,
-        "min_information_ratio": 0.1,
+        "min_information_ratio": 0.03,
         "reference_information_ratio": 0.0,
         "estimate_information_ratio": 0.0,
         "matched_information_ratio": 0.0,
@@ -1512,9 +1502,9 @@ def _solve_extrinsic_and_world_alignment(
     rotation_candidates = []
     if not bool(disable_extrinsic_calibration):
         if observable:
-            rotation_candidates = _extrinsic_rotation_candidates(R_base)
+            # Observability validates the fitted rotation, not arbitrary axis flips.
+            rotation_candidates = [("base", R_base)]
         elif constrained:
-            # Axis-flipped alternatives do not preserve the log-space constraint.
             rotation_candidates = [("constrained", R_base)]
     # Genuine identity extrinsics: no lever-arm fit, not just R=I with fitted t.
     rotation_candidates.append(("identity", np.eye(3, dtype=float)))
@@ -1569,16 +1559,6 @@ def _solve_extrinsic_and_world_alignment(
         selection_reason = "constrained_candidate_accepted"
     else:
         selection_reason = "calibrated_candidate_accepted"
-    ambiguity_detected = (
-        not bool(disable_extrinsic_calibration)
-        and not identity_selected
-        and (
-            str(selected["candidate_name"]) not in {"base", "constrained"}
-            or float(candidates[0]["rotation_ape_rmse_deg"])
-            > float(selected["rotation_ape_rmse_deg"]) + 5.0
-        )
-    )
-
     return {
         "R_calc": selected["R_calc"],
         "t_calc": selected["t_calc"],
@@ -1603,7 +1583,8 @@ def _solve_extrinsic_and_world_alignment(
             "orientation_candidate_rot_rmse_deg": float(selected["rotation_ape_rmse_deg"]),
             "orientation_candidate_trans_rmse_m": float(selected["step3_rmse_selected_m"]),
             "orientation_candidate_rel_rot_median_deg": float(selected["rot_res_median_deg"]),
-            "orientation_ambiguity_detected": float(bool(ambiguity_detected)),
+            # Retain the diagnostic key for consumers of the former flip search.
+            "orientation_ambiguity_detected": 0.0,
             "extrinsic_calibration_disabled": float(
                 bool(disable_extrinsic_calibration)
             ),

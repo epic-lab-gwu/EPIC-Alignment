@@ -413,6 +413,10 @@ def compute_rpe(
             "delta_ids": np.asarray(delta_ids, dtype=float),
         }
         result["_pair_ids"] = pair_ids
+        result["_reference_motion"] = {
+            "translation_m": np.linalg.norm(t_ref_rel, axis=1),
+            "rotation_deg": np.degrees(R.from_matrix(R_ref_rel).magnitude()),
+        }
     return result
 
 def _empty_metric_block(include_raw=False):
@@ -1030,6 +1034,58 @@ def apply_input_coverage_to_success(
     return success
 
 
+def _motion_relative_pair_pass(block):
+    """Apply the same pose-motion limits to time or consecutive pose pairs."""
+    pairs = np.asarray(block.get("_pair_ids", []), dtype=int).reshape(-1, 2)
+    errors = block.get("_error_arrays", {})
+    motion = block.get("_reference_motion", {})
+    trans_error = np.asarray(errors.get("translation_part", []), dtype=float)
+    rot_error = np.asarray(errors.get("rotation_angle_deg", []), dtype=float)
+    trans_motion = np.asarray(motion.get("translation_m", []), dtype=float)
+    rot_motion = np.asarray(motion.get("rotation_deg", []), dtype=float)
+    if any(len(a) != len(pairs) for a in (trans_error, rot_error, trans_motion, rot_motion)):
+        raise ValueError("SR requires translation/rotation errors and reference motion for each pair")
+    trans_limit = np.where(trans_motion < 0.1, 0.3, 3.0 * trans_motion)
+    rot_limit = np.where(rot_motion < 1.0, 3.0, 3.0 * rot_motion)
+    return pairs, (np.isfinite(trans_error) & np.isfinite(rot_error)
+                   & np.isfinite(trans_motion) & np.isfinite(rot_motion)
+                   & (trans_error < trans_limit) & (rot_error < rot_limit))
+
+
+def _longest_successful_group(timestamps, valid_segment, max_gap_s=10.0):
+    """Keep the group with most successful time; short separating gaps stay false.
+
+    Groups are joined only across gaps strictly shorter than max_gap_s. Ties
+    select the earliest group. Neither gap duration nor sample count earns credit.
+    """
+    t = np.asarray(timestamps, dtype=float).reshape(-1)
+    valid = np.asarray(valid_segment, dtype=bool).reshape(-1)
+    if valid.size != max(0, t.size - 1):
+        raise ValueError("Interval mask must have one entry per timestamp interval")
+    if not np.all(np.isfinite(t)) or np.any(np.diff(t) < 0):
+        raise ValueError("Group selection requires finite, nondecreasing timestamps")
+    edges = np.diff(np.r_[False, valid, False].astype(int))
+    starts, ends = np.flatnonzero(edges == 1), np.flatnonzero(edges == -1)
+    groups = []
+    for start, end in zip(starts, ends):
+        duration = float(t[end] - t[start])
+        if groups and t[start] - t[groups[-1]["end_index"]] < max_gap_s:
+            groups[-1]["end_index"] = int(end)
+            groups[-1]["successful_duration_s"] += duration
+        else:
+            groups.append(dict(start_index=int(start), end_index=int(end),
+                               successful_duration_s=duration))
+    result = np.zeros_like(valid)
+    selected = max(groups, key=lambda g: g["successful_duration_s"]) if groups else None
+    if selected is not None:
+        start, end = selected["start_index"], selected["end_index"]
+        result[start:end] = valid[start:end]
+    return result, dict(policy="longest_successful_duration", gap_threshold_s=float(max_gap_s),
+                        gap_comparison="strictly_less_than", tie_break="earliest",
+                        groups=groups, selected_group=selected,
+                        discarded_successful_intervals=int(np.count_nonzero(valid & ~result)))
+
+
 def compute_valid_segment_metrics(
     *,
     timestamps,
@@ -1051,99 +1107,178 @@ def compute_valid_segment_metrics(
     drift_threshold_mode="adaptive",
     include_raw=True,
     include_masks=False,
+    quat_ref=None,
+    pos_est=None,
+    quat_est=None,
+    input_coverage=None,
 ):
-    ape_errors = np.asarray(ape_block.get("_error_arrays", {}).get("translation_part", []), dtype=float)
-    finite_errors = ape_errors[np.isfinite(ape_errors)]
-    gate_value = float(np.percentile(finite_errors, float(global_gate_percentile))) if finite_errors.size else np.nan
-    effective_gate_m, gate_info = resolve_global_gate(
-        pos_ref,
-        mode=global_gate_mode,
-        fixed_m=float(global_gate_m),
-        path_ratio=float(global_gate_path_ratio),
-        min_m=float(global_gate_min_m),
-        max_m=float(global_gate_max_m),
-    )
-    global_gate_failed = bool(not np.isfinite(gate_value) or gate_value > float(effective_gate_m))
-    drift_thresholds = resolve_drift_thresholds(
-        timestamps,
-        pos_ref,
-        rpe_time_1s_block,
-        mode=drift_threshold_mode,
-        fixed_rpe_1s_m=float(drift_rpe_1s_m),
-        fixed_ape_slope_mps=float(drift_ape_slope_mps),
-        fixed_ape_jump_m=float(drift_ape_jump_m),
-    )
-    raw_regions = compute_success_regions(
-        timestamps=timestamps,
-        pos_ref=pos_ref,
-        ape_translation_errors=ape_errors,
-        threshold_m=float(threshold_m),
-    )
-    regions = compute_drift_regions(
-        timestamps=timestamps,
-        pos_ref=pos_ref,
-        ape_translation_errors=ape_errors,
-        rpe_time_1s_block=rpe_time_1s_block,
-        ape_threshold_m=float(threshold_m),
-        drift_rpe_1s_m=float(drift_thresholds["rpe_1s_m"]),
-        drift_ape_slope_mps=float(drift_thresholds["ape_slope_mps"]),
-        drift_ape_jump_m=float(drift_thresholds["ape_jump_m"]),
-    )
-    valid_sample = np.asarray(regions["valid_sample_mask"], dtype=bool)
-    valid_segment = np.asarray(regions["valid_segment_mask"], dtype=bool)
-    valid_metric_sample = np.zeros(valid_sample.size, dtype=bool)
-    if valid_segment.size > 0:
-        valid_metric_sample[:-1] |= valid_segment
-        valid_metric_sample[1:] |= valid_segment
-    success = {
-        key: value
-        for key, value in regions.items()
-        if key not in {"valid_sample_mask", "valid_segment_mask"}
-    }
-    has_valid_segments = bool(np.count_nonzero(valid_segment) > 0)
-    if global_gate_failed:
-        success["case_status"] = "globally_unstable" if has_valid_segments else "globally_failed"
-    else:
-        success["case_status"] = "valid_segment"
-    success["global_gate_failed"] = bool(global_gate_failed)
-    success["global_gate_m"] = float(effective_gate_m)
-    success["global_gate_info"] = gate_info
-    success["global_gate_mode"] = str(gate_info["mode"])
-    success["global_gate_fixed_m"] = float(global_gate_m)
-    success["global_gate_path_length_m"] = float(gate_info["path_length_m"])
-    success["global_gate_percentile"] = float(global_gate_percentile)
-    success["global_gate_value_m"] = float(gate_value)
-    if global_gate_failed:
-        success["global_gate_warning"] = (
-            "global gate failed; success rate and valid metrics are computed from local valid segments"
-        )
-    success["drift_threshold_mode"] = str(drift_thresholds["mode"])
-    success["drift_rpe_1s_m"] = float(drift_thresholds["rpe_1s_m"])
-    success["drift_ape_slope_mps"] = float(drift_thresholds["ape_slope_mps"])
-    success["drift_ape_jump_m"] = float(drift_thresholds["ape_jump_m"])
-    success["drift_threshold_info"] = drift_thresholds
-    success["raw_success_rate_distance"] = raw_regions.get("success_rate_distance", np.nan)
-    success["raw_success_rate_time"] = raw_regions.get("success_rate_time", np.nan)
-    success["raw_valid_distance_m"] = raw_regions.get("valid_distance_m", 0.0)
-    success["raw_valid_time_s"] = raw_regions.get("valid_time_s", 0.0)
-    success["local_success_rate_distance"] = success.get("success_rate_distance", np.nan)
-    success["local_success_rate_time"] = success.get("success_rate_time", np.nan)
-    success["raw_local_success_rate_distance"] = success.get("raw_success_rate_distance", np.nan)
-    success["raw_local_success_rate_time"] = success.get("raw_success_rate_time", np.nan)
-    success["local_total_distance_m"] = success.get("total_distance_m", 0.0)
-    success["local_total_time_s"] = success.get("total_time_s", 0.0)
-    success["success_rate_scope"] = "overlap_local"
-    success["sr_reliability_status"] = "ok"
-    success["sr_warning_explanation"] = ""
-    if threshold_info is not None:
-        success["threshold"] = threshold_info
+    """Score one-second relative pose error; legacy threshold arguments are ignored.
+
+    Passing pairs cover intervals, failing pairs veto every interval they span.
+    Intervals without a time pair use consecutive-pose RPE instead. SR is frozen before the
+    optional valid-only rigid world alignment and never depends on absolute APE.
+    """
+    t = np.asarray(timestamps, dtype=float)
+    pos = np.asarray(pos_ref, dtype=float).reshape(-1, 3)
+    n = len(t)
+    pairs, pair_ok = _motion_relative_pair_pass(rpe_time_1s_block)
+    m = len(pairs)
+    covered_diff = np.zeros(n + 1, dtype=int)
+    failed_diff = np.zeros(n + 1, dtype=int)
+    if m:
+        i, j = pairs.T
+        if np.any((i < 0) | (j >= n) | (j <= i)):
+            raise ValueError("Invalid one-second RPE pair indices")
+        np.add.at(covered_diff, i, 1)
+        np.add.at(covered_diff, j, -1)
+        np.add.at(failed_diff, i[~pair_ok], 1)
+        np.add.at(failed_diff, j[~pair_ok], -1)
+    covered = np.cumsum(covered_diff)[:max(n - 1, 0)] > 0
+    valid_segment = covered & (np.cumsum(failed_diff)[:max(n - 1, 0)] == 0)
+    fallback_pairs = np.empty((0, 2), dtype=int)
+    fallback_ok = np.array([], dtype=bool)
+    if np.any(~covered):
+        sequential = rpe_block
+        if all(v is not None for v in (quat_ref, pos_est, quat_est)):
+            sequential = compute_rpe(
+                pos, quat_ref, pos_est, quat_est, delta=1, delta_unit="f",
+                all_pairs=True, max_pairs=0, include_raw=True,
+            )
+        seq_pairs, seq_ok = _motion_relative_pair_pass(sequential)
+        # A failed one-second pair is never rescued by this fallback.
+        eligible = (seq_pairs[:, 0] >= 0) & (seq_pairs[:, 1] < n)
+        eligible &= seq_pairs[:, 1] == seq_pairs[:, 0] + 1
+        ids = np.flatnonzero(eligible)
+        ids = ids[~covered[seq_pairs[ids, 0]]]
+        fallback_pairs, fallback_ok = seq_pairs[ids], seq_ok[ids]
+        covered[fallback_pairs[:, 0]] = True
+        valid_segment[fallback_pairs[:, 0]] = fallback_ok
+    unfiltered_segment = valid_segment.copy()
+    valid_segment, group_selection = _longest_successful_group(t, valid_segment)
+    valid_sample = np.zeros(n, dtype=bool)
+    valid_sample[:-1] |= valid_segment
+    valid_sample[1:] |= valid_segment
+    # Use the common reporting shape, then replace totals with the pair-based
+    # segment mask (adjacent passing intervals need not share passing pairs).
+    success = compute_success_regions(t, pos, np.zeros(n), valid_sample_mask=valid_sample)
+    dist = np.linalg.norm(np.diff(pos, axis=0), axis=1)
+    dt = np.maximum(np.diff(t), 0)
+    valid_dist, valid_time = float(np.sum(dist[valid_segment])), float(np.sum(dt[valid_segment]))
+    # Report failures by intervals, including gaps between successful runs.
+    # A shared boundary pose can belong to a successful adjacent interval.
+    boundaries = np.diff(np.r_[False, ~valid_segment, False].astype(int))
+    starts, ends = np.flatnonzero(boundaries == 1), np.flatnonzero(boundaries == -1)
+    distances = np.r_[0.0, np.cumsum(dist)]
+    ape_errors = np.asarray(ape_block.get("_error_arrays", {}).get("translation_part", []))
+    failed_regions = []
+    for start, end in zip(starts, ends):
+        region_errors = ape_errors[start:end + 1]
+        finite_errors = region_errors[np.isfinite(region_errors)]
+        failed_regions.append({
+            "start_index": int(start), "end_index": int(end),
+            "start_time_s": float(t[start] - t[0]), "end_time_s": float(t[end] - t[0]),
+            "start_distance_m": float(distances[start]), "end_distance_m": float(distances[end]),
+            "duration_s": float(t[end] - t[start]),
+            "distance_m": float(distances[end] - distances[start]),
+            "max_error_m": float(np.max(finite_errors)) if finite_errors.size else float("nan"),
+            "mean_error_m": float(np.mean(finite_errors)) if finite_errors.size else float("nan"),
+        })
+    local_dist = valid_dist / np.sum(dist) if np.sum(dist) > 0 else float("nan")
+    local_time = valid_time / np.sum(dt) if np.sum(dt) > 0 else float("nan")
+    success.update({
+        "policy": "rpe_1s_motion_relative",
+        "group_selection": group_selection,
+        "fail_segments": failed_regions, "fail_segment_count": len(failed_regions),
+        "threshold": {"mode": "rpe_1s_motion_relative", "relative_ratio": 3.0,
+                      "small_translation_m": 0.1, "small_rotation_deg": 1.0,
+                      "absolute_translation_m": 0.3, "absolute_rotation_deg": 3.0},
+        "valid_distance_m": valid_dist, "valid_time_s": valid_time,
+        "success_rate_distance": local_dist, "success_rate_time": local_time,
+        "local_success_rate_distance": local_dist, "local_success_rate_time": local_time,
+        "local_total_distance_m": float(np.sum(dist)), "local_total_time_s": float(np.sum(dt)),
+        "success_rate_scope": "overlap_local", "sr_reliability_status": "ok",
+        "sr_warning_explanation": "", "case_status": "valid_segment" if np.any(valid_segment) else "no_valid_segments",
+        "global_gate_failed": False, "global_gate_mode": "disabled",
+        "scored_pair_count": m + len(fallback_pairs),
+        "passing_pair_count": int(np.count_nonzero(pair_ok) + np.count_nonzero(fallback_ok)),
+        "one_second_pair_count": m,
+        "one_second_passing_pair_count": int(np.count_nonzero(pair_ok)),
+        "sequential_fallback_pair_count": len(fallback_pairs),
+        "sequential_fallback_passing_pair_count": int(np.count_nonzero(fallback_ok)),
+        "unscored_segment_count": int(np.count_nonzero(~covered)),
+        "unscored_interval_policy": "sequential_rpe_fallback",
+    })
+    success.pop("threshold_m", None)
+    raw_dist = float(np.sum(dist[unfiltered_segment]))
+    raw_time = float(np.sum(dt[unfiltered_segment]))
+    raw_local_dist = raw_dist / np.sum(dist) if np.sum(dist) > 0 else float("nan")
+    raw_local_time = raw_time / np.sum(dt) if np.sum(dt) > 0 else float("nan")
+    success.update(raw_valid_distance_m=raw_dist, raw_valid_time_s=raw_time,
+                   raw_success_rate_distance=raw_local_dist, raw_success_rate_time=raw_local_time,
+                   raw_local_success_rate_distance=raw_local_dist,
+                   raw_local_success_rate_time=raw_local_time)
+    apply_input_coverage_to_success(success, input_coverage, set_primary=True)
+    alignment = {"applied": False, "reason": "sr_at_least_half", "mode": "se3",
+                 "sr_scope": success["success_rate_scope"], "sr_metric": "distance"}
+    trigger_sr = success["success_rate_distance"]
+    if not np.isfinite(trigger_sr):
+        trigger_sr = success["success_rate_time"]
+        alignment["sr_metric"] = "time"
+    if not np.isfinite(trigger_sr):
+        alignment["reason"] = "sr_unavailable"
+    if np.isfinite(trigger_sr) and trigger_sr < 0.5:
+        if not np.any(valid_sample):
+            alignment["reason"] = "no_valid_segments"
+        elif any(v is None for v in (quat_ref, pos_est, quat_est)):
+            alignment["reason"] = "poses_unavailable"
+        else:
+            from .trajectory_alignment import _solve_extrinsic_and_world_alignment
+            ref = pos[valid_sample]
+            est = np.asarray(pos_est)[valid_sample]
+            q_ref = np.asarray(quat_ref)[valid_sample]
+            q_est = np.asarray(quat_est)[valid_sample]
+            # Reuse the original SE3 solver, including rotation-first fitting,
+            # robust translation fitting and world-candidate selection. These
+            # poses already include the calibrated extrinsics; only refit world.
+            fitted = _solve_extrinsic_and_world_alignment(
+                pr_sync=est, qr_sync=q_est,
+                pos_gt_solve=ref, quat_gt_solve=q_ref,
+                pr_solve=est, qr_solve=q_est,
+                global_align_mode="se3",
+                disable_extrinsic_calibration=True,
+            )
+            rw = np.asarray(fitted["Rw_calc"], dtype=float)
+            tw = np.asarray(fitted["tw_calc"], dtype=float)
+            choice = fitted["step3_choice"]
+            method = str(choice["step3_alignment_mode"])
+            realigned_pos = np.asarray(pos_est) @ rw.T + tw
+            realigned_quat = (R.from_matrix(rw) * R.from_quat(quat_est)).as_quat()
+            original_axes = ape_block.get("_x_axis")
+            ape_block = compute_ape(pos, quat_ref, realigned_pos, realigned_quat, include_raw=True)
+            if original_axes is not None:
+                ape_block["_x_axis"] = original_axes
+            alignment.update(applied=True, reason="sr_below_half", method=method,
+                             solver="_solve_extrinsic_and_world_alignment",
+                             solver_info=choice,
+                             rotation=rw.tolist(), translation_m=tw.tolist(),
+                             sample_count=int(np.count_nonzero(valid_sample)))
+            # Relative pose errors are invariant to a common left SE3 transform;
+            # retain the original RPE pairs/errors, then filter by the frozen mask.
+    success["valid_only_world_alignment"] = alignment
+    success["valid_sample_count"] = int(np.count_nonzero(valid_sample))
+    success.pop("valid_sample_mask", None)
+    success.pop("valid_segment_mask", None)
     if include_masks:
         success["valid_sample_mask"] = valid_sample
-        success["valid_metric_sample_mask"] = valid_metric_sample
+        success["valid_metric_sample_mask"] = valid_sample
         success["valid_segment_mask"] = valid_segment
+        success["unfiltered_valid_segment_mask"] = unfiltered_segment
+        success["rpe_pair_pass_mask"] = pair_ok
+        success["sequential_fallback_pair_ids"] = fallback_pairs
+        success["sequential_fallback_pair_pass_mask"] = fallback_ok
     return {
         "success": success,
-        "ape": _filter_ape_block(ape_block, valid_metric_sample, include_raw=include_raw),
+        "ape": _filter_ape_block(ape_block, valid_sample, include_raw=include_raw),
         "rpe": _filter_rpe_block(rpe_block, valid_segment, include_raw=include_raw),
         "rpe_time_1s": _filter_rpe_block(rpe_time_1s_block, valid_segment, include_raw=include_raw),
     }

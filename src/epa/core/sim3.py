@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-
+from .calibration import _rotation_median_inliers
 
 from .sim3_utils import (
     _apply_similarity,
@@ -949,12 +949,29 @@ def solve_orientation_consistent_sim3(
     translation with that rotation fixed. This keeps the Sim3 transform
     consistent with the full 6DoF pose sequence instead of allowing position
     fitting alone to choose the rotation.
+
+    Median/MAD angular inliers determine rotation and are the only input to
+    the subsequent least-squares scale/translation fit. There is no additional
+    rejection based on position residuals.
+    Diagnostics and downstream evaluation still include all supplied poses.
     """
 
     p_ref, q_ref, p_est, q_est = _validate_pose_pairs(pos_ref, quat_ref, pos_est, quat_est)
-    r_fit_obj = _orientation_mean_rotation(q_ref, q_est)
+    relative = R.from_quat(q_ref) * R.from_quat(q_est).inv()
+    rotation_inliers, rotation_info = _rotation_median_inliers(relative, return_info=True)
+    r_fit_obj = relative[rotation_inliers].mean()
     r_fit = r_fit_obj.as_matrix()
-    scale, t_fit = _solve_scale_translation_fixed_rotation(p_ref, p_est, r_fit)
+    scale, t_fit = _solve_scale_translation_fixed_rotation(
+        p_ref[rotation_inliers], p_est[rotation_inliers], r_fit
+    )
+    position_info = dict(inlier_count=int(rotation_inliers.sum()), rejected_count=0,
+                         threshold_m=None, median_m=None, mad_m=None, iterations=0)
+    position_info.update(
+        mad_filter_enabled=False,
+        input_count=int(rotation_inliers.sum()),
+        rotation_excluded_count=int((~rotation_inliers).sum()),
+        total_rejected_count=int(len(p_ref) - position_info["inlier_count"]),
+    )
     info = _diagnostics(
         solver="epica_orientation_consistent",
         pos_ref=p_ref,
@@ -964,6 +981,10 @@ def solve_orientation_consistent_sim3(
         scale=scale,
         r_fit=r_fit,
         t_fit=t_fit,
+        extra={
+            **{f"sim3_rotation_{key}": value for key, value in rotation_info.items()},
+            **{f"sim3_position_{key}": value for key, value in position_info.items()},
+        },
     )
     return float(scale), r_fit, t_fit, info
 
@@ -1115,6 +1136,10 @@ def solve_stable_epica_sim3(
             "health_sample_ratio": float(health_sample_ratio),
             "bad_step_ratio": float(bad_step_ratio),
             "anchor_solver": str(anchor_info.get("sim3_solver", "epica_orientation_consistent")),
+            "filter_info": {key: value for key, value in anchor_info.items()
+                            if key.startswith(("sim3_rotation_", "sim3_position_"))
+                            and key.endswith(("count", "threshold_deg", "median_deg", "mad_deg",
+                                              "threshold_m", "median_m", "mad_m", "iterations", "enabled"))},
         }
         if best is None or (bool(candidate["reliable"]) and not bool(best["reliable"])) or (
             bool(candidate["reliable"]) == bool(best["reliable"]) and float(candidate["score"]) < float(best["score"])
@@ -1160,6 +1185,7 @@ def solve_stable_epica_sim3(
             "sim3_anchor_status": "ok",
             "sim3_reliable": True,
             "sim3_anchor_solver": str(best["anchor_solver"]),
+            **best["filter_info"],
             "sim3_candidate_count": int(len(windows)),
             "sim3_candidate_rejected_count": int(len(rejected)),
             "sim3_anchor_start_index": int(best["start"]),
