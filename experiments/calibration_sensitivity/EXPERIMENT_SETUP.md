@@ -113,6 +113,17 @@ window `[0.1, 79.8]` s, `--no-downsample`, and `--no-plot`. Terminal-only mode
 changes output generation, not calibration or metrics. The actual EPA overlap
 count is retained per case because time-offset correction can crop support.
 
+Time-offset candidates are selected with overlap-normalized ZNCC over the full
+resampled angular-velocity signals. A candidate is retained when its ZNCC is at
+least 0.75 and, when an independent peak exists in the search window, its peak
+margin is at least 0.05. The peak margin is not applied when the search window
+is too narrow to contain an independent peak. A full-support global correlation
+is used as a consistency check: a locally repeated ZNCC peak is replaced by the
+supported global peak when available, or rejected when neither peak has
+sufficient support. PSR is recorded as a diagnostic and is not used as a
+rejection criterion. These safeguards are part of the evaluated EPA
+implementation and are recorded in the output metrics.
+
 APE is translational RMSE in metres. ARE is orientation-angle RMSE in degrees.
 Each heatmap cell is the mean over the available trajectories in its motion group and
 five seeds. Relative change is calculated against the matched no-perturbation baseline

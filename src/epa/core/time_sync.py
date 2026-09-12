@@ -8,10 +8,11 @@ from .math_utils import rmse
 from .time_alignment import compute_psr, get_angular_velocity_norm, matching_time_indices
 
 
-_MIN_ZNCC = 0.4
+_MIN_ZNCC = 0.75
 _MIN_PSR = 6.0
 _MIN_CORRELATION_OVERLAP = 0.5
 _PSR_GUARD_S = 0.2
+_MIN_GLOBAL_CORRELATION = 0.25
 
 
 def _next_fast_len_235(size: int) -> int:
@@ -274,6 +275,13 @@ def _run_time_alignment(
     lags = np.arange(-len(sig_gt) + 1, len(sig_est))
     offsets_s = lags.astype(float) * dt_resample
 
+    # Retain a full-support, globally normalized correlation as a sanity
+    # check.  Per-lag ZNCC can overfit a locally repeated motion pattern even
+    # when that pattern is inconsistent with the complete sequence.
+    full_corr = _correlate_full(sig_est, sig_gt)
+    full_corr /= np.linalg.norm(sig_est) * np.linalg.norm(sig_gt) + 1e-12
+    full_lags = np.arange(-len(sig_gt) + 1, len(sig_est))
+
     min_overlap = max(100, int(np.ceil(_MIN_CORRELATION_OVERLAP * len(sig_gt))))
     search_mask = (overlap_count >= min_overlap) & np.isfinite(corr)
     if offset_search_window_s > 0.0:
@@ -286,6 +294,14 @@ def _run_time_alignment(
         else int(np.argmin(np.abs(offsets_s)))
     )
     calculated_offset = float(offsets_s[peak_idx])
+    global_peak_idx = (
+        int(search_indices[int(np.argmax(full_corr[search_indices]))])
+        if search_indices.size
+        else int(np.argmin(np.abs(offsets_s)))
+    )
+    global_peak_offset = float(offsets_s[global_peak_idx])
+    global_peak_corr = float(full_corr[global_peak_idx])
+    global_corr_at_zncc = float(full_corr[peak_idx])
     # Exclude unsupported lags from both peak selection and PSR statistics.
     psr_corr = np.where(search_mask, corr, np.nan)
 
@@ -343,6 +359,15 @@ def _run_time_alignment(
     zero_diag = _count_matches_for_offset(zero_offset)
     zero_ratio_gate = float(zero_diag["ratio_gate"])
     omega_rmse_after_zero = _omega_rmse_after_offset(zero_offset)
+    global_candidate_fallback = False
+    if global_corr_at_zncc < _MIN_GLOBAL_CORRELATION:
+        if global_peak_corr >= _MIN_GLOBAL_CORRELATION:
+            calculated_offset = global_peak_offset
+            peak_idx = global_peak_idx
+            global_candidate_fallback = True
+        else:
+            calculated_offset = near_zero_offset
+            peak_idx = near_zero_peak_idx
     small_offset_improve_ratio = (omega_rmse_after_zero - omega_rmse_after_near_zero) / (
         omega_rmse_after_zero + 1e-12
     )
@@ -414,11 +439,34 @@ def _run_time_alignment(
     candidate_offset = calculated_offset
     candidate_corr = float(corr[peak_idx])
     candidate_psr = float(_peak_psr(peak_idx))
+    full_candidate_idx = int(np.argmin(np.abs(full_lags * dt_resample - candidate_offset)))
+    full_zero_idx = int(np.argmin(np.abs(full_lags * dt_resample)))
+    full_candidate_corr = float(full_corr[full_candidate_idx])
+    full_zero_corr = float(full_corr[full_zero_idx])
+    # Keep PSR as a reported diagnostic, matching the main branch. Reject
+    # weak or ambiguous candidates using correlation strength and separation
+    # from the next independent peak instead of PSR.
+    independent_sep_s = 1.0
+    independent_mask = search_mask & (np.abs(offsets_s - candidate_offset) >= independent_sep_s)
+    if np.any(independent_mask):
+        second_peak_corr = float(np.nanmax(corr[independent_mask]))
+        peak_margin = candidate_corr - second_peak_corr
+    else:
+        second_peak_corr = float("nan")
+        peak_margin = float("nan")
     confidence_rejected = not (
         np.isfinite(candidate_corr)
-        and candidate_corr >= _MIN_ZNCC
-        and np.isfinite(candidate_psr)
-        and candidate_psr >= _MIN_PSR
+        and (candidate_corr >= _MIN_ZNCC or global_candidate_fallback)
+        # A narrow search window may not contain an independent peak at the
+        # configured separation.  In that case margin is unavailable rather
+        # than evidence against the candidate.
+        and (
+            not np.isfinite(peak_margin)
+            or peak_margin >= 0.05
+            or global_candidate_fallback
+        )
+        and np.isfinite(full_candidate_corr)
+        and full_candidate_corr >= _MIN_GLOBAL_CORRELATION
     )
     if bool(disable_time_offset_calibration) or confidence_rejected:
         calculated_offset = zero_offset
@@ -449,9 +497,19 @@ def _run_time_alignment(
         "offset_candidate_s": float(candidate_offset),
         "xcorr_candidate_normalized": candidate_corr,
         "xcorr_candidate_psr": candidate_psr,
+        "xcorr_candidate_global_normalized": full_candidate_corr,
+        "xcorr_zero_global_normalized": full_zero_corr,
+        "xcorr_min_global_normalized": _MIN_GLOBAL_CORRELATION,
+        "xcorr_second_peak_normalized": second_peak_corr,
+        "xcorr_peak_margin": peak_margin,
+        "xcorr_peak_separation_s": independent_sep_s,
         "xcorr_min_normalized": _MIN_ZNCC,
         "xcorr_min_psr": _MIN_PSR,
         "xcorr_min_overlap_ratio": _MIN_CORRELATION_OVERLAP,
+        "xcorr_trim_fraction": 0.0,
+        "xcorr_global_candidate_offset_s": global_peak_offset,
+        "xcorr_global_candidate_normalized": global_peak_corr,
+        "xcorr_global_consistency_fallback": float(global_candidate_fallback),
         "offset_confidence_rejected": float(
             confidence_rejected and not disable_time_offset_calibration
         ),
