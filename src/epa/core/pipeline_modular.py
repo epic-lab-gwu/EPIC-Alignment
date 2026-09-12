@@ -675,7 +675,12 @@ def run_pipeline_modular(args, script_dir: Path):
             valid_rpe_t = pose_metrics["valid_segment"][stage_name]["rpe"][rpe_pose_relation]["rmse"]
             sr_dist_pct = float(success["success_rate_distance"]) * 100.0
             local_sr_dist_pct = float(success["local_success_rate_distance"]) * 100.0
-            success_threshold_m = float(success["threshold"]["threshold_m"])
+            # New motion-relative success scoring reports a threshold without
+            # a fixed ``threshold_m`` field.  Keep terminal reporting
+            # compatible while leaving the computed metrics unchanged.
+            success_threshold_m = float(
+                success.get("threshold", {}).get("threshold_m", float("nan"))
+            )
             print(
                 f"{stage_name}: "
                 f"APE_{ape_pose_relation}_rmse={ape_t:.6f}, "
