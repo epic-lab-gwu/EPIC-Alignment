@@ -96,15 +96,15 @@ Rotation axis is normalized `[1, -2, 3]`; translation direction is normalized
 
 The exact same injected trajectory is evaluated under four policies:
 
-1. **Fig. 1, SE(3)-original without calibration:** determine global rotation and
+1. **Fig. 1, position-only SE(3) without calibration:** determine global rotation and
    translation by position-only Kabsch alignment.
 2. **Fig. 2, SE3R without calibration:** determine global rotation from paired
    orientations first, then solve translation with that rotation fixed.
-3. **Fig. 3, SE(3)-original with calibration:** run the current EPA pipeline with
-   `--mode se3-original`; EPA estimates time offset and extrinsics before a position-only
+3. **Fig. 3, position-only SE(3) with calibration:** run the current EPA pipeline with
+   `--mode se3`; EPA estimates time offset and extrinsics before a position-only
    Umeyama world alignment.
 4. **Fig. 4, SE3R with calibration:** run the current EPA pipeline with
-   `--mode se3`; EPA estimates time offset and extrinsics before an orientation-first
+   `--mode se3r`; EPA estimates time offset and extrinsics before an orientation-first
    world rotation and fixed-rotation translation.
 
 The calibrated command uses `--dt-resample 0.001`,
@@ -137,7 +137,7 @@ omitted from relative heatmaps because a numerical-zero denominator is undefined
 For the main paper representation, the eight heatmaps are compressed into two
 composite figures: `composite_ape` contains four panels for relative APE and
 `composite_are` contains four panels for relative ARE. In each composite, the
-columns compare SE(3)-original and SE3R, and the rows compare evaluation without
+columns compare position-only SE(3) and SE3R, and the rows compare evaluation without
 and with calibration. The no-trim run is retained as an ablation with the same
 case generation and evaluation protocol.
 

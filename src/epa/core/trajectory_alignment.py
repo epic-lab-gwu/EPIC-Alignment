@@ -1095,9 +1095,7 @@ def _solve_extrinsic_world_candidate(
 
         global_mode = str(global_align_mode).lower()
         rotation_first = global_mode in {
-            "se3",
             "se3r",
-            "epa_se3",
             "epa_se3r",
             "rotation_first_se3",
         }
@@ -1265,9 +1263,7 @@ def _solve_extrinsic_world_candidate(
         orientation_mode = "step2_posyaw"
         rot_rmse_deg = rot_rmse_from_step2
     elif str(global_align_mode).lower() in {
-        "se3",
         "se3r",
-        "epa_se3",
         "epa_se3r",
         "rotation_first_se3",
     }:
@@ -1445,6 +1441,7 @@ def _solve_extrinsic_and_world_alignment(
     calibration_source_timestamps_s: np.ndarray | None = None,
     disable_extrinsic_calibration: bool = False,
     compare_identity_candidate: bool = True,
+    min_rotation_information_ratio: float = 0.03,
 ):
     R_base = np.eye(3, dtype=float)
     extrinsic_pair_indices = None
@@ -1471,7 +1468,7 @@ def _solve_extrinsic_and_world_alignment(
         "robust_iterations": 0,
         "observable": False,
         "information_ratio": 0.0,
-        "min_information_ratio": 0.03,
+        "min_information_ratio": float(min_rotation_information_ratio),
         "reference_information_ratio": 0.0,
         "estimate_information_ratio": 0.0,
         "matched_information_ratio": 0.0,
@@ -1484,6 +1481,7 @@ def _solve_extrinsic_and_world_alignment(
                     qr_solve,
                     timestamps_s=calibration_timestamps_s,
                     source_timestamps_s=calibration_source_timestamps_s,
+                    min_information_ratio=float(min_rotation_information_ratio),
                 )
             )
         except InsufficientRotationExcitationError as exc:

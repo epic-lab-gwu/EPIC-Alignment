@@ -104,6 +104,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the shared extrinsic solver's identity-candidate comparison (enabled by default).",
     )
     parser.add_argument(
+        "--min-rotation-information-ratio",
+        type=float,
+        default=0.03,
+        help=(
+            "Minimum rotational information ratio used by the extrinsic "
+            "observability gate (default: 0.03)."
+        ),
+    )
+    parser.add_argument(
         "--disable-calibration",
         "--disable-all-calibration",
         action="store_true",
@@ -352,12 +361,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=(*PUBLIC_ALIGN_MODES, "se3r", "se3-orginal"),
+        choices=(*PUBLIC_ALIGN_MODES, "se3-original", "se3-orginal"),
         default="",
-        metavar="{se3,se3-original,posyaw,sim3}",
+        metavar="{se3,se3r,posyaw,sim3}",
         help=(
             "Public alignment mode used for evaluation and reports. se3 uses "
-            "orientation-first rotation; se3-original retains position-only Umeyama."
+            "position-only Umeyama; se3r uses rotation-first alignment."
         ),
     )
     parser.add_argument(

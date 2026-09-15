@@ -162,7 +162,7 @@ def test_refit_reuses_step3_rotation_first_solver_when_positions_disagree():
         'coverage_status': 'ok'})
     expected = _solve_extrinsic_and_world_alignment(
         pr_sync=est, qr_sync=quat, pos_gt_solve=ref, quat_gt_solve=quat,
-        pr_solve=est, qr_solve=quat, global_align_mode='se3',
+        pr_solve=est, qr_solve=quat, global_align_mode='se3r',
         disable_extrinsic_calibration=True)
     alignment = out['success']['valid_only_world_alignment']
     assert alignment['solver'] == '_solve_extrinsic_and_world_alignment'

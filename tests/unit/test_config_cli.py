@@ -82,6 +82,13 @@ def test_identity_safeguard_defaults_on_in_main_cli():
     assert build_parser().parse_args([]).disable_identity_safeguard is False
 
 
+def test_rotation_information_ratio_threshold_is_configurable_in_main_cli():
+    parser = build_parser()
+    assert parser.parse_args([]).min_rotation_information_ratio == 0.03
+    args = parser.parse_args(["--min-rotation-information-ratio", "0.01"])
+    assert args.min_rotation_information_ratio == 0.01
+
+
 @pytest.mark.parametrize("command", ["singlerun", "dataset", "comparison"])
 def test_identity_safeguard_option_in_all_ov_commands(command):
     from epa.compat.ov_eval import parsers

@@ -474,7 +474,7 @@ def test_evaluate_pair_epa_step3_uses_strict_timeline_when_estimate_matches_well
     assert int(result["matched"]) == int(t_est.size)
     assert result["eval_source"] == "epa_step3"
     assert str(result["eval_alignment"]["step3_alignment_mode"]).startswith(
-        "rotation_first"
+        "standard"
     )
     assert result["eval_alignment"]["timeline_policy"] == "sparse_est_association"
     assert int(result["eval_alignment"]["sparse_matched"]) == int(t_est.size)
@@ -1072,11 +1072,11 @@ def test_evaluate_pair_epa_step3_step1_fallback_is_quiet_by_default(
     assert "--- STEP 1 FALLBACK ---" not in captured.out
     assert result["eval_source"] == "epa_se3"
     assert str(result["eval_alignment"]["step3_alignment_mode"]).startswith(
-        "rotation_first"
+        "robust_trimmed"
     )
 
 
-def test_evaluate_pair_legacy_se3r_alias_uses_new_se3_alignment(tmp_path: Path) -> None:
+def test_evaluate_pair_se3r_uses_rotation_first_alignment(tmp_path: Path) -> None:
     n = 400
     t = np.arange(n, dtype=float) * 0.05
     yaw = np.linspace(0.0, np.deg2rad(100.0), n)
@@ -1100,9 +1100,8 @@ def test_evaluate_pair_legacy_se3r_alias_uses_new_se3_alignment(tmp_path: Path) 
         max_diff=0.02,
     )
 
-    assert result["requested_align_mode"] == "se3"
-    assert result["requested_align_alias"] == "se3r"
-    assert result["eval_source"] == "epa_se3"
+    assert result["requested_align_mode"] == "se3r"
+    assert result["eval_source"] == "epa_se3r"
     assert str(result["eval_alignment"]["step3_alignment_mode"]).startswith(
         "rotation_first"
     )

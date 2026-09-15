@@ -1218,7 +1218,7 @@ def compute_valid_segment_metrics(
                    raw_local_success_rate_distance=raw_local_dist,
                    raw_local_success_rate_time=raw_local_time)
     apply_input_coverage_to_success(success, input_coverage, set_primary=True)
-    alignment = {"applied": False, "reason": "sr_at_least_half", "mode": "se3",
+    alignment = {"applied": False, "reason": "sr_at_least_half", "mode": "se3r",
                  "sr_scope": success["success_rate_scope"], "sr_metric": "distance"}
     trigger_sr = success["success_rate_distance"]
     if not np.isfinite(trigger_sr):
@@ -1237,14 +1237,14 @@ def compute_valid_segment_metrics(
             est = np.asarray(pos_est)[valid_sample]
             q_ref = np.asarray(quat_ref)[valid_sample]
             q_est = np.asarray(quat_est)[valid_sample]
-            # Reuse the original SE3 solver, including rotation-first fitting,
+            # Reuse the rotation-first SE3R solver,
             # robust translation fitting and world-candidate selection. These
             # poses already include the calibrated extrinsics; only refit world.
             fitted = _solve_extrinsic_and_world_alignment(
                 pr_sync=est, qr_sync=q_est,
                 pos_gt_solve=ref, quat_gt_solve=q_ref,
                 pr_solve=est, qr_solve=q_est,
-                global_align_mode="se3",
+                global_align_mode="se3r",
                 disable_extrinsic_calibration=True,
             )
             rw = np.asarray(fitted["Rw_calc"], dtype=float)

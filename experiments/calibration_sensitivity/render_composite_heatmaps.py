@@ -26,9 +26,9 @@ for dirname in ['calibration_sensitivity_results_pr34_trim_consistent','calibrat
   image=None
   short_labels=[f'{g} / {a[0].upper()}' for g in ['Hot3D','EuRoC','KITTI','V2_03','AEA'] for a in m.ACCURACIES]
   for i,(mode,title) in enumerate([
-   ('se3_position','SE(3)-original, without calibration'),
+   ('se3_position','SE(3), without calibration'),
    ('se3r_rotation_first','SE3R, without calibration'),
-   ('se3_position_calibrated','SE(3)-original, with calibration'),
+   ('se3_position_calibrated','SE(3), with calibration'),
    ('se3r_rotation_first_calibrated','SE3R, with calibration')]):
    ax=axes.flat[i]; image=m.draw_heatmap(ax,mats[(mode,metric)],metric_name,cmap,norm); ax.set_title(title,loc='left',fontsize=7,fontweight='bold',pad=6)
    if i%2==1: ax.set_yticklabels([])

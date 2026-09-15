@@ -147,6 +147,16 @@ def test_identity_comparison_is_enabled_by_default_for_constrained_fit(monkeypat
     assert actual["step3_choice"]["extrinsic_selection_reason"] == "identity_preferred"
 
 
+def test_custom_rotation_information_ratio_threshold_reaches_solver():
+    kwargs, *_ = _pose_case(single_axis=True)
+    actual = alignment._solve_extrinsic_and_world_alignment(
+        **kwargs, compare_identity_candidate=False,
+        min_rotation_information_ratio=0.01,
+    )
+    choice = actual["step3_choice"]
+    assert choice["extrinsic_rotation_min_information_ratio"] == pytest.approx(0.01)
+
+
 def test_no_supported_information_does_not_claim_success():
     a = np.zeros((10, 3))
     info = _rotation_observability(a, a, np.eye(3), np.ones(10))

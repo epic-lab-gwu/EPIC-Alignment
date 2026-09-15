@@ -132,14 +132,15 @@ TRANSLATION_TARGETS_M = {
 
 ROTATION_MEDIUM = {
     # Roll/pitch are non-accumulating stationary errors.  Yaw is the component
-    # for which a time-dependent drift is intentionally simulated.
-    "Hot3D": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+    # for which a time-dependent drift is intentionally simulated. The supervisor
+    # specifies the medium drift as 1 deg/min; the internal field is deg/s.
+    "Hot3D": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0 / 60.0,
               "yaw_random_walk_deg_per_sqrt_s": 0.05},
-    "AEA": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+    "AEA": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0 / 60.0,
             "yaw_random_walk_deg_per_sqrt_s": 0.05},
-    "EuRoC": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+    "EuRoC": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0 / 60.0,
               "yaw_random_walk_deg_per_sqrt_s": 0.05},
-    "KITTI": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0,
+    "KITTI": {"roll_pitch_rms_deg": 0.25, "yaw_drift_deg_per_s": 1.0 / 60.0,
               "yaw_random_walk_deg_per_sqrt_s": 0.05},
 }
 

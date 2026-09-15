@@ -661,17 +661,15 @@ def _evaluate_pair_epa_step3(
     if eval_mode in {"epa_se3_eval", "epa_se3"}:
         eval_mode = "se3"
     elif eval_mode in {"epa_se3r", "rotation_first_se3"}:
+        eval_mode = "se3r"
+    elif eval_mode in {"se3-original", "se3_orginal", "se3-orginal", "se3_original"}:
         eval_mode = "se3"
-    elif eval_mode in {"se3_orginal", "se3-orginal", "se3_original"}:
-        eval_mode = "se3-original"
     elif eval_mode == "epa_step3":
         eval_mode = "none"
     if eval_mode in {"posyaw", "epa_posyaw"}:
         global_align_mode = "posyaw"
     elif eval_mode in {"se3", "se3r"}:
-        global_align_mode = "se3"
-    elif eval_mode == "se3-original":
-        global_align_mode = "se3-original"
+        global_align_mode = eval_mode
     else:
         global_align_mode = "se3"
 
@@ -702,7 +700,7 @@ def _evaluate_pair_epa_step3(
             else (
                 "se3_step3"
                 if global_align_mode == "se3"
-                else ("se3_original_step3" if global_align_mode == "se3-original" else "none")
+                else ("se3r_step3" if global_align_mode == "se3r" else "none")
             )
         ),
         "step3_global_align_mode": global_align_mode,
@@ -727,7 +725,6 @@ def _evaluate_pair_epa_step3(
         "none",
         "se3",
         "se3r",
-        "se3-original",
         "posyaw",
         "epa_posyaw",
     }:
@@ -776,10 +773,10 @@ def _evaluate_pair_epa_step3(
             if eval_mode in {"posyaw", "epa_posyaw"}
             else (
                 "epa_se3"
-                if eval_mode in {"se3", "se3r"}
+                if eval_mode == "se3"
                 else (
-                    "epa_se3_original"
-                    if eval_mode == "se3-original"
+                    "epa_se3r"
+                    if eval_mode == "se3r"
                     else ("epa_step3" if eval_mode in {"", "none"} else "epa_eval_align")
                 )
             )
@@ -811,7 +808,7 @@ def _evaluate_pair(
 ) -> dict:
     requested_align_alias = str(align_mode).lower()
     requested_align_mode = _public_align_mode(requested_align_alias)
-    if requested_align_mode in {"se3", "se3-original", "posyaw"}:
+    if requested_align_mode in {"se3", "se3r", "posyaw"}:
         try:
             result = _evaluate_pair_epa_step3(
                 file_gt=file_gt,

@@ -118,12 +118,10 @@ def _pose_relation_title_label(pose_relation: str) -> str:
 
 def _align_mode_title_label(align_mode: str) -> str:
     mode = str(align_mode).lower()
-    if mode == "se3":
-        return "with rotation-first SE(3) alignment"
-    if mode in {"se3-original", "se3-orginal"}:
+    if mode in {"se3", "se3-original", "se3-orginal"}:
         return "with original position-only SE(3) Umeyama alignment"
     if mode == "se3r":
-        return "with rotation-first SE(3) alignment (legacy se3r alias)"
+        return "with rotation-first SE(3) alignment"
     if mode == "sim3":
         return "with pose-aware Sim(3) alignment"
     if mode == "scale":
@@ -329,7 +327,7 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
         "--align",
         action="store_true",
         default=dflt(False),
-        help="rotation-first SE(3) alignment (use --eval-align se3-original for legacy position-only Umeyama)",
+        help="position-only SE(3) Umeyama alignment (use --eval-align se3r for rotation-first alignment)",
     )
     algo.add_argument("-s", "--correct_scale", action="store_true", default=dflt(False), help="enable scale correction")
     algo.add_argument(

@@ -63,10 +63,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--align-mode",
         default="se3",
-        metavar="{se3,se3-original,posyaw,sim3}",
+        metavar="{se3,se3r,posyaw,sim3}",
         help=(
-            "Public alignment mode: se3 (rotation-first), se3-original "
-            "(position-only Umeyama), posyaw, or sim3. Compatibility aliases are accepted."
+            "Public alignment mode: se3 (position-only Umeyama), se3r "
+            "(rotation-first), posyaw, or sim3. Compatibility aliases are accepted."
         ),
     )
     p.add_argument(

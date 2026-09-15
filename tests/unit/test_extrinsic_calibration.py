@@ -129,7 +129,7 @@ def test_full_alignment_passes_rotation_mask_to_translation_solver() -> None:
         quat_gt_solve=q_ref,
         pr_solve=position_est,
         qr_solve=q_est,
-        global_align_mode="se3",
+        global_align_mode="se3r",
     )
 
     assert np.degrees(

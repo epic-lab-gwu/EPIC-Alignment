@@ -410,17 +410,19 @@ def align_for_eval_with_info(
     pest = np.asarray(pos_est[idx], dtype=float)
     q_est = np.asarray(quat_est, dtype=float)
 
-    if mode == "se3-original":
+    if mode == "se3":
         _, R_eval, t_eval = _umeyama_transform(pest, pref, with_scale=False)
         pos_new = (R_eval @ np.asarray(pos_est, dtype=float).T).T + t_eval
         q_new = normalize_quat_array((R.from_matrix(R_eval) * R.from_quat(q_est)).as_quat())
         info["align_scale"] = 1.0
         info["align_rotation_matrix"] = np.asarray(R_eval, dtype=float).tolist()
         info["align_translation"] = np.asarray(t_eval, dtype=float).reshape(3).tolist()
-        info["se3_original_solver"] = "position_only_umeyama"
+        info["se3_solver"] = "position_only_umeyama"
+        if requested_mode != "se3":
+            info["legacy_position_only_alias"] = requested_mode
         return pos_new, q_new, info
 
-    if mode in {"se3", "se3r"}:
+    if mode == "se3r":
         R_eval, t_eval = solve_rotation_first_alignment(
             pest,
             pref,
@@ -434,8 +436,6 @@ def align_for_eval_with_info(
                 "align_scale": 1.0,
                 "align_rotation_matrix": np.asarray(R_eval, dtype=float).tolist(),
                 "align_translation": np.asarray(t_eval, dtype=float).reshape(3).tolist(),
-                "se3_solver": "orientation_chordal_mean_then_translation_mean",
-                # Retained for consumers of the former public se3r mode.
                 "se3r_solver": "orientation_chordal_mean_then_translation_mean",
             }
         )

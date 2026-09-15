@@ -89,13 +89,11 @@ incremental `data/calibration_cache.jsonl`. Cache keys include fingerprints of
 the EPA CLI and trajectory-alignment implementation, so changed EPA code does
 not silently reuse stale results.
 
-The script detects both public mode-name schemes used during development:
-
-- current `main`: `se3-original` = position-only and `se3` = rotation-first;
-- naming-cleanup branch: `se3` = position-only and `se3r` = rotation-first.
-
-It validates the solver reported by every calibrated run, rather than relying
-only on the mode spelling.
+The current public mode names are `se3` = position-only Umeyama/Kabsch and
+`se3r` = rotation-first SE(3). The historical spelling `se3-original` remains
+accepted as a compatibility alias for `se3`. The experiment validates the
+solver reported by every calibrated run, rather than relying only on the mode
+spelling.
 
 ## Expected outputs
 

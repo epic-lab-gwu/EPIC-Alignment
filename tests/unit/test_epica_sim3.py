@@ -9,7 +9,7 @@ from epa.core.sim3 import solve_epa_sim3, solve_epa_sim3_v1, solve_epa_sim3_v2, 
 from epa.metric_cli_common import align_for_eval_with_info
 
 
-def test_se3_replaces_se3r_and_original_name_preserves_position_only_fit() -> None:
+def test_se3_is_position_only_and_se3r_is_rotation_first() -> None:
     n = 80
     t = np.linspace(0.0, 8.0, n)
     pos_est = np.column_stack([t, np.sin(0.7 * t), 0.2 * np.cos(0.3 * t)])
@@ -22,35 +22,33 @@ def test_se3_replaces_se3r_and_original_name_preserves_position_only_fit() -> No
     pos_ref = (position_rotation.as_matrix() @ pos_est.T).T + translation
     quat_ref = (orientation_rotation * R.from_quat(quat_est)).as_quat()
 
-    pos_original, quat_original, original_info = align_for_eval_with_info(
-        pos_ref, quat_ref, pos_est, quat_est, mode="se3-original"
-    )
     pos_se3, quat_se3, info = align_for_eval_with_info(
         pos_ref, quat_ref, pos_est, quat_est, mode="se3"
     )
     pos_se3r, quat_se3r, alias_info = align_for_eval_with_info(
         pos_ref, quat_ref, pos_est, quat_est, mode="se3r"
     )
+    pos_original, quat_original, original_info = align_for_eval_with_info(
+        pos_ref, quat_ref, pos_est, quat_est, mode="se3-original"
+    )
     pos_typo, quat_typo, typo_info = align_for_eval_with_info(
         pos_ref, quat_ref, pos_est, quat_est, mode="se3-orginal"
     )
-    original = compute_ape(pos_ref, quat_ref, pos_original, quat_original)
     se3 = compute_ape(pos_ref, quat_ref, pos_se3, quat_se3)
     se3r = compute_ape(pos_ref, quat_ref, pos_se3r, quat_se3r)
 
-    assert original["translation_part"]["rmse"] < 1e-9
-    assert original["rotation_angle_deg"]["rmse"] > 20.0
-    assert original_info["se3_original_solver"] == "position_only_umeyama"
-    assert se3["rotation_angle_deg"]["rmse"] < 1e-9
-    assert se3["translation_part"]["rmse"] > 0.1
-    assert info["se3_solver"] == "orientation_chordal_mean_then_translation_mean"
-    np.testing.assert_allclose(pos_se3r, pos_se3, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(quat_se3r, quat_se3, rtol=1e-12, atol=1e-12)
+    assert se3["translation_part"]["rmse"] < 1e-9
+    assert se3["rotation_angle_deg"]["rmse"] > 20.0
+    assert info["se3_solver"] == "position_only_umeyama"
     assert se3r["rotation_angle_deg"]["rmse"] < 1e-9
+    assert se3r["translation_part"]["rmse"] > 0.1
     assert alias_info["se3r_solver"] == "orientation_chordal_mean_then_translation_mean"
-    np.testing.assert_allclose(pos_typo, pos_original, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(quat_typo, quat_original, rtol=1e-12, atol=1e-12)
-    assert typo_info["align_mode"] == "se3-original"
+    np.testing.assert_allclose(pos_original, pos_se3, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(quat_original, quat_se3, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(pos_typo, pos_se3, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(quat_typo, quat_se3, rtol=1e-12, atol=1e-12)
+    assert original_info["legacy_position_only_alias"] == "se3-original"
+    assert typo_info["legacy_position_only_alias"] == "se3-orginal"
 
 
 def test_orientation_consistent_sim3_recovers_pose_aware_similarity() -> None:

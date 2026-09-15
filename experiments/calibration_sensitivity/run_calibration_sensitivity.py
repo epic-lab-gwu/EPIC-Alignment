@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run calibration sensitivity for SE(3)-original and SE3R, with and without calibration.
+"""Run calibration sensitivity for position-only SE(3) and SE3R, with and without calibration.
 
 Scientific question
 -------------------
@@ -30,14 +30,14 @@ Experiment setup
    (AEA), and 2% of path length (KITTI). These values are chosen so that the
    post-position-alignment APE approaches the supervisor's target ranges; high
    and low use 0.5/2 multipliers. The medium yaw drift rate is
-   1 deg/s. Five fixed seeds are reused across all calibration-error conditions
+   1 deg/min. Five fixed seeds are reused across all calibration-error conditions
    in each matched block.
 4. Injected perturbations: time offsets (1, 5, 10, 20, 30, 50 ms), extrinsic
    rotations (5, 20, 45 deg), bounded extrinsic translations (0.01, 0.03,
    0.05 m), one combined case (10 ms + 20 deg + 0.05 m), and a no-perturbation
    control.
-5. Evaluation: every case is evaluated four ways: (a) SE(3)-original without
-   calibration, (b) SE3R without calibration, (c) SE(3)-original with EPA
+5. Evaluation: every case is evaluated four ways: (a) position-only SE(3) without
+   calibration, (b) SE3R without calibration, (c) position-only SE(3) with EPA
    calibration, and (d) SE3R with EPA calibration. The calibrated policies run
    the current EPA pipeline end to end, including timestamp and extrinsic
    estimation. APE is translational RMSE in metres; ARE is rotational RMSE in
@@ -151,9 +151,9 @@ NOISE_SEED_SCOPE = "profile_sequence_accuracy_seed"
 EVAL_T_START_S = core.DT_S
 EVAL_T_END_S = core.WINDOW_S - 2.0 * core.DT_S
 MODE_LABELS = {
-    "se3_position": "SE(3)-original without calibration",
+    "se3_position": "SE(3) without calibration",
     "se3r_rotation_first": "SE3R without calibration",
-    "se3_position_calibrated": "SE(3)-original with calibration",
+    "se3_position_calibrated": "SE(3) with calibration",
     "se3r_rotation_first_calibrated": "SE3R with calibration",
 }
 FIGURE_NAMES = {
@@ -197,11 +197,9 @@ FIGURE_CONTRACT = {
 def resolve_epa_calibration_modes(epa_repo: Path) -> dict[str, str]:
     """Map conceptual policies to the public mode names in this EPA checkout.
 
-    EPA's main branch names the rotation-first policy ``se3`` and the legacy
-    position-only policy ``se3-original``. The in-development naming cleanup
-    uses ``se3r`` and ``se3`` respectively. Reading ``PUBLIC_ALIGN_MODES`` keeps
-    this experiment reviewable and runnable on either scheme without guessing
-    from a version number.
+    The current public names are ``se3`` for position-only alignment and
+    ``se3r`` for rotation-first alignment. The historical ``se3-original``
+    spelling is retained as a position-only compatibility alias.
     """
     modes_path = epa_repo / "src" / "epa" / "alignment" / "modes.py"
     if not modes_path.is_file():
@@ -217,7 +215,7 @@ def resolve_epa_calibration_modes(epa_repo: Path) -> dict[str, str]:
             break
     if public_modes is None:
         raise RuntimeError(f"Could not resolve PUBLIC_ALIGN_MODES from {modes_path}")
-    if "se3r" in public_modes:
+    if "se3r" in public_modes and "se3" in public_modes:
         return {
             "se3_position_calibrated": "se3",
             "se3r_rotation_first_calibrated": "se3r",
@@ -232,7 +230,7 @@ def resolve_epa_calibration_modes(epa_repo: Path) -> dict[str, str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate four calibration-sensitivity heatmaps for SE(3)-original and SE3R.",
+        description="Generate four calibration-sensitivity heatmaps for position-only SE(3) and SE3R.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
@@ -270,6 +268,25 @@ def parse_args() -> argparse.Namespace:
         help=(
             "EPA calibration weighting. 'none' retains the current hard-trimmed "
             "Step-3 solver; 'standard' disables trimming for an ablation."
+        ),
+    )
+    parser.add_argument(
+        "--epa-disable-identity-safeguard",
+        action="store_true",
+        help="Disable EPA identity-candidate comparison for this ablation.",
+    )
+    parser.add_argument(
+        "--epa-min-rotation-information-ratio",
+        type=float,
+        default=0.03,
+        help="Minimum rotation information ratio used to constrain weak extrinsic rotations.",
+    )
+    parser.add_argument(
+        "--epa-force-identity-sequences",
+        default="",
+        help=(
+            "Comma-separated KITTI sequence IDs whose calibration-on tasks "
+            "use identity extrinsics while retaining time-offset calibration."
         ),
     )
     parser.add_argument(
@@ -401,6 +418,15 @@ def run_epa_calibration_task(task: dict[str, Any]) -> dict[str, Any]:
     ]
     if str(task.get("epa_robust_kernel", "none")) != "none":
         command.extend(["--robust-kernel", str(task["epa_robust_kernel"])])
+    if bool(task.get("epa_disable_identity_safeguard", False)):
+        command.append("--disable-identity-safeguard")
+    if task.get("epa_min_rotation_information_ratio") is not None:
+        command.extend([
+            "--min-rotation-information-ratio",
+            f"{float(task['epa_min_rotation_information_ratio']):.8f}",
+        ])
+    if bool(task.get("epa_force_identity_extrinsic", False)):
+        command.append("--disable-extrinsic-calibration")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path(task["epa_repo"]) / "src") + os.pathsep + env.get(
         "PYTHONPATH", ""
@@ -476,6 +502,9 @@ def run_calibrated_policies(
     cache_path: Path,
     resume: bool,
     epa_robust_kernel: str,
+    epa_disable_identity_safeguard: bool,
+    epa_force_identity_sequences: tuple[str, ...],
+    epa_min_rotation_information_ratio: float,
 ) -> None:
     """Populate calibration-on metrics in-place with resumable EPA evaluations."""
     if not (epa_repo / "src" / "epa" / "cli.py").is_file():
@@ -487,6 +516,9 @@ def run_calibrated_policies(
             sha256(epa_repo / "src" / "epa" / "cli.py")
             + sha256(epa_repo / "src" / "epa" / "core" / "trajectory_alignment.py")
             + str(epa_robust_kernel)
+            + str(bool(epa_disable_identity_safeguard))
+            + repr(tuple(epa_force_identity_sequences))
+            + f"{float(epa_min_rotation_information_ratio):.8f}"
             + "full-precision-worker-v1"
         ).encode("utf-8")
     ).hexdigest()[:16]
@@ -511,6 +543,12 @@ def run_calibrated_policies(
                     "est_path": str(case_dir / "est.tum"),
                     "epa_repo": str(epa_repo),
                     "epa_robust_kernel": str(epa_robust_kernel),
+                    "epa_disable_identity_safeguard": bool(epa_disable_identity_safeguard),
+                    "epa_min_rotation_information_ratio": float(epa_min_rotation_information_ratio),
+                    "epa_force_identity_extrinsic": (
+                        str(row.get("dataset", "")) == "KITTI"
+                        and str(row.get("sequence", "")) in epa_force_identity_sequences
+                    ),
                 }
             )
 
@@ -1182,7 +1220,7 @@ def setup_markdown(prepared: dict[str, dict[str, Any]], case_count: int) -> str:
                 f"| {GROUP_LABELS[profile_group(profile)]} | {accuracy.name} | "
                 f"{float(_spec_value(spec, 'translation_rms_m')):.3f} m | "
                 f"{float(_spec_value(spec, 'roll_pitch_rms_deg', math.nan)):.3f} deg | "
-                f"{float(_spec_value(spec, 'yaw_drift_deg_per_s', math.nan)):.3f} deg/s | "
+                f"{60.0 * float(_spec_value(spec, 'yaw_drift_deg_per_s', math.nan)):.3f} deg/min | "
                 f"{float(_spec_value(spec, 'yaw_random_walk_deg_per_sqrt_s', math.nan)):.4f} deg/s^{{1/2}} |"
             )
     condition_lines = [
@@ -1236,7 +1274,7 @@ intensity is specified in degrees per square-root second. The components are
 composed as `Delta_R_world = Rz Ry Rx` and left-multiplied onto the GT pose.
 The rotation magnitude therefore depends on the trajectory time horizon. The
 four levels use multipliers 0, 0.5, 1, and 2 for oracle, high, medium, and low;
-the medium yaw drift rate is 1 deg/s.
+the medium yaw drift rate is 1 deg/min (converted internally to 1/60 deg/s).
 
 | Motion group | Accuracy | Translation RMS target | Roll/pitch RMS | Yaw drift rate | Yaw random-walk intensity |
 |---|---|---:|---:|---:|---:|
@@ -1259,11 +1297,11 @@ Rotation axis is normalized `[1, -2, 3]`; translation direction is normalized
 
 The exact same injected trajectory is evaluated under four policies:
 
-1. **Fig. 1, SE(3)-original without calibration:** determine global rotation and
+1. **Fig. 1, position-only SE(3) without calibration:** determine global rotation and
    translation by position-only Kabsch alignment.
 2. **Fig. 2, SE3R without calibration:** determine global rotation from paired
    orientations first, then solve translation with that rotation fixed.
-3. **Fig. 3, SE(3)-original with calibration:** run the current EPA pipeline with
+3. **Fig. 3, position-only SE(3) with calibration:** run the current EPA pipeline with
    `--mode {CALIBRATION_MODES['se3_position_calibrated']}`; EPA estimates time offset and extrinsics before a position-only
    Umeyama world alignment.
 4. **Fig. 4, SE3R with calibration:** run the current EPA pipeline with
@@ -1309,6 +1347,9 @@ def write_config(
     epa_repo: Path,
     workers: int,
     epa_robust_kernel: str,
+    epa_disable_identity_safeguard: bool,
+    epa_force_identity_sequences: tuple[str, ...],
+    epa_min_rotation_information_ratio: float,
 ) -> None:
     try:
         epa_commit = subprocess.run(
@@ -1347,7 +1388,8 @@ def write_config(
             "level_multipliers": {"oracle": 0.0, "high": 0.5, "medium": 1.0, "low": 2.0},
             "rotation_model": "roll/pitch stationary Gaussian; yaw deterministic drift plus cumulative random walk",
             "composition": "Rz @ Ry @ Rx, left-multiplied onto R_gt",
-            "medium_yaw_drift_deg_per_s": 1.0,
+            "medium_yaw_drift_deg_per_min": 1.0,
+            "medium_yaw_drift_deg_per_s": 1.0 / 60.0,
         },
         "calibration_conditions": [asdict(item) for item in design.CALIBRATIONS],
         "seeds": list(design.SEEDS),
@@ -1371,6 +1413,9 @@ def write_config(
             ),
             "workers": workers,
             "robust_kernel": str(epa_robust_kernel),
+            "disable_identity_safeguard": bool(epa_disable_identity_safeguard),
+            "force_identity_sequences": list(epa_force_identity_sequences),
+            "min_rotation_information_ratio": float(epa_min_rotation_information_ratio),
             "arguments": [
             "--dt-resample", "0.001",
             "--offset-search-window-s", "0.5",
@@ -1436,7 +1481,21 @@ def main() -> int:
     # unintended random-walk realization.
     core.NOISE_SEED_SCOPE = NOISE_SEED_SCOPE
     prepared = prepare_profiles()
-    write_config(output_dir, prepared, epa_repo, args.workers, args.epa_robust_kernel)
+    force_identity_sequences = tuple(
+        item.strip()
+        for item in str(args.epa_force_identity_sequences).split(",")
+        if item.strip()
+    )
+    write_config(
+        output_dir,
+        prepared,
+        epa_repo,
+        args.workers,
+        args.epa_robust_kernel,
+        args.epa_disable_identity_safeguard,
+        force_identity_sequences,
+        args.epa_min_rotation_information_ratio,
+    )
 
     with tempfile.TemporaryDirectory(prefix="calibration-sensitivity-inputs-") as temp_dir:
         input_root = Path(temp_dir)
@@ -1449,6 +1508,9 @@ def main() -> int:
             cache_path=output_dir / "data" / "calibration_cache.jsonl",
             resume=args.resume,
             epa_robust_kernel=args.epa_robust_kernel,
+            epa_disable_identity_safeguard=args.epa_disable_identity_safeguard,
+            epa_force_identity_sequences=force_identity_sequences,
+            epa_min_rotation_information_ratio=args.epa_min_rotation_information_ratio,
         )
     validation = validate_cases(rows)
     relative_rows = add_relative_metrics(rows)

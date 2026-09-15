@@ -277,7 +277,7 @@ def _add_common_args(p: argparse.ArgumentParser, suppress_defaults: bool = False
         "--align",
         action="store_true",
         default=dflt(False),
-        help="rotation-first SE(3) alignment (use --eval-align se3-original for legacy position-only Umeyama)",
+        help="position-only SE(3) Umeyama alignment (use --eval-align se3r for rotation-first alignment)",
     )
     algo.add_argument("-s", "--correct_scale", action="store_true", default=dflt(False), help="enable scale correction")
     algo.add_argument(

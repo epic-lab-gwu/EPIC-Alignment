@@ -842,10 +842,10 @@ def run_plot_trajectories(args: argparse.Namespace) -> int:
         "--plot",
     ]
 
-    if align_mode in {"se3", "se3r", "epa_se3", "epa_se3r", "epa_se3_eval", "rotation_first_se3"}:
+    if align_mode in {"se3", "epa_se3", "epa_se3_eval", "se3-original", "se3_original", "se3-orginal", "se3_orginal", "position_first_se3", "umeyama_se3"}:
         traj_argv.extend(["--eval-align", "se3"])
-    elif align_mode in {"se3-original", "se3_original", "se3-orginal", "se3_orginal", "position_first_se3", "umeyama_se3"}:
-        traj_argv.extend(["--eval-align", "se3-original"])
+    elif align_mode in {"se3r", "epa_se3r", "rotation_first_se3"}:
+        traj_argv.extend(["--eval-align", "se3r"])
     elif align_mode in {
         "se3single",
         "posyaw",

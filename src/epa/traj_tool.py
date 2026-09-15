@@ -801,8 +801,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--align",
         action="store_true",
         help=(
-            "Align each non-reference trajectory using rotation-first SE(3); "
-            "use --eval-align se3-original for legacy position-only Umeyama."
+            "Align each non-reference trajectory using position-only SE(3) Umeyama; "
+            "use --eval-align se3r for rotation-first alignment."
         ),
     )
     p.add_argument(

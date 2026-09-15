@@ -312,8 +312,8 @@ def run_pipeline_modular(args, script_dir: Path):
     requested_eval_align_mode = _public_eval_align_mode(requested_eval_align_alias)
     if requested_eval_align_mode in {"posyaw", "epa_posyaw"}:
         step3_global_align_mode = "posyaw"
-    elif requested_eval_align_mode == "se3-original":
-        step3_global_align_mode = "se3-original"
+    elif requested_eval_align_mode == "se3r":
+        step3_global_align_mode = "se3r"
     else:
         step3_global_align_mode = "se3"
     robust_kernel = str(getattr(args, "robust_kernel", "none") or "none").strip().lower()
@@ -336,6 +336,9 @@ def run_pipeline_modular(args, script_dir: Path):
         calibration_source_timestamps_s=solve_eval["t_est_sync"],
         disable_extrinsic_calibration=disable_extrinsic_calibration,
         compare_identity_candidate=not bool(getattr(args, "disable_identity_safeguard", False)),
+        min_rotation_information_ratio=float(
+            getattr(args, "min_rotation_information_ratio", 0.03)
+        ),
     )
     R_calc = solved["R_calc"]
     t_calc = solved["t_calc"]
@@ -533,7 +536,6 @@ def run_pipeline_modular(args, script_dir: Path):
     eval_align_mode = requested_eval_align_mode
     if requested_eval_align_mode in {
         "se3",
-        "se3-original",
         "se3r",
         "epa_se3r",
         "rotation_first_se3",
@@ -629,8 +631,8 @@ def run_pipeline_modular(args, script_dir: Path):
     stage_order = ["raw", "step2", "step3"]
     if requested_eval_align_mode in {"posyaw", "epa_posyaw"}:
         terminal_eval_source = "epa_posyaw"
-    elif requested_eval_align_mode == "se3-original":
-        terminal_eval_source = "epa_se3_original"
+    elif requested_eval_align_mode == "se3r":
+        terminal_eval_source = "epa_se3r"
     elif requested_eval_align_mode == "se3":
         terminal_eval_source = "epa_se3"
     else:

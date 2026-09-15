@@ -192,7 +192,7 @@ def _build_error_singlerun_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "Public modes: se3|se3-original|posyaw|sim3. "
+            "Public modes: se3|se3r|posyaw|sim3. "
             "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
@@ -214,7 +214,7 @@ def _build_error_dataset_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "Public modes: se3|se3-original|posyaw|sim3. "
+            "Public modes: se3|se3r|posyaw|sim3. "
             "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
@@ -237,7 +237,7 @@ def _build_error_comparison_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "Public modes: se3|se3-original|posyaw|sim3. "
+            "Public modes: se3|se3r|posyaw|sim3. "
             "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
@@ -259,7 +259,7 @@ def _build_plot_trajectories_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "align_mode",
         help=(
-            "Public modes: se3|se3-original|posyaw|sim3. "
+            "Public modes: se3|se3r|posyaw|sim3. "
             "Compatibility aliases such as epa_step3/epa_se3/epa_se3_eval and old Sim3 solver names are accepted."
         ),
     )
