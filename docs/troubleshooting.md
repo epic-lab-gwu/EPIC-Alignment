@@ -6,7 +6,7 @@ This page covers the problems users are most likely to hit during installation, 
 
 No worries. If you would rather not spend time debugging, collect the following information and open an issue here:
 
-- [EPIC-Alignment Issues](https://github.com/epic-lab-gwu/EPIC-Alignment/issues)
+
 
 Please include:
 
